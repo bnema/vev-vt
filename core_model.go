@@ -27,6 +27,11 @@ const (
 	UnderlineCurly  = core.UnderlineCurly
 	UnderlineDotted = core.UnderlineDotted
 	UnderlineDashed = core.UnderlineDashed
+
+	DamageText       = core.DamageText
+	DamageClear      = core.DamageClear
+	DamageScrollUp   = core.DamageScrollUp
+	DamageFullRedraw = core.DamageFullRedraw
 )
 
 var (
