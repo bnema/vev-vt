@@ -50,3 +50,5 @@ jobs:
         run: go test . -run '^$' -fuzz FuzzHistoryPreflightMatchesUnmarshal -fuzztime=10s
       - name: Benchmark smoke
         run: go test ./... -run '^$' -bench='(VT|History|Snapshot|ANSI)' -benchmem -benchtime=1x
+      - name: External consumer smoke
+        run: scripts/consumer-smoke.sh
