@@ -5,32 +5,35 @@ import "github.com/bnema/vev-vt/core"
 // The root package re-exports the frontend-neutral core model so screen,
 // history, and renderer consumers share one cell/style/frame representation.
 // The implementation and storage policy remain owned by the core package.
-type Cell = vtcore.Cell
-type RGB = vtcore.RGB
-type StyleAttrs = vtcore.StyleAttrs
-type UnderlineStyle = vtcore.UnderlineStyle
-type Style = vtcore.Style
-type Frame = vtcore.Frame
+type Cell = core.Cell
+type RGB = core.RGB
+type StyleAttrs = core.StyleAttrs
+type UnderlineStyle = core.UnderlineStyle
+type Style = core.Style
+type Frame = core.Frame
+
+type DamageKind = core.DamageKind
+type Damage = core.Damage
 
 const (
-	AttrDim           = vtcore.AttrDim
-	AttrUnderline     = vtcore.AttrUnderline
-	AttrBlink         = vtcore.AttrBlink
-	AttrStrikethrough = vtcore.AttrStrikethrough
+	AttrDim           = core.AttrDim
+	AttrUnderline     = core.AttrUnderline
+	AttrBlink         = core.AttrBlink
+	AttrStrikethrough = core.AttrStrikethrough
 
-	UnderlineNone   = vtcore.UnderlineNone
-	UnderlineSingle = vtcore.UnderlineSingle
-	UnderlineDouble = vtcore.UnderlineDouble
-	UnderlineCurly  = vtcore.UnderlineCurly
-	UnderlineDotted = vtcore.UnderlineDotted
-	UnderlineDashed = vtcore.UnderlineDashed
+	UnderlineNone   = core.UnderlineNone
+	UnderlineSingle = core.UnderlineSingle
+	UnderlineDouble = core.UnderlineDouble
+	UnderlineCurly  = core.UnderlineCurly
+	UnderlineDotted = core.UnderlineDotted
+	UnderlineDashed = core.UnderlineDashed
 )
 
 var (
-	BlankCell    = vtcore.BlankCell
-	DefaultStyle = vtcore.DefaultStyle
-	FullRedraw   = vtcore.FullRedraw
-	NewFrame     = vtcore.NewFrame
+	BlankCell    = core.BlankCell
+	DefaultStyle = core.DefaultStyle
+	FullRedraw   = core.FullRedraw
+	NewFrame     = core.NewFrame
 )
 
-func RuneWidth(r rune) int { return vtcore.RuneWidth(r) }
+func RuneWidth(r rune) int { return core.RuneWidth(r) }

@@ -1,4 +1,4 @@
-package vtcore
+package core
 
 type RGB struct {
 	R uint8

@@ -3,15 +3,15 @@ package vt_test
 import (
 	"testing"
 
-	"github.com/bnema/vev-vt"
+	vt "github.com/bnema/vev-vt"
 	"github.com/bnema/vev-vt/core"
 )
 
 func TestExternalLineEvictionCallbackReceivesStableCopy(t *testing.T) {
 	screen := vt.NewScreen(4, 3)
 	inWrite := false
-	var evicted [][]vtcore.Cell
-	screen.OnLineEvicted = func(row []vtcore.Cell) {
+	var evicted [][]core.Cell
+	screen.OnLineEvicted = func(row []core.Cell) {
 		if !inWrite {
 			t.Error("line eviction callback ran after Write returned")
 		}
@@ -25,7 +25,7 @@ func TestExternalLineEvictionCallbackReceivesStableCopy(t *testing.T) {
 	if len(evicted) != 1 || len(evicted[0]) != 4 || evicted[0][0].Rune != 'A' {
 		t.Fatalf("evicted rows = %#v, want one stable AAAA row", evicted)
 	}
-	evicted[0][0] = vtcore.Cell{Rune: 'X'}
+	evicted[0][0] = core.Cell{Rune: 'X'}
 	if got := screen.Frame.At(0, 0).Rune; got != 'B' {
 		t.Fatalf("mutating callback row changed live frame to %q", got)
 	}

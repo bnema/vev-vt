@@ -46,7 +46,11 @@ jobs:
             echo 'the ANSI package must consume the core model'
             exit 1
           fi
-      - name: Fuzz smoke
+      - name: VT fuzz smoke
+        run: go test . -run '^$' -fuzz FuzzVTInputDoesNotPanic -fuzztime=10s
+      - name: ANSI fuzz smoke
+        run: go test . -run '^$' -fuzz FuzzANSIRenderingDoesNotPanic -fuzztime=10s
+      - name: VTH3 fuzz smoke
         run: go test . -run '^$' -fuzz FuzzHistoryPreflightMatchesUnmarshal -fuzztime=10s
       - name: Benchmark smoke
         run: go test ./... -run '^$' -bench='(VT|History|Snapshot|ANSI)' -benchmem -benchtime=1x

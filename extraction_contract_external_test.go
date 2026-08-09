@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/bnema/vev-vt"
+	vt "github.com/bnema/vev-vt"
 	"github.com/bnema/vev-vt/core"
 )
 
@@ -101,7 +101,7 @@ func TestExternalSnapshotsAndHistoryRespectOwnershipContracts(t *testing.T) {
 	snapshot := screen.Snapshot()
 
 	owned := snapshot.Row(0)
-	owned[0] = vtcore.Cell{Rune: 'X'}
+	owned[0] = core.Cell{Rune: 'X'}
 	if got := snapshot.Row(0)[0].Rune; got != 'A' {
 		t.Fatalf("owned snapshot row mutation changed snapshot to %q", got)
 	}
@@ -129,7 +129,7 @@ func TestExternalSnapshotsAndHistoryRespectOwnershipContracts(t *testing.T) {
 	}
 
 	copyOfRow := before.Row(0)
-	copyOfRow[0] = vtcore.Cell{Rune: 'x'}
+	copyOfRow[0] = core.Cell{Rune: 'x'}
 	if got := before.Row(0)[0].Rune; got != 'a' {
 		t.Fatalf("owned history row mutation changed view to %q", got)
 	}
@@ -177,7 +177,7 @@ func TestExternalSingleOwnerUsageSerializesMutationAndCapture(t *testing.T) {
 
 func appendHistoryRow(t *testing.T, history *vt.History, runeValue rune, id vt.RowID) {
 	t.Helper()
-	if err := history.AppendWithID([]vtcore.Cell{{Rune: runeValue}}, vt.LineBound{End: 1}, id); err != nil {
+	if err := history.AppendWithID([]core.Cell{{Rune: runeValue}}, vt.LineBound{End: 1}, id); err != nil {
 		t.Fatalf("AppendWithID(%d): %v", id, err)
 	}
 }

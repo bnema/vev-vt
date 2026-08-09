@@ -6,7 +6,7 @@ import (
 	"encoding/hex"
 	"testing"
 
-	"github.com/bnema/vev-vt"
+	vt "github.com/bnema/vev-vt"
 	"github.com/bnema/vev-vt/core"
 )
 
@@ -73,21 +73,21 @@ func TestExternalVTH3GoldenVectors(t *testing.T) {
 					t.Fatalf("plain row = %#v", row)
 				}
 			case "all style fields":
-				wantStyle := vtcore.Style{
+				wantStyle := core.Style{
 					Bold:                 true,
 					Italic:               true,
 					Inverse:              true,
-					Attrs:                vtcore.StyleAttrs(0x000f),
+					Attrs:                core.StyleAttrs(0x000f),
 					Foreground:           -7,
 					Background:           257,
 					HasForegroundRGB:     true,
-					ForegroundRGB:        vtcore.RGB{R: 1, G: 2, B: 3},
+					ForegroundRGB:        core.RGB{R: 1, G: 2, B: 3},
 					HasBackgroundRGB:     true,
-					BackgroundRGB:        vtcore.RGB{R: 4, G: 5, B: 6},
-					UnderlineStyle:       vtcore.UnderlineDashed,
+					BackgroundRGB:        core.RGB{R: 4, G: 5, B: 6},
+					UnderlineStyle:       core.UnderlineDashed,
 					UnderlineColor:       -9,
 					HasUnderlineColorRGB: true,
-					UnderlineColorRGB:    vtcore.RGB{R: 7, G: 8, B: 9},
+					UnderlineColorRGB:    core.RGB{R: 7, G: 8, B: 9},
 				}
 				if view.Len() != 1 || view.RowID(0) != 42 || view.Bound(0) != (vt.LineBound{End: 1, Soft: true}) || view.NextRowID() != 43 {
 					t.Fatalf("styled view = len %d row %d bound %#v next %d", view.Len(), view.RowID(0), view.Bound(0), view.NextRowID())
@@ -128,7 +128,7 @@ func TestExternalVTH3RejectsMalformedVectors(t *testing.T) {
 		{name: "zero next row ID", data: mutate(func(data []byte) { clear(data[9:17]) })},
 		{name: "zero row ID", data: mutate(func(data []byte) { clear(data[rowIDOffset : rowIDOffset+8]) })},
 		{name: "invalid rune", data: mutate(func(data []byte) { binary.BigEndian.PutUint32(data[cellOffset:], ^uint32(0)) })},
-		{name: "invalid underline style", data: mutate(func(data []byte) { data[cellOffset+29] = byte(vtcore.UnderlineDashed + 1) })},
+		{name: "invalid underline style", data: mutate(func(data []byte) { data[cellOffset+29] = byte(core.UnderlineDashed + 1) })},
 		{name: "bound exceeds row", data: mutate(func(data []byte) { binary.BigEndian.PutUint32(data[boundOffset:], 3) })},
 	}
 

@@ -2,15 +2,14 @@ package ansi
 
 import "github.com/bnema/vev-vt/core"
 
-type DamageKind = vtcore.DamageKind
-
-type Damage = vtcore.Damage
+type DamageKind = core.DamageKind
+type Damage = core.Damage
 
 const (
-	DamageText       = vtcore.DamageText
-	DamageClear      = vtcore.DamageClear
-	DamageScrollUp   = vtcore.DamageScrollUp
-	DamageFullRedraw = vtcore.DamageFullRedraw
+	DamageText       = core.DamageText
+	DamageClear      = core.DamageClear
+	DamageScrollUp   = core.DamageScrollUp
+	DamageFullRedraw = core.DamageFullRedraw
 )
 
-var FullRedraw = vtcore.FullRedraw
+var FullRedraw = core.FullRedraw

@@ -1,4 +1,4 @@
-package vtcore
+package core
 
 type DamageKind int
 
