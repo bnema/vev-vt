@@ -1,55 +1,52 @@
-name: ci
+name: CI
 
 on:
   push:
     branches: [main]
+    paths:
+      - '**.go'
+      - 'go.mod'
+      - 'go.sum'
+      - '.golangci.yml'
+      - '.github/workflows/**'
   pull_request:
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+    paths:
+      - '**.go'
+      - 'go.mod'
+      - 'go.sum'
+      - '.golangci.yml'
+      - '.github/workflows/**'
 
 permissions:
   contents: read
 
 jobs:
-  test:
-    name: Test (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-14]
+  ci:
+    uses: bnema/gh-actions/.github/workflows/go-ci.yml@main
+    with:
+      go-version: stable
+      test-flags: '-race -v ./...'
+
+  quality:
+    needs: ci
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
         with:
-          persist-credentials: false
-      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
-        with:
-          go-version-file: go.mod
-      - name: Install goimports
-        run: go install golang.org/x/tools/cmd/goimports@v0.47.0
-      - name: Build
-        run: go build -o vev .
-      - name: Lint
-        run: make lint
-      - name: Test
-        run: make test
-      - name: Test installer
-        if: matrix.os == 'ubuntu-latest'
-        run: make test-installer
-      - name: Cross-compile linux/arm64
-        if: matrix.os == 'ubuntu-latest'
-        env:
-          CGO_ENABLED: 0
-          GOARCH: arm64
-          GOOS: linux
-        run: go build ./...
-      - name: Cross-compile darwin/arm64
-        if: matrix.os == 'ubuntu-latest'
-        env:
-          CGO_ENABLED: 0
-          GOARCH: arm64
-          GOOS: darwin
-        run: go build ./...
+          go-version: stable
+      - name: Check production import direction
+        shell: bash
+        run: |
+          if go list -f '{{join .Imports "\n"}}' . | grep -q '/ansi'; then
+            echo 'the VT root must not import the ANSI package'
+            exit 1
+          fi
+          if ! go list -f '{{join .Imports "\n"}}' ./ansi | grep -q '/core'; then
+            echo 'the ANSI package must consume the core model'
+            exit 1
+          fi
+      - name: Fuzz smoke
+        run: go test . -run '^$' -fuzz FuzzHistoryPreflightMatchesUnmarshal -fuzztime=10s
+      - name: Benchmark smoke
+        run: go test ./... -run '^$' -bench='(VT|History|Snapshot|ANSI)' -benchmem -benchtime=1x

@@ -1,0 +1,17 @@
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  default: standard
+  exclusions:
+    generated: lax
+
+formatters:
+  enable:
+    - gofmt
+
+issues:
+  max-same-issues: 50

@@ -1,7 +1,8 @@
-/vev
-*.test
-.superpowers/
-docs/superpowers/
-.worktrees/
-scripts/demo/out/
-/.worktrees/
+# Local build and test artifacts
+/vev-vt
+/coverage.out
+/testdata/generated/
+
+# Editor and OS files
+*.swp
+.DS_Store
