@@ -36,7 +36,7 @@ func TestMoveToChoosesCheapestSequence(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			st := newDrawState()
+			st := newDrawStateForProfile(ColorProfileTrueColor)
 			if tt.known {
 				st.setCursor(tt.fromRow, tt.fromCol)
 			}
