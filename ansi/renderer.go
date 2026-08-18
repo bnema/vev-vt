@@ -12,16 +12,18 @@ var bufferPool = sync.Pool{
 	New: func() any { return new(bytes.Buffer) },
 }
 
+// Capabilities describes the fixed output features of a Renderer target.
 type Capabilities struct {
 	SynchronizedOutput bool
 }
 
 type Renderer struct {
-	caps      Capabilities
-	width     int
-	height    int
-	shadow    []Cell
-	committed Frame
+	caps         Capabilities
+	colorProfile ColorProfile
+	width        int
+	height       int
+	shadow       []Cell
+	committed    Frame
 }
 
 // PreparedDraw owns encoded output and its transactional delta until Commit.
@@ -33,7 +35,14 @@ type PreparedDraw struct {
 	commitOnce *sync.Once
 }
 
-func New(caps Capabilities) *Renderer { return &Renderer{caps: caps} }
+func New(caps Capabilities) *Renderer {
+	return NewWithColorProfile(caps, ColorProfileTrueColor)
+}
+
+// NewWithColorProfile constructs a renderer for a target color profile.
+func NewWithColorProfile(caps Capabilities, profile ColorProfile) *Renderer {
+	return &Renderer{caps: caps, colorProfile: profile}
+}
 
 func (r *Renderer) Reset() {
 	r.width = 0
@@ -95,7 +104,7 @@ func (r *Renderer) Prepare(frame Frame, damage []Damage, reset bool) (PreparedDr
 		buf.WriteString(SyncStartCSI)
 	}
 
-	st := newDrawState()
+	st := newDrawStateForProfile(r.colorProfile)
 	if plan.Snapshot {
 		if len(plan.Spans) > 0 {
 			r.emitDamageSpans(buf, frame, plan.Spans, &st)
@@ -232,80 +241,6 @@ func writeCursor(out *bytes.Buffer, y, x int) {
 	n = strconv.AppendInt(b[:0], int64(x+1), 10)
 	out.Write(n)
 	out.WriteByte('H')
-}
-
-// writeStyle emits SGR style parameters without fmt.Fprintf allocations.
-func writeStyle(out *bytes.Buffer, style Style) {
-	out.WriteString("\x1b[0")
-	if style.Bold {
-		out.WriteString(";1")
-	}
-	if style.Attrs&AttrDim != 0 {
-		out.WriteString(";2")
-	}
-	if style.Italic {
-		out.WriteString(";3")
-	}
-	if style.Attrs&AttrUnderline != 0 {
-		switch style.UnderlineStyle {
-		case UnderlineDouble:
-			out.WriteString(";21")
-		case UnderlineCurly:
-			out.WriteString(";4:3")
-		case UnderlineDotted:
-			out.WriteString(";4:4")
-		case UnderlineDashed:
-			out.WriteString(";4:5")
-		default:
-			out.WriteString(";4")
-		}
-	}
-	if style.Attrs&AttrBlink != 0 {
-		out.WriteString(";5")
-	}
-	if style.Inverse {
-		out.WriteString(";7")
-	}
-	if style.Attrs&AttrStrikethrough != 0 {
-		out.WriteString(";9")
-	}
-	var b [16]byte
-	if style.HasForegroundRGB {
-		out.WriteString(";38;2;")
-		writeRGB(out, &b, style.ForegroundRGB)
-	} else if style.Foreground >= 0 {
-		out.WriteString(";38;5;")
-		n := strconv.AppendInt(b[:0], int64(style.Foreground), 10)
-		out.Write(n)
-	}
-	if style.HasBackgroundRGB {
-		out.WriteString(";48;2;")
-		writeRGB(out, &b, style.BackgroundRGB)
-	} else if style.Background >= 0 {
-		out.WriteString(";48;5;")
-		n := strconv.AppendInt(b[:0], int64(style.Background), 10)
-		out.Write(n)
-	}
-	if style.HasUnderlineColorRGB {
-		out.WriteString(";58;2;")
-		writeRGB(out, &b, style.UnderlineColorRGB)
-	} else if style.HasUnderlineColor {
-		out.WriteString(";58;5;")
-		n := strconv.AppendInt(b[:0], int64(style.UnderlineColor), 10)
-		out.Write(n)
-	}
-	out.WriteByte('m')
-}
-
-func writeRGB(out *bytes.Buffer, b *[16]byte, rgb RGB) {
-	n := strconv.AppendInt(b[:0], int64(rgb.R), 10)
-	out.Write(n)
-	out.WriteByte(';')
-	n = strconv.AppendInt(b[:0], int64(rgb.G), 10)
-	out.Write(n)
-	out.WriteByte(';')
-	n = strconv.AppendInt(b[:0], int64(rgb.B), 10)
-	out.Write(n)
 }
 
 func sameDamage(a, b Damage) bool {
