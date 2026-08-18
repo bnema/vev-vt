@@ -9,11 +9,11 @@ import (
 )
 
 func TestExternalANSIConsumesCoreFrameIndependently(t *testing.T) {
-	frame := vtcore.NewFrame(2, 1)
-	frame.Set(0, 0, vtcore.Cell{Rune: 'O', Style: vtcore.DefaultStyle()})
-	frame.Set(1, 0, vtcore.Cell{Rune: 'K', Style: vtcore.DefaultStyle()})
+	frame := core.NewFrame(2, 1)
+	frame.Set(0, 0, core.Cell{Rune: 'O', Style: core.DefaultStyle()})
+	frame.Set(1, 0, core.Cell{Rune: 'K', Style: core.DefaultStyle()})
 
-	output, err := ansi.New(ansi.Capabilities{}).Draw(frame, []vtcore.Damage{vtcore.FullRedraw()})
+	output, err := ansi.New(ansi.Capabilities{}).Draw(frame, []core.Damage{core.FullRedraw()})
 	if err != nil {
 		t.Fatalf("Draw: %v", err)
 	}

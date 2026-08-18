@@ -1,4 +1,4 @@
-package vtcore
+package core
 
 // Cell is a single terminal grid cell.
 //

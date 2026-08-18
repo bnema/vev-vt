@@ -2,23 +2,23 @@ package ansi
 
 import "github.com/bnema/vev-vt/core"
 
-type RGB = vtcore.RGB
-type StyleAttrs = vtcore.StyleAttrs
-type UnderlineStyle = vtcore.UnderlineStyle
-type Style = vtcore.Style
+type RGB = core.RGB
+type StyleAttrs = core.StyleAttrs
+type UnderlineStyle = core.UnderlineStyle
+type Style = core.Style
 
 const (
-	AttrDim           = vtcore.AttrDim
-	AttrUnderline     = vtcore.AttrUnderline
-	AttrBlink         = vtcore.AttrBlink
-	AttrStrikethrough = vtcore.AttrStrikethrough
+	AttrDim           = core.AttrDim
+	AttrUnderline     = core.AttrUnderline
+	AttrBlink         = core.AttrBlink
+	AttrStrikethrough = core.AttrStrikethrough
 
-	UnderlineNone   = vtcore.UnderlineNone
-	UnderlineSingle = vtcore.UnderlineSingle
-	UnderlineDouble = vtcore.UnderlineDouble
-	UnderlineCurly  = vtcore.UnderlineCurly
-	UnderlineDotted = vtcore.UnderlineDotted
-	UnderlineDashed = vtcore.UnderlineDashed
+	UnderlineNone   = core.UnderlineNone
+	UnderlineSingle = core.UnderlineSingle
+	UnderlineDouble = core.UnderlineDouble
+	UnderlineCurly  = core.UnderlineCurly
+	UnderlineDotted = core.UnderlineDotted
+	UnderlineDashed = core.UnderlineDashed
 )
 
-var DefaultStyle = vtcore.DefaultStyle
+var DefaultStyle = core.DefaultStyle
