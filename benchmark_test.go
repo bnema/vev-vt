@@ -10,6 +10,7 @@ import (
 var (
 	benchmarkHistoryViewSink     HistoryView
 	benchmarkHistorySnapshotSink HistorySnapshotView
+	benchmarkDamageCaptureSink   DamageCapture
 	benchmarkHistoryBlobSink     []byte
 	benchmarkHistoryBlobsSink    [][]byte
 )
@@ -200,6 +201,14 @@ func benchmarkScreenResizeReflow(b *testing.B, historyRows int) {
 		for range historyRows {
 			requireHistoryAppend(b, s.history, make([]renderer.Cell, 120))
 		}
+		// History normally receives rows evicted from this screen, whose IDs are
+		// allocated after every existing live or historical row. This fixture
+		// prepopulates history directly, so advance and refresh the live IDs to
+		// preserve that invariant before exercising resize eviction.
+		s.nextRowID = s.history.nextRowID - 1
+		for y := range s.buffer.rowIDs {
+			s.buffer.rowIDs[y] = s.nextRowIDValue()
+		}
 	}
 	s.Write(bytes.Repeat([]byte("x"), 120*39))
 	s.ClearDamage()
@@ -214,6 +223,56 @@ func benchmarkScreenResizeReflow(b *testing.B, historyRows int) {
 	b.StopTimer()
 	if got := s.History(); historyRows > 0 && got.Len() < historyRows {
 		b.Fatalf("resize discarded retained history rows: got %d want at least %d", got.Len(), historyRows)
+	}
+}
+
+func BenchmarkScreenPrintableASCII(b *testing.B) {
+	s := NewScreen(120, 40)
+	chunk := append(bytes.Repeat([]byte("x"), 119), '\r')
+	b.SetBytes(int64(len(chunk)))
+	b.ReportAllocs()
+	for b.Loop() {
+		s.Write(chunk)
+		s.ClearDamage()
+	}
+}
+
+func BenchmarkScreenMixedUTF8(b *testing.B) {
+	s := NewScreen(120, 40)
+	chunk := append(bytes.Repeat([]byte("Aé界"), 20), '\r')
+	b.SetBytes(int64(len(chunk)))
+	b.ReportAllocs()
+	for b.Loop() {
+		s.Write(chunk)
+		s.ClearDamage()
+	}
+}
+
+func BenchmarkScreenCSIHeavy(b *testing.B) {
+	s := NewScreen(120, 40)
+	chunk := []byte("\x1b[1;1H\x1b[2K\x1b[31;48;2;1;2;3mstatus\x1b[0m\x1b[10C\x1b[?25l\x1b[?25h\r")
+	b.SetBytes(int64(len(chunk)))
+	b.ReportAllocs()
+	for b.Loop() {
+		s.Write(chunk)
+		s.ClearDamage()
+	}
+}
+
+func BenchmarkScreenCaptureDamage(b *testing.B) {
+	s := NewScreen(120, 40)
+	chunk := []byte("x")
+	s.ClearDamage()
+	b.ReportAllocs()
+	for b.Loop() {
+		s.Write(chunk)
+		benchmarkDamageCaptureSink = s.CaptureDamage()
+		if len(benchmarkDamageCaptureSink.Damage) == 0 {
+			b.Fatal("expected captured damage")
+		}
+		if !s.AcknowledgeDamage(benchmarkDamageCaptureSink.Generation) {
+			b.Fatal("expected current damage acknowledgement")
+		}
 	}
 }
 
