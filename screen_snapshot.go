@@ -1,6 +1,9 @@
 package vt
 
-import renderer "github.com/bnema/vev-vt/core"
+import (
+	renderer "github.com/bnema/vev-vt/core"
+	"github.com/bnema/vev-vt/graphics"
+)
 
 // CursorSnapshot is the cursor state captured with a visible screen snapshot.
 type CursorSnapshot struct {
@@ -31,6 +34,7 @@ type ScreenSnapshot struct {
 	cursor    CursorSnapshot
 	modes     ModeSnapshot
 	title     string
+	graphics  *graphics.Snapshot
 	nextRowID RowID
 }
 
@@ -67,7 +71,8 @@ func (s *Screen) Snapshot() ScreenSnapshot {
 			MouseTracking:      mouseTracking,
 			MouseSGR:           mouseSGR,
 		},
-		title: s.TerminalTitle(),
+		title:    s.TerminalTitle(),
+		graphics: s.GraphicsSnapshot(),
 	}
 }
 
@@ -114,3 +119,10 @@ func (s ScreenSnapshot) NextRowID() RowID {
 func (s ScreenSnapshot) Cursor() CursorSnapshot { return s.cursor }
 func (s ScreenSnapshot) Modes() ModeSnapshot    { return s.modes }
 func (s ScreenSnapshot) Title() string          { return s.title }
+
+// Graphics returns the immutable graphics scene snapshot for the active
+// screen buffer, or nil when that buffer has not used Kitty graphics.
+func (s ScreenSnapshot) Graphics() *graphics.Snapshot { return s.graphics }
+
+// GraphicsSnapshot is an explicit alias for Graphics.
+func (s ScreenSnapshot) GraphicsSnapshot() *graphics.Snapshot { return s.graphics }

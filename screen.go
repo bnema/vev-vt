@@ -4,6 +4,7 @@ import (
 	"unicode/utf8"
 
 	renderer "github.com/bnema/vev-vt/core"
+	"github.com/bnema/vev-vt/protocol/kittygraphics"
 )
 
 // maxEscapeBufferLen must stay large enough for OSC 52 clipboard payloads
@@ -11,6 +12,11 @@ import (
 // expansion plus the OSC wrapper. pkg/vt cannot import internal/usecase/copy,
 // so keep this value in sync if that payload cap changes.
 const maxEscapeBufferLen = 128 * 1024
+
+// Kitty graphics APCs have their own protocol limit. Keep this separate from
+// the ordinary escape-string limit so a fragmented image does not get fed
+// through the text path or truncated at the OSC clipboard bound.
+const maxKittyEscapeBufferLen = int(kittygraphics.DefaultMaxAPCBytes) + 5
 
 const (
 	// ColorSchemeReportDark is the DEC 2031 dark-scheme report.
@@ -73,6 +79,7 @@ type Screen struct {
 	scrollBottom     int
 	savedCursor      cursorState
 	alternate        *screenState
+	graphics         *screenGraphicsState
 	syncUpdateActive bool
 	progressState    int
 	cursorVisible    bool
@@ -140,7 +147,11 @@ func (s *Screen) Write(data []byte) {
 				continue
 			}
 			if partial {
-				if len(data) <= maxEscapeBufferLen {
+				limit := maxEscapeBufferLen
+				if isKittyGraphicsAPC(data) {
+					limit = maxKittyEscapeBufferLen
+				}
+				if len(data) <= limit {
 					s.escapeBuf = append(s.escapeBuf[:0], data...)
 				}
 				return
@@ -165,7 +176,12 @@ func (s *Screen) consumeEscape(data []byte) (consumed int, partial bool) {
 		return s.consumeOSC(data)
 	case 'P':
 		return consumeSTString(data)
-	case '_', '^', 'X':
+	case '_':
+		if len(data) >= 3 && data[2] == 'G' {
+			return s.consumeKittyGraphics(data)
+		}
+		return consumeSTString(data)
+	case '^', 'X':
 		return consumeSTString(data)
 	case '[':
 		return s.consumeCSI(data)
@@ -214,4 +230,43 @@ func consumeSTString(data []byte) (consumed int, partial bool) {
 		}
 	}
 	return 0, true
+}
+
+func isKittyGraphicsAPC(data []byte) bool {
+	return len(data) >= 3 && data[0] == 0x1b && data[1] == '_' && data[2] == 'G'
+}
+
+// consumeKittyGraphics frames one exact ESC _ G APC and dispatches only its
+// complete bytes to the protocol adapter. The ordinary parser never sees the
+// APC body as text, and the adapter is allocated only on the first complete
+// graphics command.
+func (s *Screen) consumeKittyGraphics(data []byte) (consumed int, partial bool) {
+	for i := 3; i < len(data); i++ {
+		switch data[i] {
+		case 0x9c: // C1 string terminator.
+			s.dispatchKittyGraphics(data[:i+1])
+			return i + 1, false
+		case 0x1b:
+			if i+1 < len(data) && data[i+1] == '\\' {
+				s.dispatchKittyGraphics(data[:i+2])
+				return i + 2, false
+			}
+		}
+	}
+	return 0, true
+}
+
+func (s *Screen) dispatchKittyGraphics(apc []byte) {
+	if s.graphics == nil {
+		s.graphics = newScreenGraphicsState()
+	}
+	result, _ := s.graphics.kitty.Feed(apc)
+	for _, response := range result.Responses {
+		s.respond(response)
+	}
+	if len(result.Mutations) != 0 {
+		// Graphics are rendered independently from Frame. A graphics mutation
+		// still needs to wake consumers which only redraw on screen damage.
+		s.fullRedraw()
+	}
 }

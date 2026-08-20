@@ -11,6 +11,7 @@ type screenState struct {
 	scrollTop    int
 	scrollBottom int
 	savedCursor  cursorState
+	graphics     *screenGraphicsState
 	originMode   bool
 	insertMode   bool
 }
@@ -94,6 +95,7 @@ func (s *Screen) reset() {
 	s.escapeBuf = s.escapeBuf[:0]
 	s.savedCursor = cursorState{}
 	s.alternate = nil
+	s.graphics = nil
 	s.originMode = false
 	s.insertMode = false
 	s.cursorVisible = true
@@ -199,10 +201,12 @@ func (s *Screen) enterAlternateScreen() {
 			scrollTop:    s.scrollTop,
 			scrollBottom: s.scrollBottom,
 			savedCursor:  s.savedCursor,
+			graphics:     s.graphics,
 			originMode:   s.originMode,
 			insertMode:   s.insertMode,
 		}
 	}
+	s.graphics = nil
 	s.buffer = s.newBuffer(s.Frame.Width, s.Frame.Height)
 	s.Frame = s.buffer.frame
 	s.Row, s.Col = 0, 0
@@ -229,6 +233,7 @@ func (s *Screen) exitAlternateScreen() {
 	s.scrollTop = state.scrollTop
 	s.scrollBottom = state.scrollBottom
 	s.savedCursor = state.savedCursor
+	s.graphics = state.graphics
 	s.originMode = state.originMode
 	s.insertMode = state.insertMode
 	s.alternate = nil
