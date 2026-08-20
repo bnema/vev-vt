@@ -15,6 +15,11 @@ The `ansi` package turns core frames and damage into transactional ANSI output.
   or application dependencies.
 - `github.com/bnema/vev-vt/ansi` is the concrete ANSI output package. It consumes
   core frames and damage; it does not define a renderer-backend interface.
+- `github.com/bnema/vev-vt/graphics` owns bounded renderer-neutral raster assets,
+  sparse placements, clipping fragments, and immutable scene snapshots. It has no
+  Kitty, ANSI, VT-policy, or transport dependency.
+- `github.com/bnema/vev-vt/protocol/kittygraphics` parses bounded Kitty graphics
+  APC commands and translates the supported static/direct subset into `graphics`.
 
 ## Ownership contract
 
@@ -39,6 +44,19 @@ The module has no production dependencies. `github.com/stretchr/testify` is
 used only by the test suite. Keep the public v0.x API and byte formats immutable
 once released; behavior changes require explicit versioning and compatibility
 evidence.
+
+## Kitty graphics subset
+
+The VT accepts bounded static direct transmissions used by current
+`kitten icat --transfer-mode=stream`: PNG, RGB, and RGBA assets; transmit,
+transmit-and-display, place, query, and supported delete operations; chunked
+Base64 uploads; source rectangles; cell extents; pixel offsets; z-index; and
+cursor movement policy. Assets and decoded pixels are bounded by explicit scene
+and parser limits. File, temporary-file, shared-memory, animation, composition,
+relative placement, and Unicode-placeholder commands remain unsupported.
+
+`Screen` allocates graphics state only after a Kitty APC. Graphics snapshots are
+separate from cells and history bytes; VTH3 remains text/history-only.
 
 ## Checks
 
