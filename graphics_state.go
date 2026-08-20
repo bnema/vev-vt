@@ -84,3 +84,10 @@ func (s *Screen) GraphicsSnapshot() *graphics.Snapshot {
 	}
 	return s.graphics.snapshot()
 }
+
+// CaptureGraphicsSnapshot names the ownership boundary used by renderers that
+// retain graphics independently of the text frame. The returned reference is
+// immutable and remains valid after subsequent Screen mutations.
+func (s *Screen) CaptureGraphicsSnapshot() *graphics.Snapshot {
+	return s.GraphicsSnapshot()
+}

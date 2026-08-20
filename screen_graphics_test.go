@@ -90,6 +90,7 @@ func TestScreenSnapshotCapturesOwnedActiveGraphicsSnapshot(t *testing.T) {
 	captured := screen.Snapshot()
 	require.NotNil(t, captured.Graphics())
 	require.Equal(t, uint64(1), captured.Graphics().Usage().Placements)
+	require.Equal(t, captured.Graphics().Usage(), screen.CaptureGraphicsSnapshot().Usage(), "capture returns the immutable active-scene reference")
 
 	screen.Write([]byte("\x1b[2J"))
 	require.Equal(t, uint64(1), captured.Graphics().Usage().Placements)
