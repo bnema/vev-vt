@@ -33,6 +33,9 @@ func parseControls(header []byte) (Controls, error) {
 	if c.HasAction && !c.Action.Valid() {
 		return Controls{}, fmt.Errorf("%w: %q", ErrUnknownAction, c.Action)
 	}
+	if c.HasImageID && c.HasImageNumber {
+		return Controls{}, fmt.Errorf("%w: image id and image number are mutually exclusive", ErrInvalidCommand)
+	}
 	if c.HasQuiet && c.Quiet > QuietAll {
 		return Controls{}, fmt.Errorf("%w: quiet=%d", ErrInvalidCommand, c.Quiet)
 	}

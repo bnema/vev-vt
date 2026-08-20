@@ -93,6 +93,9 @@ func (s *Screen) reset() {
 	s.Row, s.Col = 0, 0
 	s.Style = renderer.DefaultStyle()
 	s.escapeBuf = s.escapeBuf[:0]
+	s.kittyDiscard = false
+	s.kittyDiscardEscaped = false
+	s.kittyPendingDisplay = nil
 	s.savedCursor = cursorState{}
 	s.alternate = nil
 	s.graphics = nil

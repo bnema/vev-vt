@@ -15,6 +15,7 @@ type upload struct {
 	imageID  uint64
 	payload  []byte
 	chunks   uint64
+	display  bool
 }
 
 // MutationKind describes a scene mutation performed by a session.
@@ -26,6 +27,7 @@ const (
 	MutationDeleteImage
 	MutationDeletePlacement
 	MutationClear
+	MutationDeletePlacements
 )
 
 // Mutation records the stable protocol and opaque scene IDs involved in one
@@ -159,6 +161,26 @@ func (s *Session) Process(command Command) (Result, error) {
 	return result, err
 }
 
+// SetPendingPlacement supplies the cursor-relative origin for an in-flight
+// transmit-and-display upload. Screen adapters call it immediately before the
+// final chunk so the image is anchored at the final cursor position.
+func (s *Session) SetPendingPlacement(x, y uint64) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.upload == nil {
+		return
+	}
+	if !s.upload.controls.HasX {
+		s.upload.controls.X, s.upload.controls.HasX = x, true
+	}
+	if !s.upload.controls.HasY {
+		s.upload.controls.Y, s.upload.controls.HasY = y, true
+	}
+}
+
 func (s *Session) apply(command Command) ([][]byte, *Mutation, error) {
 	c := command.Controls
 	action := c.Action
@@ -201,17 +223,19 @@ func (s *Session) apply(command Command) ([][]byte, *Mutation, error) {
 
 func (s *Session) transmit(command Command, display bool) ([][]byte, *Mutation, error) {
 	c := command.Controls
-	imageID := controlsImageID(c)
+	imageID := c.ImageID
+	if !c.HasImageID {
+		imageID = 0
+	}
 	if s.upload != nil {
 		if !continuationControlsAllowed(c, s.upload.controls) {
-			return s.failure(c, controlsImageID(c), ErrInterleavedUpload)
+			return s.failure(c, responseImageID(c), ErrInterleavedUpload)
 		}
-		hasImageSelector := c.HasImageID || c.HasImageNumber
-		if hasImageSelector && imageID != 0 && imageID != s.upload.imageID {
-			return s.failure(c, imageID, ErrInterleavedUpload)
+		if c.HasImageID && c.ImageID != s.upload.imageID {
+			return s.failure(c, c.ImageID, ErrInterleavedUpload)
 		}
-		if hasImageSelector && imageID == 0 {
-			return s.failure(c, s.upload.imageID, ErrInterleavedUpload)
+		if c.HasImageNumber && (!s.upload.controls.HasImageNumber || c.ImageNumber != s.upload.controls.ImageNumber) {
+			return s.failure(c, responseImageID(c), ErrInterleavedUpload)
 		}
 		imageID = s.upload.imageID
 		if s.upload.chunks >= s.limits.MaxChunks {
@@ -229,10 +253,10 @@ func (s *Session) transmit(command Command, display bool) ([][]byte, *Mutation, 
 		complete := *s.upload
 		s.upload = nil
 		complete.controls = mergeControls(complete.controls, c)
-		return s.commitUpload(complete, display)
+		return s.commitUpload(complete, complete.display)
 	}
 
-	if imageID == 0 {
+	if !c.HasImageID {
 		imageID = s.nextImageID()
 	}
 	if uint64(len(command.Payload)) > s.limits.MaxUploadBytes {
@@ -244,10 +268,11 @@ func (s *Session) transmit(command Command, display bool) ([][]byte, *Mutation, 
 			imageID:  imageID,
 			payload:  append([]byte(nil), command.Payload...),
 			chunks:   1,
+			display:  display,
 		}
 		return nil, nil, nil
 	}
-	return s.commitUpload(upload{controls: c, imageID: imageID, payload: append([]byte(nil), command.Payload...), chunks: 1}, display)
+	return s.commitUpload(upload{controls: c, imageID: imageID, payload: append([]byte(nil), command.Payload...), chunks: 1, display: display}, display)
 }
 
 func (s *Session) commitUpload(value upload, display bool) ([][]byte, *Mutation, error) {
@@ -289,6 +314,9 @@ func (s *Session) commitUpload(value upload, display bool) ([][]byte, *Mutation,
 		return s.failure(value.controls, value.imageID, err)
 	}
 	s.images[value.imageID] = assetID
+	if value.controls.HasImageNumber {
+		s.imageNumbers[value.controls.ImageNumber] = value.imageID
+	}
 	childID := s.nextChild
 	s.nextChild++
 	s.children[childID] = Child{ID: childID, ImageID: value.imageID, AssetID: assetID}
@@ -305,6 +333,9 @@ func (s *Session) commitUpload(value upload, display bool) ([][]byte, *Mutation,
 			// leave an uploaded asset behind when its placement is rejected.
 			_ = s.scene.RemoveAssetCascade(assetID)
 			delete(s.images, value.imageID)
+			if value.controls.HasImageNumber && s.imageNumbers[value.controls.ImageNumber] == value.imageID {
+				delete(s.imageNumbers, value.controls.ImageNumber)
+			}
 			delete(s.children, childID)
 			return responses, nil, placeErr
 		}
@@ -325,7 +356,8 @@ func imageGeometry(data []byte, format Format, c Controls, limits Limits) (int64
 		if uint64(config.Width) > limits.MaxDimension || uint64(config.Height) > limits.MaxDimension {
 			return 0, 0, ErrPayloadTooLarge
 		}
-		if uint64(config.Width) > math.MaxInt64/uint64(config.Height) || uint64(config.Width)*uint64(config.Height) > limits.MaxDecodedPixels {
+		pixels, ok := checkedProduct(uint64(config.Width), uint64(config.Height))
+		if !ok || pixels > limits.MaxDecodedPixels {
 			return 0, 0, ErrPayloadTooLarge
 		}
 		if c.HasWidth && c.Width != uint64(config.Width) || c.HasHeight && c.Height != uint64(config.Height) {
@@ -344,17 +376,25 @@ func imageGeometry(data []byte, format Format, c Controls, limits Limits) (int64
 	if !c.HasWidth || !c.HasHeight || c.Width == 0 || c.Height == 0 {
 		return 0, 0, fmt.Errorf("%w: raw format needs s and v", ErrInvalidCommand)
 	}
-	if c.Width > limits.MaxDimension || c.Height > limits.MaxDimension || c.Width > math.MaxInt64/c.Height || c.Width*c.Height > limits.MaxDecodedPixels {
+	if c.Width > limits.MaxDimension || c.Height > limits.MaxDimension {
+		return 0, 0, ErrPayloadTooLarge
+	}
+	pixels, ok := checkedProduct(c.Width, c.Height)
+	if !ok || pixels > limits.MaxDecodedPixels {
 		return 0, 0, ErrPayloadTooLarge
 	}
 	channels := uint64(3)
 	if format == FormatRGBA {
 		channels = 4
 	}
-	if c.Width > math.MaxUint64/(c.Height*channels) {
+	rowBytes, ok := checkedProduct(c.Height, channels)
+	if !ok {
 		return 0, 0, ErrPayloadTooLarge
 	}
-	expected := c.Width * c.Height * channels
+	expected, ok := checkedProduct(c.Width, rowBytes)
+	if !ok {
+		return 0, 0, ErrPayloadTooLarge
+	}
 	if uint64(len(data)) != expected {
 		return 0, 0, fmt.Errorf("%w: raw payload has %d bytes, want %d", ErrInvalidCommand, len(data), expected)
 	}
@@ -362,13 +402,9 @@ func imageGeometry(data []byte, format Format, c Controls, limits Limits) (int64
 }
 
 func (s *Session) put(c Controls) ([][]byte, *Mutation, error) {
-	imageID := controlsImageID(c)
-	if imageID == 0 {
-		return s.failure(c, imageID, ErrImageNotFound)
-	}
-	assetID, ok := s.images[imageID]
+	imageID, assetID, ok := s.resolveImage(c)
 	if !ok {
-		return s.failure(c, imageID, ErrImageNotFound)
+		return s.failure(c, responseImageID(c), ErrImageNotFound)
 	}
 	responses, mutation, err := s.place(c, imageID, assetID)
 	if err != nil {
@@ -448,10 +484,10 @@ func (s *Session) place(c Controls, imageID uint64, assetID graphics.AssetID) ([
 }
 
 func (s *Session) query(c Controls) ([][]byte, *Mutation, error) {
-	id := controlsImageID(c)
-	if id != 0 {
-		if _, ok := s.images[id]; !ok {
-			return s.failure(c, id, ErrImageNotFound)
+	id, _, ok := s.resolveImage(c)
+	if c.HasImageID || c.HasImageNumber {
+		if !ok {
+			return s.failure(c, responseImageID(c), ErrImageNotFound)
 		}
 	}
 	return s.success(c, id), nil, nil
@@ -462,12 +498,12 @@ func (s *Session) delete(c Controls) ([][]byte, *Mutation, error) {
 	if !c.HasDelete {
 		target = DeleteImage
 	}
-	id := controlsImageID(c)
+	id, asset, selected := s.resolveImage(c)
+	responseID := responseImageID(c)
 	switch target {
 	case DeleteImage, DeleteImageNumber:
-		asset, ok := s.images[id]
-		if !ok {
-			return s.failure(c, id, ErrImageNotFound)
+		if !selected {
+			return s.failure(c, responseID, ErrImageNotFound)
 		}
 		if s.scene == nil {
 			return s.failure(c, id, ErrNoScene)
@@ -476,41 +512,60 @@ func (s *Session) delete(c Controls) ([][]byte, *Mutation, error) {
 		if err := s.scene.RemoveAssetCascade(asset); err != nil {
 			return s.failure(c, id, err)
 		}
-		delete(s.images, id)
 		return s.success(c, id), &Mutation{Kind: MutationDeleteImage, ImageID: id, AssetID: asset}, nil
+	case DeleteAll:
+		if !selected {
+			return s.failure(c, responseID, ErrImageNotFound)
+		}
+		if s.scene == nil {
+			return s.failure(c, id, ErrNoScene)
+		}
+		snapshot := s.scene.Snapshot()
+		for placementID, mapped := range s.placements {
+			placement, ok := snapshot.Placement(mapped)
+			if !ok || placement.AssetID() != asset {
+				continue
+			}
+			if err := s.scene.RemovePlacement(mapped); err != nil {
+				return s.failure(c, id, err)
+			}
+			delete(s.placements, placementID)
+		}
+		return s.success(c, id), &Mutation{Kind: MutationDeletePlacements, ImageID: id, AssetID: asset}, nil
 	case DeletePlacement:
 		placementID := c.PlacementID
 		mapped, ok := s.placements[placementID]
 		if !ok || s.scene == nil {
-			return s.failure(c, id, ErrPlacementNotFound)
+			return s.failure(c, responseID, ErrPlacementNotFound)
 		}
 		if err := s.scene.RemovePlacement(mapped); err != nil {
-			return s.failure(c, id, err)
+			return s.failure(c, responseID, err)
 		}
 		delete(s.placements, placementID)
-		return s.success(c, id), &Mutation{Kind: MutationDeletePlacement, PlacementID: placementID, ScenePlacementID: mapped}, nil
-	case DeleteAll, DeleteAllImages, DeleteAllPlacements:
+		return s.success(c, responseID), &Mutation{Kind: MutationDeletePlacement, PlacementID: placementID, ScenePlacementID: mapped}, nil
+	case DeleteAllImages, DeleteAllPlacements:
 		if s.scene == nil {
-			return s.failure(c, id, ErrNoScene)
+			return s.failure(c, responseID, ErrNoScene)
 		}
 		if target == DeleteAllPlacements {
 			for placementID, mapped := range s.placements {
 				if err := s.scene.RemovePlacement(mapped); err != nil {
-					return s.failure(c, id, err)
+					return s.failure(c, responseID, err)
 				}
 				delete(s.placements, placementID)
 			}
 		} else {
 			if err := s.scene.Clear(); err != nil {
-				return s.failure(c, id, err)
+				return s.failure(c, responseID, err)
 			}
 			s.images = make(map[uint64]graphics.AssetID)
+			s.imageNumbers = make(map[uint64]uint64)
 			s.placements = make(map[uint64]graphics.PlacementID)
 			s.children = make(map[uint64]Child)
 		}
-		return s.success(c, id), &Mutation{Kind: MutationClear}, nil
+		return s.success(c, responseID), &Mutation{Kind: MutationClear}, nil
 	default:
-		return s.failure(c, id, ErrUnsupported)
+		return s.failure(c, responseID, ErrUnsupported)
 	}
 }
 
@@ -518,6 +573,11 @@ func (s *Session) removeMappingsForAsset(asset graphics.AssetID) {
 	for imageID, mapped := range s.images {
 		if mapped == asset {
 			delete(s.images, imageID)
+		}
+	}
+	for imageNumber, imageID := range s.imageNumbers {
+		if mapped, ok := s.images[imageID]; !ok || mapped == asset {
+			delete(s.imageNumbers, imageNumber)
 		}
 	}
 	if s.scene != nil {
@@ -555,15 +615,30 @@ func continuationControlsAllowed(current, initial Controls) bool {
 		!current.HasCellOffsetX && !current.HasCellOffsetY && !current.HasParent
 }
 
-func controlsImageID(c Controls) uint64 {
+func (s *Session) resolveImage(c Controls) (uint64, graphics.AssetID, bool) {
+	if c.HasImageID {
+		asset, ok := s.images[c.ImageID]
+		return c.ImageID, asset, ok
+	}
+	if c.HasImageNumber {
+		imageID, ok := s.imageNumbers[c.ImageNumber]
+		if !ok {
+			return 0, graphics.AssetID{}, false
+		}
+		asset, ok := s.images[imageID]
+		return imageID, asset, ok
+	}
+	return 0, graphics.AssetID{}, false
+}
+
+func responseImageID(c Controls) uint64 {
 	if c.HasImageID {
 		return c.ImageID
 	}
-	if c.HasImageNumber {
-		return c.ImageNumber
-	}
 	return 0
 }
+
+func controlsImageID(c Controls) uint64 { return responseImageID(c) }
 
 func (s *Session) nextImageID() uint64 {
 	for id := uint64(1); ; id++ {
@@ -581,6 +656,13 @@ func (s *Session) nextPlacementID() uint64 {
 		}
 	}
 	return max + 1
+}
+
+func checkedProduct(left, right uint64) (uint64, bool) {
+	if left != 0 && right > math.MaxUint64/left {
+		return 0, false
+	}
+	return left * right, true
 }
 
 func checkedCoordinate(n uint64, present bool) (int64, error) {
@@ -613,12 +695,22 @@ func signedCoordinateInt(n int64, present bool) int64 {
 func (s *Session) success(c Controls, imageID uint64, prior ...[]byte) [][]byte {
 	responses := prior
 	if c.Quiet != QuietSuccess && c.Quiet != QuietAll {
-		response := MakeResponse(imageID, "OK")
+		response := makeControlResponse(c, imageID, "OK")
 		if uint64(len(response)) <= s.limits.MaxResponseBytes {
 			responses = append(responses, response)
 		}
 	}
 	return responses
+}
+
+func makeControlResponse(c Controls, imageID uint64, code string) []byte {
+	if !c.HasImageNumber {
+		return MakeResponse(imageID, code)
+	}
+	if code == "" {
+		code = "OK"
+	}
+	return []byte(responsePrefix + "i=" + strconv.FormatUint(imageID, 10) + ",I=" + strconv.FormatUint(c.ImageNumber, 10) + ";" + code + responseSuffix)
 }
 
 func (s *Session) failure(c Controls, imageID uint64, err error) ([][]byte, *Mutation, error) {
@@ -627,7 +719,7 @@ func (s *Session) failure(c Controls, imageID uint64, err error) ([][]byte, *Mut
 	}
 	if c.Quiet != QuietAll {
 		code := errorCode(err)
-		response := MakeResponse(imageID, code)
+		response := makeControlResponse(c, imageID, code)
 		if uint64(len(response)) <= s.limits.MaxResponseBytes {
 			return [][]byte{response}, nil, err
 		}

@@ -72,6 +72,9 @@ type Screen struct {
 	damageSaturated        bool
 	damageFullRedrawSticky bool
 	escapeBuf              []byte
+	kittyDiscard           bool
+	kittyDiscardEscaped    bool
+	kittyPendingDisplay    *kittygraphics.Controls
 	csiScratch             []int
 	sgrScratch             []int
 
@@ -131,12 +134,27 @@ func (s *Screen) LineBounds() []LineBound {
 }
 
 func (s *Screen) Write(data []byte) {
+	if len(s.escapeBuf) > 0 && isKittyEscapeContinuation(s.escapeBuf, data) {
+		prefix := s.escapeBuf
+		s.escapeBuf = nil
+		data = s.continueKittyEscape(prefix, data)
+		if len(data) == 0 {
+			return
+		}
+	}
 	if len(s.escapeBuf) > 0 {
 		combined := make([]byte, 0, len(s.escapeBuf)+len(data))
 		combined = append(combined, s.escapeBuf...)
 		combined = append(combined, data...)
 		data = combined
-		s.escapeBuf = s.escapeBuf[:0]
+		s.escapeBuf = nil
+	}
+	if s.kittyDiscard {
+		consumed := s.consumeKittyDiscard(data)
+		data = data[consumed:]
+		if s.kittyDiscard {
+			return
+		}
 	}
 
 	for len(data) > 0 {
@@ -148,11 +166,14 @@ func (s *Screen) Write(data []byte) {
 			}
 			if partial {
 				limit := maxEscapeBufferLen
-				if isKittyGraphicsAPC(data) {
+				if isKittyEscapePrefix(data) {
 					limit = maxKittyEscapeBufferLen
 				}
 				if len(data) <= limit {
 					s.escapeBuf = append(s.escapeBuf[:0], data...)
+				} else if isKittyEscapePrefix(data) {
+					s.kittyDiscard = true
+					s.kittyDiscardEscaped = false
 				}
 				return
 			}
@@ -165,6 +186,94 @@ func (s *Screen) Write(data []byte) {
 		s.putRune(r)
 		data = data[size:]
 	}
+}
+
+func isKittyEscapePrefix(data []byte) bool {
+	if len(data) == 0 || data[0] != 0x1b {
+		return false
+	}
+	if len(data) > 1 && data[1] != '_' {
+		return false
+	}
+	return len(data) < 3 || data[2] == 'G'
+}
+
+func isKittyEscapeContinuation(prefix, data []byte) bool {
+	if !isKittyEscapePrefix(prefix) {
+		return false
+	}
+	if len(data) == 0 {
+		return true
+	}
+	if len(prefix) == 1 {
+		return data[0] == '_'
+	}
+	if len(prefix) == 2 {
+		return data[0] == 'G'
+	}
+	return true
+}
+
+func (s *Screen) continueKittyEscape(prefix, data []byte) []byte {
+	if len(prefix) != 0 && prefix[len(prefix)-1] == 0x1b && len(data) != 0 && data[0] == '\\' {
+		if len(prefix)+1 <= maxKittyEscapeBufferLen {
+			apc := append(prefix, data[:1]...)
+			s.dispatchKittyGraphics(apc)
+		}
+		return data[1:]
+	}
+	for i := 0; i < len(data); i++ {
+		if data[i] == 0x9c {
+			end := i + 1
+			if len(prefix)+end <= maxKittyEscapeBufferLen {
+				apc := append(prefix, data[:end]...)
+				s.dispatchKittyGraphics(apc)
+			}
+			return data[end:]
+		}
+		if data[i] == 0x1b && i+1 < len(data) && data[i+1] == '\\' {
+			end := i + 2
+			if len(prefix)+end <= maxKittyEscapeBufferLen {
+				apc := append(prefix, data[:end]...)
+				s.dispatchKittyGraphics(apc)
+			}
+			return data[end:]
+		}
+	}
+	remaining := maxKittyEscapeBufferLen - len(prefix)
+	if len(data) <= remaining {
+		returnData := append(prefix, data...)
+		s.escapeBuf = returnData
+		return nil
+	}
+	s.kittyDiscard = true
+	s.kittyDiscardEscaped = false
+	tail := data[remaining:]
+	return tail[s.consumeKittyDiscard(tail):]
+}
+
+func (s *Screen) consumeKittyDiscard(data []byte) int {
+	for i, b := range data {
+		if s.kittyDiscardEscaped {
+			s.kittyDiscardEscaped = false
+			if b == '\\' {
+				s.kittyDiscard = false
+				return i + 1
+			}
+		}
+		if b == 0x9c {
+			s.kittyDiscard = false
+			return i + 1
+		}
+		if b == 0x1b {
+			if i+1 < len(data) && data[i+1] == '\\' {
+				s.kittyDiscard = false
+				return i + 2
+			}
+			s.kittyDiscardEscaped = true
+		}
+	}
+	return len(data)
 }
 
 func (s *Screen) consumeEscape(data []byte) (consumed int, partial bool) {
@@ -232,10 +341,6 @@ func consumeSTString(data []byte) (consumed int, partial bool) {
 	return 0, true
 }
 
-func isKittyGraphicsAPC(data []byte) bool {
-	return len(data) >= 3 && data[0] == 0x1b && data[1] == '_' && data[2] == 'G'
-}
-
 // consumeKittyGraphics frames one exact ESC _ G APC and dispatches only its
 // complete bytes to the protocol adapter. The ordinary parser never sees the
 // APC body as text, and the adapter is allocated only on the first complete
@@ -260,13 +365,116 @@ func (s *Screen) dispatchKittyGraphics(apc []byte) {
 	if s.graphics == nil {
 		s.graphics = newScreenGraphicsState()
 	}
-	result, _ := s.graphics.kitty.Feed(apc)
+	command, err := kittygraphics.ParseAPC(apc)
+	if err != nil {
+		return
+	}
+	controls := command.Controls
+	pending := s.kittyPendingDisplay
+	continuation := pending != nil
+	action := controls.Action
+	if !controls.HasAction {
+		action = kittygraphics.ActionTransmit
+		if pending != nil {
+			action = pending.Action
+		}
+	}
+	display := action == kittygraphics.ActionTransmitDisplay || action == kittygraphics.ActionPut
+	movementControls := controls
+	if pending != nil {
+		movementControls = *pending
+	}
+	if display && !continuation {
+		if !(controls.HasMore && controls.More == 1) {
+			if !controls.HasX {
+				controls.X, controls.HasX = s.kittyCursorX(), true
+			}
+			if !controls.HasY {
+				controls.Y, controls.HasY = s.kittyCursorY(), true
+			}
+			command.Controls = controls
+		}
+		movementControls = controls
+	}
+	if display && continuation && !(controls.HasMore && controls.More == 1) {
+		s.graphics.kitty.SetPendingPlacement(s.kittyCursorX(), s.kittyCursorY())
+	}
+	if display && controls.HasMore && controls.More == 1 {
+		copy := controls
+		s.kittyPendingDisplay = &copy
+	}
+	result, processErr := s.graphics.kitty.Process(command)
+	if processErr != nil {
+		s.kittyPendingDisplay = nil
+	}
 	for _, response := range result.Responses {
 		s.respond(response)
 	}
 	if len(result.Mutations) != 0 {
+		if display {
+			s.applyKittyCursorMovement(movementControls)
+			s.kittyPendingDisplay = nil
+		}
 		// Graphics are rendered independently from Frame. A graphics mutation
 		// still needs to wake consumers which only redraw on screen damage.
 		s.fullRedraw()
 	}
+}
+
+func (s *Screen) kittyCursorX() uint64 {
+	if s.geometry.PixelWidth > 0 && s.geometry.Cols > 0 {
+		cellWidth := s.geometry.PixelWidth / s.geometry.Cols
+		if cellWidth > 0 {
+			return uint64(s.Col * cellWidth)
+		}
+	}
+	return uint64(s.Col)
+}
+
+func (s *Screen) kittyCursorY() uint64 {
+	if s.geometry.PixelHeight > 0 && s.geometry.Rows > 0 {
+		cellHeight := s.geometry.PixelHeight / s.geometry.Rows
+		if cellHeight > 0 {
+			return uint64(s.Row * cellHeight)
+		}
+	}
+	return uint64(s.Row)
+}
+
+func (s *Screen) applyKittyCursorMovement(c kittygraphics.Controls) {
+	if c.HasCursor && c.Cursor == 1 {
+		return
+	}
+	columns, rows := 1, 1
+	if c.HasColumns {
+		columns = kittyCursorAdvance(c.Columns)
+	}
+	if c.HasRows {
+		rows = kittyCursorAdvance(c.Rows)
+	}
+	s.Col = advanceKittyCursor(s.Col, columns, 0, s.Frame.Width-1)
+	s.Row = advanceKittyCursor(s.Row, rows, s.cursorMinRow(), s.cursorMaxRow())
+}
+
+func advanceKittyCursor(current, amount, minimum, maximum int) int {
+	if maximum < minimum {
+		return minimum
+	}
+	if current < minimum {
+		current = minimum
+	}
+	if current > maximum {
+		current = maximum
+	}
+	if amount > maximum-current {
+		return maximum
+	}
+	return current + amount
+}
+
+func kittyCursorAdvance(value uint64) int {
+	if value > uint64(^uint(0)>>1) {
+		return int(^uint(0) >> 1)
+	}
+	return int(value)
 }

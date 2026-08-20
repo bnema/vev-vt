@@ -325,15 +325,16 @@ const MaxKittyID = uint64(^uint32(0))
 // Feed and query methods serially; the mutex also makes read-only mapping
 // access safe while a caller publishes a snapshot.
 type Session struct {
-	mu         sync.Mutex
-	scene      *graphics.Scene
-	limits     Limits
-	parser     *Parser
-	images     map[uint64]graphics.AssetID
-	placements map[uint64]graphics.PlacementID
-	children   map[uint64]Child
-	nextChild  uint64
-	upload     *upload
+	mu           sync.Mutex
+	scene        *graphics.Scene
+	limits       Limits
+	parser       *Parser
+	images       map[uint64]graphics.AssetID
+	imageNumbers map[uint64]uint64
+	placements   map[uint64]graphics.PlacementID
+	children     map[uint64]Child
+	nextChild    uint64
+	upload       *upload
 }
 
 // Adapter is an alias for the stateful Kitty graphics session.
@@ -358,13 +359,14 @@ func NewSession(scene *graphics.Scene, config ...Limits) *Session {
 	}
 	l = normalizeLimits(l)
 	return &Session{
-		scene:      scene,
-		limits:     l,
-		parser:     NewParser(l),
-		images:     make(map[uint64]graphics.AssetID),
-		placements: make(map[uint64]graphics.PlacementID),
-		children:   make(map[uint64]Child),
-		nextChild:  1,
+		scene:        scene,
+		limits:       l,
+		parser:       NewParser(l),
+		images:       make(map[uint64]graphics.AssetID),
+		imageNumbers: make(map[uint64]uint64),
+		placements:   make(map[uint64]graphics.PlacementID),
+		children:     make(map[uint64]Child),
+		nextChild:    1,
 	}
 }
 

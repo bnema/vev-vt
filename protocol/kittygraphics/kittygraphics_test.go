@@ -145,6 +145,9 @@ func TestMalformedTruncatedInterleavedAndOversizeAreBounded(t *testing.T) {
 	if _, err := ParseCommand([]byte("a=q,i=18446744073709551616;")); !errors.Is(err, ErrIntegerOverflow) {
 		t.Fatalf("integer overflow error = %v", err)
 	}
+	if _, err := ParseCommand([]byte("a=q,i=1,I=2;")); !errors.Is(err, ErrInvalidCommand) {
+		t.Fatalf("mixed image selector error = %v", err)
+	}
 
 	p := NewParser(Limits{MaxAPCBytes: 8})
 	events := p.Feed(apc("a=q", "0123456789"))
@@ -182,6 +185,72 @@ func TestMalformedPNGDoesNotMutateScene(t *testing.T) {
 	}
 	if got := scene.Usage(); got.Assets != 0 || got.Placements != 0 {
 		t.Fatalf("malformed PNG mutated scene: %#v", got)
+	}
+}
+
+func TestImageGeometryRejectsOverflowBeforeByteArithmetic(t *testing.T) {
+	controls := Controls{Width: ^uint64(0), HasWidth: true, Height: ^uint64(0), HasHeight: true}
+	limits := Limits{MaxDimension: ^uint64(0), MaxDecodedPixels: ^uint64(0)}
+	if _, _, err := imageGeometry(nil, FormatRGBA, controls, limits); !errors.Is(err, ErrPayloadTooLarge) {
+		t.Fatalf("overflowing geometry error = %v", err)
+	}
+}
+
+func TestChunkedTransmitAndDisplayRetainsDisplayAction(t *testing.T) {
+	scene := graphics.NewScene(graphics.Limits{})
+	session := NewSession(scene)
+	first := apc("a=T,i=1,f=32,s=1,v=1,m=1,q=2", "AQ")
+	if _, err := session.Feed(first); err != nil {
+		t.Fatal(err)
+	}
+	last := apc("m=0,q=2", "IDBA")
+	result, err := session.Feed(last)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Mutations) != 1 || result.Mutations[0].Kind != MutationPlacement {
+		t.Fatalf("mutations = %#v", result.Mutations)
+	}
+	if got := scene.Usage(); got.Assets != 1 || got.Placements != 1 {
+		t.Fatalf("usage = %#v", got)
+	}
+}
+
+func TestDeleteSelectedImagePlacementsAndImageNumberNamespace(t *testing.T) {
+	scene := graphics.NewScene(graphics.Limits{})
+	session := NewSession(scene)
+	payload := base64.RawStdEncoding.EncodeToString([]byte{1, 2, 3, 4})
+	for range 2 {
+		if _, err := session.Feed(apc("a=t,I=7,f=32,s=1,v=1,q=2", payload)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := scene.Usage(); got.Assets != 2 || got.Placements != 0 {
+		t.Fatalf("numbered uploads collapsed namespaces: %#v", got)
+	}
+	if _, err := session.Feed(apc("a=p,I=7,p=2,q=2", "")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := session.Feed(apc("a=p,i=1,p=1,q=2", "")); err != nil {
+		t.Fatal(err)
+	}
+	if got := scene.Usage(); got.Placements != 2 {
+		t.Fatalf("placements = %#v", got)
+	}
+	if _, err := session.Feed(apc("a=d,d=a,i=1,q=2", "")); err != nil {
+		t.Fatal(err)
+	}
+	if got := scene.Usage(); got.Assets != 2 || got.Placements != 1 {
+		t.Fatalf("selected delete affected unrelated scene state: %#v", got)
+	}
+	if _, err := session.Feed(apc("a=d,d=I,I=7,q=2", "")); err != nil {
+		t.Fatal(err)
+	}
+	if got := scene.Usage(); got.Assets != 1 || got.Placements != 0 {
+		t.Fatalf("image-number delete = %#v", got)
+	}
+	if _, ok := session.Image(1); !ok {
+		t.Fatal("image ID namespace was removed by image-number delete")
 	}
 }
 

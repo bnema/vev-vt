@@ -65,6 +65,9 @@ func (s *Screen) Resize(width, height int) {
 	// A resize can split an in-flight escape sequence from the terminal state it
 	// was meant to mutate; keep the durable child state but discard partial bytes.
 	s.escapeBuf = s.escapeBuf[:0]
+	s.kittyDiscard = false
+	s.kittyDiscardEscaped = false
+	s.kittyPendingDisplay = nil
 	s.resetScrollRegion()
 	s.fullRedraw()
 }

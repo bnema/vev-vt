@@ -10,12 +10,12 @@ import (
 
 func screenKittyImageAPC(action string) []byte {
 	payload := base64.RawStdEncoding.EncodeToString([]byte{1, 2, 3, 4})
-	return []byte("\x1b_Ga=" + action + ",i=1,f=32,s=1,v=1;" + payload + "\x1b\\")
+	return []byte("\x1b_Ga=" + action + ",i=1,f=32,s=1,v=1,C=1;" + payload + "\x1b\\")
 }
 
 func screenKittyImageAPCWithID(action string, id byte) []byte {
 	payload := base64.RawStdEncoding.EncodeToString([]byte{1, 2, 3, 4})
-	return []byte("\x1b_Ga=" + action + ",i=" + string(id) + ",f=32,s=1,v=1;" + payload + "\x1b\\")
+	return []byte("\x1b_Ga=" + action + ",i=" + string(id) + ",f=32,s=1,v=1,C=1;" + payload + "\x1b\\")
 }
 
 func screenKittyPutAPC(id byte) []byte {
@@ -107,4 +107,41 @@ func TestScreenOrdinaryTextPathDoesNotAllocateGraphicsState(t *testing.T) {
 	require.Nil(t, screen.GraphicsScene())
 	require.Nil(t, screen.Snapshot().GraphicsSnapshot())
 	require.Equal(t, "text", rowText(screen.Snapshot().Row(0)))
+}
+
+func TestScreenKittyDiscardRetainsTerminatorFraming(t *testing.T) {
+	screen := NewScreen(16, 2)
+	screen.kittyDiscard = true
+	screen.Write([]byte("discarded body"))
+	screen.Write([]byte("\x1b"))
+	screen.Write([]byte("\\after"))
+	require.Equal(t, "after           ", rowText(screen.Snapshot().Row(0)))
+}
+
+func TestScreenKittyPlacementUsesCursorAndCControlsMovement(t *testing.T) {
+	screen := NewScreen(10, 4)
+	screen.SetGeometry(Geometry{Cols: 10, Rows: 4, PixelWidth: 100, PixelHeight: 40})
+	screen.Write([]byte("\x1b[2;3H"))
+	payload := base64.RawStdEncoding.EncodeToString(make([]byte, 16))
+	screen.Write([]byte("\x1b_Ga=T,i=1,f=32,s=2,v=2,c=2,r=1,C=1;" + payload + "\x1b\\"))
+
+	snapshot := screen.GraphicsSnapshot()
+	require.NotNil(t, snapshot)
+	placements := snapshot.Placements()
+	require.Len(t, placements, 1)
+	require.Equal(t, graphics.PixelRect{X: 20, Y: 10, Width: 2, Height: 2}, placements[0].Destination())
+	require.Equal(t, 1, screen.CursorRow())
+	require.Equal(t, 2, screen.CursorCol())
+
+	screen.Write([]byte("\x1b_Ga=T,i=2,f=32,s=2,v=2,C=0;" + payload + "\x1b\\"))
+	require.Equal(t, 2, screen.CursorRow())
+	require.Equal(t, 3, screen.CursorCol())
+
+	screen.Write([]byte("\x1b[3;4H\x1b_Ga=T,i=3,f=32,s=1,v=1,m=1,C=1;AQ\x1b\\"))
+	screen.Write([]byte("\x1b_Gm=0;IDBA\x1b\\"))
+	placements = screen.GraphicsSnapshot().Placements()
+	require.Len(t, placements, 3)
+	require.Equal(t, graphics.PixelRect{X: 30, Y: 20, Width: 1, Height: 1}, placements[2].Destination())
+	require.Equal(t, 2, screen.CursorRow())
+	require.Equal(t, 3, screen.CursorCol())
 }
