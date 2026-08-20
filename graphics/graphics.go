@@ -113,7 +113,8 @@ type AssetSpec = AssetBlob
 // PlacementSpec describes one sparse placement. Source defaults to the full
 // asset. Destination is a pixel rectangle; Dest is accepted as a concise alias
 // for callers that use that spelling. Cells optionally records the cell-space
-// extent associated with the same placement.
+// extent associated with the same placement. HasCells and HasLayer preserve
+// explicit zero values when updating an existing placement.
 type PlacementSpec struct {
 	Asset       AssetID
 	AssetID     AssetID
@@ -122,7 +123,9 @@ type PlacementSpec struct {
 	Dest        PixelRect
 	Cells       CellRect
 	CellBounds  CellRect
+	HasCells    bool
 	Layer       int64
+	HasLayer    bool
 }
 
 // Viewport can constrain visible fragments in pixel space, cell space, or

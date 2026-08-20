@@ -129,6 +129,51 @@ func (s *Scene) AddAsset(blob AssetBlob) (AssetID, error) {
 // RegisterAsset is an alias for AddAsset.
 func (s *Scene) RegisterAsset(blob AssetBlob) (AssetID, error) { return s.AddAsset(blob) }
 
+// ReplaceAsset atomically replaces an asset while removing all placements that
+// reference it. If validation or resource limits reject the new asset, the
+// existing asset and placements remain unchanged.
+func (s *Scene) ReplaceAsset(id AssetID, blob AssetBlob) (AssetID, error) {
+	if s == nil {
+		return AssetID{}, fmt.Errorf("replace asset: %w", ErrAssetNotFound)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	candidate := cloneState(s.state)
+	old, ok := candidate.assets[id]
+	if !ok {
+		return AssetID{}, fmt.Errorf("replace asset: %w", ErrAssetNotFound)
+	}
+	for placementID, placement := range candidate.placements {
+		if placement.asset != id {
+			continue
+		}
+		delete(candidate.placements, placementID)
+		candidate.usage.Placements--
+	}
+	delete(candidate.assets, id)
+	candidate.usage.Assets--
+	candidate.usage.EncodedBytes -= uint64(len(old.encoded))
+	candidate.usage.DecodedPixels -= old.pixels
+	replacement, err := s.prepareAsset(blob, candidate)
+	if err != nil {
+		return AssetID{}, err
+	}
+	replacementID, ok := takeAssetID(candidate)
+	if !ok {
+		return AssetID{}, fmt.Errorf("replace asset: %w", ErrIdentifierOverflow)
+	}
+	replacement.id = replacementID
+	candidate.assets[replacementID] = replacement
+	candidate.usage.Assets++
+	candidate.usage.EncodedBytes += uint64(len(replacement.encoded))
+	candidate.usage.DecodedPixels += replacement.pixels
+	if err := advanceGeneration(candidate); err != nil {
+		return AssetID{}, fmt.Errorf("replace asset: %w", err)
+	}
+	s.state = candidate
+	return replacementID, nil
+}
+
 // AddEncodedAsset registers an asset from its encoded bytes and decoded pixel
 // dimensions. The input bytes are copied before this method returns.
 func (s *Scene) AddEncodedAsset(encoded []byte, width, height int64) (AssetID, error) {
@@ -418,14 +463,14 @@ func (s *Scene) preparePlacement(state *sceneState, spec PlacementSpec, existing
 	if cells == (CellRect{}) {
 		cells = spec.CellBounds
 	}
-	if existing != nil && cells == (CellRect{}) {
+	if existing != nil && !spec.HasCells && cells == (CellRect{}) {
 		cells = existing.cells
 	}
 	if cells != (CellRect{}) && (!cells.Valid() || cells.Empty()) {
 		return placementRecord{}, fmt.Errorf("place: %w", ErrInvalidPlacement)
 	}
 	layer := spec.Layer
-	if existing != nil && layer == 0 {
+	if existing != nil && !spec.HasLayer {
 		layer = existing.layer
 	}
 	return placementRecord{asset: asset, source: source, destination: destination, cells: cells, layer: layer}, nil
@@ -651,7 +696,15 @@ func (p PlacementView) Destination() PixelRect { return p.destination }
 func (p PlacementView) Cells() CellRect        { return p.cells }
 func (p PlacementView) Layer() int64           { return p.layer }
 func (p PlacementView) Spec() PlacementSpec {
-	return PlacementSpec{Asset: p.asset, Source: p.source, Destination: p.destination, Cells: p.cells, Layer: p.layer}
+	return PlacementSpec{
+		Asset:       p.asset,
+		Source:      p.source,
+		Destination: p.destination,
+		Cells:       p.cells,
+		HasCells:    p.cells != (CellRect{}),
+		Layer:       p.layer,
+		HasLayer:    true,
+	}
 }
 
 // Snapshot is an immutable reference to a scene state.
@@ -782,8 +835,14 @@ func viewportParts(viewport any) (PixelRect, CellRect, bool, bool) {
 	case CellRect:
 		return PixelRect{}, value, false, value.Valid() && !value.Empty()
 	case Viewport:
-		hasPixels := value.Pixels.Valid() && !value.Pixels.Empty()
-		hasCells := value.Cells.Valid() && !value.Cells.Empty()
+		hasPixels := value.Pixels != (PixelRect{})
+		hasCells := value.Cells != (CellRect{})
+		if hasPixels && (!value.Pixels.Valid() || value.Pixels.Empty()) {
+			return PixelRect{}, CellRect{}, false, false
+		}
+		if hasCells && (!value.Cells.Valid() || value.Cells.Empty()) {
+			return PixelRect{}, CellRect{}, false, false
+		}
 		return value.Pixels, value.Cells, hasPixels, hasCells
 	case *Viewport:
 		if value == nil {

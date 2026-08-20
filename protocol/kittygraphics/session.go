@@ -181,6 +181,18 @@ func (s *Session) SetPendingPlacement(x, y uint64) {
 	}
 }
 
+// AbortPendingUpload discards an in-flight chunked upload without changing
+// committed images or placements. Screen-level full clears use it to ensure a
+// continuation arriving after the clear cannot publish stale graphics.
+func (s *Session) AbortPendingUpload() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.upload = nil
+}
+
 func (s *Session) apply(command Command) ([][]byte, *Mutation, error) {
 	c := command.Controls
 	action := c.Action
@@ -294,24 +306,39 @@ func (s *Session) commitUpload(value upload, display bool) ([][]byte, *Mutation,
 	if s.scene == nil {
 		return s.failure(value.controls, value.imageID, ErrNoScene)
 	}
-	if old, ok := s.images[value.imageID]; ok {
-		// Remove adapter references while the old scene snapshot still
-		// contains its placements, then remove the scene asset atomically.
-		s.removeMappingsForAsset(old)
-		if err := s.scene.RemoveAssetCascade(old); err != nil {
+	old, replacing := s.images[value.imageID]
+	if !replacing && uint64(len(s.images)) >= s.limits.MaxImages {
+		return s.failure(value.controls, value.imageID, graphics.ErrTooManyAssets)
+	}
+	if replacing && display {
+		// Validate the prospective placement before replacing the asset. A
+		// rejected T command must leave both the old asset and its placements
+		// available for subsequent use.
+		if err := s.validateReplacementPlacement(value.controls, old, width, height); err != nil {
 			return s.failure(value.controls, value.imageID, err)
 		}
 	}
-	if uint64(len(s.images)) >= s.limits.MaxImages {
-		return s.failure(value.controls, value.imageID, graphics.ErrTooManyAssets)
+	var assetID graphics.AssetID
+	if replacing {
+		// Scene replacement is copy-on-write: a rejected new asset leaves the
+		// old asset and every placement that references it untouched.
+		assetID, err = s.scene.ReplaceAsset(old, graphics.AssetBlob{
+			Encoded: decoded,
+			Width:   width,
+			Height:  height,
+		})
+	} else {
+		assetID, err = s.scene.AddAsset(graphics.AssetBlob{
+			Encoded: decoded,
+			Width:   width,
+			Height:  height,
+		})
 	}
-	assetID, err := s.scene.AddAsset(graphics.AssetBlob{
-		Encoded: decoded,
-		Width:   width,
-		Height:  height,
-	})
 	if err != nil {
 		return s.failure(value.controls, value.imageID, err)
+	}
+	if replacing {
+		s.removeMappingsForAsset(old)
 	}
 	s.images[value.imageID] = assetID
 	if value.controls.HasImageNumber {
@@ -337,7 +364,8 @@ func (s *Session) commitUpload(value upload, display bool) ([][]byte, *Mutation,
 				delete(s.imageNumbers, value.controls.ImageNumber)
 			}
 			delete(s.children, childID)
-			return responses, nil, placeErr
+			failureResponses, _, failureErr := s.failure(value.controls, value.imageID, placeErr)
+			return failureResponses, nil, failureErr
 		}
 		return s.success(value.controls, value.imageID, responses...), mutation, nil
 	}
@@ -408,9 +436,100 @@ func (s *Session) put(c Controls) ([][]byte, *Mutation, error) {
 	}
 	responses, mutation, err := s.place(c, imageID, assetID)
 	if err != nil {
-		return responses, mutation, err
+		failureResponses, _, failureErr := s.failure(c, imageID, err)
+		return failureResponses, nil, failureErr
 	}
 	return s.success(c, imageID, responses...), mutation, nil
+}
+
+func (s *Session) validateReplacementPlacement(c Controls, old graphics.AssetID, width, height int64) error {
+	if _, err := placementSpec(c, old, width, height); err != nil {
+		return err
+	}
+	snapshot := s.scene.Snapshot()
+	removedScene := uint64(0)
+	for _, placement := range snapshot.Placements() {
+		if placement.AssetID() == old {
+			removedScene++
+		}
+	}
+	removedSession := uint64(0)
+	for _, mapped := range s.placements {
+		placement, ok := snapshot.Placement(mapped)
+		if !ok || placement.AssetID() == old {
+			removedSession++
+		}
+	}
+	projectedSession := uint64(len(s.placements)) - removedSession
+	projectedScene := snapshot.Usage().Placements - removedScene
+	needsSlot := true
+	if c.HasPlacementID {
+		if mapped, ok := s.placements[c.PlacementID]; ok {
+			if placement, ok := snapshot.Placement(mapped); ok && placement.AssetID() != old {
+				needsSlot = false
+			}
+		}
+	}
+	if needsSlot && projectedSession >= s.limits.MaxPlacements {
+		return graphics.ErrTooManyPlacements
+	}
+	if needsSlot && projectedScene >= s.scene.Limits().MaxPlacements {
+		return graphics.ErrTooManyPlacements
+	}
+	if s.scene.Generation() >= ^uint64(0)-1 {
+		return graphics.ErrGenerationOverflow
+	}
+	return nil
+}
+
+func placementSpec(c Controls, assetID graphics.AssetID, width, height int64) (graphics.PlacementSpec, error) {
+	source := graphics.PixelRect{Width: width, Height: height}
+	var err error
+	if source.X, err = checkedCoordinate(c.SourceX, c.HasSourceX); err != nil {
+		return graphics.PlacementSpec{}, err
+	}
+	if source.Y, err = checkedCoordinate(c.SourceY, c.HasSourceY); err != nil {
+		return graphics.PlacementSpec{}, err
+	}
+	if source.Width, err = checkedDimension(c.SourceWidth, c.HasSourceWidth, width); err != nil {
+		return graphics.PlacementSpec{}, err
+	}
+	if source.Height, err = checkedDimension(c.SourceHeight, c.HasSourceHeight, height); err != nil {
+		return graphics.PlacementSpec{}, err
+	}
+	x, err := checkedCoordinate(c.X, c.HasX)
+	if err != nil {
+		return graphics.PlacementSpec{}, err
+	}
+	y, err := checkedCoordinate(c.Y, c.HasY)
+	if err != nil {
+		return graphics.PlacementSpec{}, err
+	}
+	destination := graphics.PixelRect{X: x, Y: y, Width: source.Width, Height: source.Height}
+	if !source.Valid() || !destination.Valid() {
+		return graphics.PlacementSpec{}, graphics.ErrInvalidRect
+	}
+	assetBounds := graphics.PixelRect{Width: width, Height: height}
+	clipped, ok := assetBounds.Intersect(source)
+	if !ok || clipped != source {
+		return graphics.PlacementSpec{}, graphics.ErrInvalidPlacement
+	}
+	var cells graphics.CellRect
+	if c.HasColumns || c.HasRows {
+		if !c.HasColumns || !c.HasRows || c.Columns == 0 || c.Rows == 0 || c.Columns > math.MaxInt64 || c.Rows > math.MaxInt64 {
+			return graphics.PlacementSpec{}, fmt.Errorf("%w: c/r", ErrInvalidCommand)
+		}
+		cells = graphics.CellRect{X: signedCoordinateInt(c.CellOffsetX, c.HasCellOffsetX), Y: signedCoordinateInt(c.CellOffsetY, c.HasCellOffsetY), Width: int64(c.Columns), Height: int64(c.Rows)}
+		if !cells.Valid() {
+			return graphics.PlacementSpec{}, graphics.ErrInvalidRect
+		}
+	}
+	spec := graphics.PlacementSpec{Asset: assetID, Source: source, Destination: destination, Cells: cells, HasCells: c.HasColumns || c.HasRows}
+	if c.HasLayer {
+		spec.Layer = c.Layer
+		spec.HasLayer = true
+	}
+	return spec, nil
 }
 
 func (s *Session) place(c Controls, imageID uint64, assetID graphics.AssetID) ([][]byte, *Mutation, error) {
@@ -421,46 +540,9 @@ func (s *Session) place(c Controls, imageID uint64, assetID graphics.AssetID) ([
 	if !ok {
 		return nil, nil, ErrImageNotFound
 	}
-	width, height := asset.Width(), asset.Height()
-	source := graphics.PixelRect{Width: width, Height: height}
-	var err error
-	if source.X, err = checkedCoordinate(c.SourceX, c.HasSourceX); err != nil {
-		return nil, nil, err
-	}
-	if source.Y, err = checkedCoordinate(c.SourceY, c.HasSourceY); err != nil {
-		return nil, nil, err
-	}
-	if source.Width, err = checkedDimension(c.SourceWidth, c.HasSourceWidth, width); err != nil {
-		return nil, nil, err
-	}
-	if source.Height, err = checkedDimension(c.SourceHeight, c.HasSourceHeight, height); err != nil {
-		return nil, nil, err
-	}
-	x, err := checkedCoordinate(c.X, c.HasX)
+	spec, err := placementSpec(c, assetID, asset.Width(), asset.Height())
 	if err != nil {
 		return nil, nil, err
-	}
-	y, err := checkedCoordinate(c.Y, c.HasY)
-	if err != nil {
-		return nil, nil, err
-	}
-	destination := graphics.PixelRect{X: x, Y: y, Width: source.Width, Height: source.Height}
-	if !source.Valid() || !destination.Valid() {
-		return nil, nil, graphics.ErrInvalidRect
-	}
-	var cells graphics.CellRect
-	if c.HasColumns || c.HasRows {
-		if !c.HasColumns || !c.HasRows || c.Columns == 0 || c.Rows == 0 || c.Columns > math.MaxInt64 || c.Rows > math.MaxInt64 {
-			return nil, nil, fmt.Errorf("%w: c/r", ErrInvalidCommand)
-		}
-		cells = graphics.CellRect{X: signedCoordinateInt(c.CellOffsetX, c.HasCellOffsetX), Y: signedCoordinateInt(c.CellOffsetY, c.HasCellOffsetY), Width: int64(c.Columns), Height: int64(c.Rows)}
-		if !cells.Valid() {
-			return nil, nil, graphics.ErrInvalidRect
-		}
-	}
-	spec := graphics.PlacementSpec{Asset: assetID, Source: source, Destination: destination, Cells: cells}
-	if c.HasLayer {
-		spec.Layer = c.Layer
 	}
 	placementID := c.PlacementID
 	if placementID == 0 {

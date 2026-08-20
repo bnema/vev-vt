@@ -216,6 +216,96 @@ func TestChunkedTransmitAndDisplayRetainsDisplayAction(t *testing.T) {
 	}
 }
 
+func TestPlacementFailureEmitsStableProtocolError(t *testing.T) {
+	scene := graphics.NewScene(graphics.Limits{})
+	session := NewSession(scene)
+	if _, err := session.Feed(apc("a=t,i=1,f=32,s=1,v=1,q=2", "AQIDBA")); err != nil {
+		t.Fatal(err)
+	}
+	result, err := session.Feed(apc("a=p,i=1,p=7,w=2,q=0", ""))
+	if !errors.Is(err, graphics.ErrInvalidPlacement) {
+		t.Fatalf("placement error = %v", err)
+	}
+	if got := result.Bytes(); string(got) != "\x1b_Gi=1;EINVAL\x1b\\" {
+		t.Fatalf("placement response = %q", got)
+	}
+	if len(result.Mutations) != 0 || scene.Usage().Placements != 0 {
+		t.Fatalf("failed placement mutated state: result=%#v usage=%#v", result, scene.Usage())
+	}
+}
+
+func TestFailedImageReplacementPreservesAssetAndPlacements(t *testing.T) {
+	scene := graphics.NewScene(graphics.Limits{MaxEncodedBytes: 4, MaxDecodedPixels: 4})
+	session := NewSession(scene)
+	if _, err := session.Feed(apc("a=t,i=1,f=32,s=1,v=1,q=2", "AQIDBA")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := session.Feed(apc("a=p,i=1,p=7,q=2", "")); err != nil {
+		t.Fatal(err)
+	}
+	assetID, ok := session.Image(1)
+	if !ok {
+		t.Fatal("original image mapping missing")
+	}
+	placementID, ok := session.Placement(7)
+	if !ok {
+		t.Fatal("original placement mapping missing")
+	}
+	before := scene.Snapshot()
+	result, err := session.Feed(apc("a=t,i=1,f=32,s=2,v=1,q=0", "AQIDBAUGBwg"))
+	if !errors.Is(err, graphics.ErrEncodedBudget) {
+		t.Fatalf("replacement error = %v", err)
+	}
+	if got := result.Bytes(); string(got) != "\x1b_Gi=1;E2BIG\x1b\\" {
+		t.Fatalf("replacement response = %q", got)
+	}
+	if got, ok := session.Image(1); !ok || got != assetID {
+		t.Fatalf("replacement changed image mapping: id=%v ok=%v want=%v", got, ok, assetID)
+	}
+	if got, ok := session.Placement(7); !ok || got != placementID {
+		t.Fatalf("replacement changed placement mapping: id=%v ok=%v want=%v", got, ok, placementID)
+	}
+	if scene.Snapshot().Generation() != before.Generation() || scene.Usage() != before.Usage() {
+		t.Fatalf("failed replacement changed scene: before=%#v after=%#v", before.Usage(), scene.Usage())
+	}
+	if _, ok := scene.Snapshot().Placement(placementID); !ok {
+		t.Fatal("failed replacement removed original placement")
+	}
+}
+
+func TestFailedDisplayedImageReplacementPreservesOldPlacement(t *testing.T) {
+	scene := graphics.NewScene(graphics.Limits{})
+	session := NewSession(scene)
+	if _, err := session.Feed(apc("a=T,i=1,f=32,s=1,v=1,q=2", "AQIDBA")); err != nil {
+		t.Fatal(err)
+	}
+	assetID, ok := session.Image(1)
+	if !ok {
+		t.Fatal("original image mapping missing")
+	}
+	placementID, ok := session.Placement(1)
+	if !ok {
+		t.Fatal("original placement mapping missing")
+	}
+
+	result, err := session.Feed(apc("a=T,i=1,f=32,s=1,v=1,w=2,q=0", "AQIDBA"))
+	if !errors.Is(err, graphics.ErrInvalidPlacement) {
+		t.Fatalf("replacement placement error = %v", err)
+	}
+	if got := result.Bytes(); string(got) != "\x1b_Gi=1;EINVAL\x1b\\" {
+		t.Fatalf("replacement response = %q", got)
+	}
+	if got, ok := session.Image(1); !ok || got != assetID {
+		t.Fatalf("failed displayed replacement changed image: id=%v ok=%v want=%v", got, ok, assetID)
+	}
+	if got, ok := session.Placement(1); !ok || got != placementID {
+		t.Fatalf("failed displayed replacement changed placement: id=%v ok=%v want=%v", got, ok, placementID)
+	}
+	if got := scene.Usage(); got.Assets != 1 || got.Placements != 1 {
+		t.Fatalf("failed displayed replacement usage = %#v", got)
+	}
+}
+
 func TestDeleteSelectedImagePlacementsAndImageNumberNamespace(t *testing.T) {
 	scene := graphics.NewScene(graphics.Limits{})
 	session := NewSession(scene)

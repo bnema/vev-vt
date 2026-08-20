@@ -59,6 +59,35 @@ func TestScreenKittyGraphicsPrimaryAndAlternateState(t *testing.T) {
 	require.Equal(t, primary.Usage(), screen.GraphicsSnapshot().Usage())
 }
 
+func TestScreenReenteringActiveAlternatePreservesGraphicsState(t *testing.T) {
+	screen := NewScreen(8, 3)
+	screen.Write([]byte("\x1b[?1049h"))
+	screen.Write(screenKittyImageAPC("T"))
+	before := screen.GraphicsSnapshot()
+	require.NotNil(t, before)
+	require.Equal(t, uint64(1), before.Usage().Placements)
+
+	screen.Write([]byte("\x1b[?1049h"))
+	after := screen.GraphicsSnapshot()
+	require.NotNil(t, after)
+	require.Equal(t, before.Usage(), after.Usage())
+}
+
+func TestScreenFullClearAbortsPendingUploadAndClearsPlacements(t *testing.T) {
+	screen := NewScreen(8, 3)
+	screen.Write(screenKittyImageAPC("T"))
+	screen.Write([]byte("\x1b_Ga=T,i=2,f=32,s=1,v=1,m=1,C=1;AQ\x1b\\"))
+	require.Equal(t, uint64(1), screen.GraphicsSnapshot().Usage().Placements)
+
+	screen.Write([]byte("\x1b[2J"))
+	require.Equal(t, uint64(0), screen.GraphicsSnapshot().Usage().Placements)
+	screen.Write([]byte("\x1b_Gm=0;IDBA\x1b\\"))
+	graphicsSnapshot := screen.GraphicsSnapshot()
+	require.NotNil(t, graphicsSnapshot)
+	require.Equal(t, uint64(1), graphicsSnapshot.Usage().Assets)
+	require.Equal(t, uint64(0), graphicsSnapshot.Usage().Placements)
+}
+
 func TestScreenKittyGraphicsOrdinaryResetClearScrollAndResize(t *testing.T) {
 	screen := NewScreen(3, 2)
 	screen.Write(screenKittyImageAPC("T"))

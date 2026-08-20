@@ -164,3 +164,58 @@ func TestVisibleFragmentsPreserveScaledSourceMapping(t *testing.T) {
 		t.Fatalf("cell clipping = %#v", cellFragments)
 	}
 }
+
+func TestVisibleFragmentsRejectInvalidMixedViewport(t *testing.T) {
+	scene := NewScene(Limits{MaxEncodedBytes: 64, MaxDecodedPixels: 64})
+	assetID, err := scene.AddAsset(testAsset(t, []byte{1}, 2, 2))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := scene.Place(PlacementSpec{
+		Asset:       assetID,
+		Destination: PixelRect{Width: 2, Height: 2},
+		Cells:       CellRect{Width: 2, Height: 2},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, viewport := range []Viewport{
+		{Pixels: PixelRect{Width: 2, Height: 2}, Cells: CellRect{Width: -1, Height: 1}},
+		{Pixels: PixelRect{Width: 2, Height: 2}, Cells: CellRect{X: 1}},
+		{Pixels: PixelRect{Width: -1, Height: 1}, Cells: CellRect{Width: 2, Height: 2}},
+	} {
+		if fragments := scene.Snapshot().VisibleFragments(viewport); len(fragments) != 0 {
+			t.Fatalf("invalid mixed viewport %#v produced fragments %#v", viewport, fragments)
+		}
+	}
+}
+
+func TestUpdatePlacementCanResetLayerAndClearCells(t *testing.T) {
+	scene := NewScene(Limits{MaxEncodedBytes: 64, MaxDecodedPixels: 64})
+	assetID, err := scene.AddAsset(testAsset(t, []byte{1}, 4, 4))
+	if err != nil {
+		t.Fatal(err)
+	}
+	placementID, err := scene.Place(PlacementSpec{
+		Asset:       assetID,
+		Destination: PixelRect{Width: 4, Height: 4},
+		Cells:       CellRect{X: 1, Y: 2, Width: 3, Height: 2},
+		Layer:       7,
+		HasLayer:    true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := scene.UpdatePlacement(placementID, PlacementSpec{HasCells: true, HasLayer: true}); err != nil {
+		t.Fatal(err)
+	}
+	placement, ok := scene.Snapshot().Placement(placementID)
+	if !ok {
+		t.Fatal("updated placement missing")
+	}
+	if placement.Layer() != 0 {
+		t.Fatalf("layer = %d, want 0", placement.Layer())
+	}
+	if placement.Cells() != (CellRect{}) {
+		t.Fatalf("cells = %#v, want cleared", placement.Cells())
+	}
+}

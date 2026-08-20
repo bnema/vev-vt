@@ -36,6 +36,7 @@ func (g *screenGraphicsState) clearPlacements() {
 	if g == nil || g.kitty == nil {
 		return
 	}
+	g.kitty.AbortPendingUpload()
 	_, _ = g.kitty.Process(kittygraphics.Command{Controls: kittygraphics.Controls{
 		Action:    kittygraphics.ActionDelete,
 		HasAction: true,

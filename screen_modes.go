@@ -194,20 +194,21 @@ func (s *Screen) setMode(private bool, parts []int, enabled bool) {
 }
 
 func (s *Screen) enterAlternateScreen() {
-	if s.alternate == nil {
-		s.alternate = &screenState{
-			frame:        cloneFrame(s.Frame),
-			buffer:       s.buffer.clone(),
-			row:          s.Row,
-			col:          s.Col,
-			style:        s.Style,
-			scrollTop:    s.scrollTop,
-			scrollBottom: s.scrollBottom,
-			savedCursor:  s.savedCursor,
-			graphics:     s.graphics,
-			originMode:   s.originMode,
-			insertMode:   s.insertMode,
-		}
+	if s.alternate != nil {
+		return
+	}
+	s.alternate = &screenState{
+		frame:        cloneFrame(s.Frame),
+		buffer:       s.buffer.clone(),
+		row:          s.Row,
+		col:          s.Col,
+		style:        s.Style,
+		scrollTop:    s.scrollTop,
+		scrollBottom: s.scrollBottom,
+		savedCursor:  s.savedCursor,
+		graphics:     s.graphics,
+		originMode:   s.originMode,
+		insertMode:   s.insertMode,
 	}
 	s.graphics = nil
 	s.buffer = s.newBuffer(s.Frame.Width, s.Frame.Height)
