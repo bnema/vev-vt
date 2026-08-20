@@ -16,9 +16,15 @@ func (s *Screen) SetGeometry(geometry Geometry) {
 		return
 	}
 	cellsChanged := s.geometry.Cols != geometry.Cols || s.geometry.Rows != geometry.Rows
+	geometryChanged := s.geometry != geometry
 	s.geometry = geometry
 	if cellsChanged {
 		s.Resize(geometry.Cols, geometry.Rows)
+	} else if geometryChanged {
+		s.escapeBuf = s.escapeBuf[:0]
+		s.kittyDiscard = false
+		s.kittyDiscardEscaped = false
+		s.abortAllKittyPending()
 	}
 }
 

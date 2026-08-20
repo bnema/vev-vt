@@ -5,6 +5,10 @@ import renderer "github.com/bnema/vev-vt/core"
 func (s *Screen) Resize(width, height int) {
 	if width == s.Frame.Width && height == s.Frame.Height {
 		s.geometry.Cols, s.geometry.Rows = width, height
+		s.escapeBuf = s.escapeBuf[:0]
+		s.kittyDiscard = false
+		s.kittyDiscardEscaped = false
+		s.abortAllKittyPending()
 		return
 	}
 	if width <= 0 || height <= 0 {
@@ -67,7 +71,7 @@ func (s *Screen) Resize(width, height int) {
 	s.escapeBuf = s.escapeBuf[:0]
 	s.kittyDiscard = false
 	s.kittyDiscardEscaped = false
-	s.kittyPendingDisplay = nil
+	s.abortAllKittyPending()
 	s.resetScrollRegion()
 	s.fullRedraw()
 }

@@ -15,20 +15,26 @@ func parseControls(header []byte) (Controls, error) {
 	if len(header) == 0 {
 		return c, nil
 	}
-	seen := make(map[byte]struct{}, 8)
-	for _, field := range splitComma(header) {
+	var seen [256]bool
+	start := 0
+	for i := 0; i <= len(header); i++ {
+		if i != len(header) && header[i] != ',' {
+			continue
+		}
+		field := header[start:i]
 		if len(field) < 3 || field[1] != '=' {
 			return Controls{}, fmt.Errorf("%w: control %q", ErrInvalidCommand, field)
 		}
 		key := field[0]
-		if _, ok := seen[key]; ok {
+		if seen[key] {
 			return Controls{}, fmt.Errorf("%w: %c", ErrDuplicateControl, key)
 		}
-		seen[key] = struct{}{}
+		seen[key] = true
 		value := field[2:]
 		if err := parseControl(&c, key, value); err != nil {
 			return Controls{}, err
 		}
+		start = i + 1
 	}
 	if c.HasAction && !c.Action.Valid() {
 		return Controls{}, fmt.Errorf("%w: %q", ErrUnknownAction, c.Action)
@@ -46,18 +52,6 @@ func parseControls(header []byte) (Controls, error) {
 		return Controls{}, fmt.Errorf("%w: C=%d", ErrInvalidCommand, c.Cursor)
 	}
 	return c, nil
-}
-
-func splitComma(data []byte) [][]byte {
-	var out [][]byte
-	start := 0
-	for i, b := range data {
-		if b == ',' {
-			out = append(out, data[start:i])
-			start = i + 1
-		}
-	}
-	return append(out, data[start:])
 }
 
 func parseControl(c *Controls, key byte, value []byte) error {
@@ -93,9 +87,12 @@ func parseControl(c *Controls, key byte, value []byte) error {
 	case ControlMore:
 		return setUint(&c.More, &c.HasMore, key, value)
 	case ControlQuiet:
-		var n uint64
-		if err := setUint(&n, nil, key, value); err != nil {
-			return err
+		n, err := parseUint(value)
+		if err != nil {
+			return fieldError(key, err)
+		}
+		if n > uint64(QuietAll) {
+			return fmt.Errorf("%w: quiet=%d", ErrInvalidCommand, n)
 		}
 		c.Quiet, c.HasQuiet = Quiet(n), true
 	case ControlWidth:

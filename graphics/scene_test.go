@@ -69,6 +69,22 @@ func TestAssetBlobOwnershipAndSnapshotLifecycle(t *testing.T) {
 	}
 }
 
+func TestDecodedPixelAccountingRejectsForgedDeclarations(t *testing.T) {
+	scene := NewScene(Limits{MaxEncodedBytes: 64, MaxDecodedPixels: 4})
+	_, err := scene.AddAsset(AssetBlob{
+		Encoded:       []byte{1},
+		Width:         2,
+		Height:        2,
+		DecodedPixels: 1,
+	})
+	if !errors.Is(err, ErrInvalidAsset) {
+		t.Fatalf("forged decoded-pixel declaration error = %v", err)
+	}
+	if got := scene.Usage(); got != (Usage{}) {
+		t.Fatalf("rejected asset changed usage: %#v", got)
+	}
+}
+
 func TestAssetAndPlacementQuotasAreTransactional(t *testing.T) {
 	scene := NewScene(Limits{
 		MaxAssets:        1,

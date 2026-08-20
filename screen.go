@@ -172,6 +172,7 @@ func (s *Screen) Write(data []byte) {
 				if len(data) <= limit {
 					s.escapeBuf = append(s.escapeBuf[:0], data...)
 				} else if isKittyEscapePrefix(data) {
+					s.abortKittyPendingDisplay()
 					s.kittyDiscard = true
 					s.kittyDiscardEscaped = false
 				}
@@ -219,6 +220,8 @@ func (s *Screen) continueKittyEscape(prefix, data []byte) []byte {
 		if len(prefix)+1 <= maxKittyEscapeBufferLen {
 			apc := append(prefix, data[:1]...)
 			s.dispatchKittyGraphics(apc)
+		} else {
+			s.abortKittyPendingDisplay()
 		}
 		return data[1:]
 	}
@@ -228,6 +231,8 @@ func (s *Screen) continueKittyEscape(prefix, data []byte) []byte {
 			if len(prefix)+end <= maxKittyEscapeBufferLen {
 				apc := append(prefix, data[:end]...)
 				s.dispatchKittyGraphics(apc)
+			} else {
+				s.abortKittyPendingDisplay()
 			}
 			return data[end:]
 		}
@@ -236,6 +241,8 @@ func (s *Screen) continueKittyEscape(prefix, data []byte) []byte {
 			if len(prefix)+end <= maxKittyEscapeBufferLen {
 				apc := append(prefix, data[:end]...)
 				s.dispatchKittyGraphics(apc)
+			} else {
+				s.abortKittyPendingDisplay()
 			}
 			return data[end:]
 		}
@@ -246,8 +253,13 @@ func (s *Screen) continueKittyEscape(prefix, data []byte) []byte {
 		s.escapeBuf = returnData
 		return nil
 	}
+	s.abortKittyPendingDisplay()
 	s.kittyDiscard = true
-	s.kittyDiscardEscaped = false
+	escaped := len(prefix) != 0 && prefix[len(prefix)-1] == 0x1b
+	if remaining > 0 {
+		escaped = data[remaining-1] == 0x1b
+	}
+	s.kittyDiscardEscaped = escaped
 	tail := data[remaining:]
 	return tail[s.consumeKittyDiscard(tail):]
 }
@@ -349,12 +361,22 @@ func (s *Screen) consumeKittyGraphics(data []byte) (consumed int, partial bool) 
 	for i := 3; i < len(data); i++ {
 		switch data[i] {
 		case 0x9c: // C1 string terminator.
-			s.dispatchKittyGraphics(data[:i+1])
-			return i + 1, false
+			end := i + 1
+			if end > maxKittyEscapeBufferLen {
+				s.abortKittyPendingDisplay()
+				return end, false
+			}
+			s.dispatchKittyGraphics(data[:end])
+			return end, false
 		case 0x1b:
 			if i+1 < len(data) && data[i+1] == '\\' {
-				s.dispatchKittyGraphics(data[:i+2])
-				return i + 2, false
+				end := i + 2
+				if end > maxKittyEscapeBufferLen {
+					s.abortKittyPendingDisplay()
+					return end, false
+				}
+				s.dispatchKittyGraphics(data[:end])
+				return end, false
 			}
 		}
 	}
@@ -362,12 +384,13 @@ func (s *Screen) consumeKittyGraphics(data []byte) (consumed int, partial bool) 
 }
 
 func (s *Screen) dispatchKittyGraphics(apc []byte) {
-	if s.graphics == nil {
-		s.graphics = newScreenGraphicsState()
-	}
 	command, err := kittygraphics.ParseAPC(apc)
 	if err != nil {
+		s.abortKittyPendingDisplay()
 		return
+	}
+	if s.graphics == nil {
+		s.graphics = newScreenGraphicsState()
 	}
 	controls := command.Controls
 	pending := s.kittyPendingDisplay
@@ -405,7 +428,7 @@ func (s *Screen) dispatchKittyGraphics(apc []byte) {
 	}
 	result, processErr := s.graphics.kitty.Process(command)
 	if processErr != nil {
-		s.kittyPendingDisplay = nil
+		s.abortKittyPendingDisplay()
 	}
 	for _, response := range result.Responses {
 		s.respond(response)
@@ -422,23 +445,30 @@ func (s *Screen) dispatchKittyGraphics(apc []byte) {
 }
 
 func (s *Screen) kittyCursorX() uint64 {
-	if s.geometry.PixelWidth > 0 && s.geometry.Cols > 0 {
-		cellWidth := s.geometry.PixelWidth / s.geometry.Cols
-		if cellWidth > 0 {
-			return uint64(s.Col * cellWidth)
-		}
+	if cellWidth, _, ok := s.kittyCellPixels(); ok {
+		return uint64(s.Col * cellWidth)
 	}
 	return uint64(s.Col)
 }
 
 func (s *Screen) kittyCursorY() uint64 {
-	if s.geometry.PixelHeight > 0 && s.geometry.Rows > 0 {
-		cellHeight := s.geometry.PixelHeight / s.geometry.Rows
-		if cellHeight > 0 {
-			return uint64(s.Row * cellHeight)
-		}
+	_, cellHeight, ok := s.kittyCellPixels()
+	if ok {
+		return uint64(s.Row * cellHeight)
 	}
 	return uint64(s.Row)
+}
+
+func (s *Screen) kittyCellPixels() (width, height int, ok bool) {
+	if !s.geometry.PixelsKnown() || s.geometry.Cols <= 0 || s.geometry.Rows <= 0 {
+		return 0, 0, false
+	}
+	width = s.geometry.PixelWidth / s.geometry.Cols
+	height = s.geometry.PixelHeight / s.geometry.Rows
+	if width <= 0 || height <= 0 {
+		return 0, 0, false
+	}
+	return width, height, true
 }
 
 func (s *Screen) applyKittyCursorMovement(c kittygraphics.Controls) {

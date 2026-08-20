@@ -145,6 +145,9 @@ func TestMalformedTruncatedInterleavedAndOversizeAreBounded(t *testing.T) {
 	if _, err := ParseCommand([]byte("a=q,i=18446744073709551616;")); !errors.Is(err, ErrIntegerOverflow) {
 		t.Fatalf("integer overflow error = %v", err)
 	}
+	if _, err := ParseCommand([]byte("a=q,q=256;")); !errors.Is(err, ErrInvalidCommand) {
+		t.Fatalf("out-of-range quiet error = %v", err)
+	}
 	if _, err := ParseCommand([]byte("a=q,i=1,I=2;")); !errors.Is(err, ErrInvalidCommand) {
 		t.Fatalf("mixed image selector error = %v", err)
 	}
@@ -213,6 +216,14 @@ func TestChunkedTransmitAndDisplayRetainsDisplayAction(t *testing.T) {
 	}
 	if got := scene.Usage(); got.Assets != 1 || got.Placements != 1 {
 		t.Fatalf("usage = %#v", got)
+	}
+}
+
+func TestImplicitPlacementIDsStopAtKittyLimit(t *testing.T) {
+	session := NewSession(nil)
+	session.nextPlacement = MaxKittyID + 1
+	if _, ok := session.takePlacementID(); ok {
+		t.Fatal("implicit placement ID exceeded Kitty's uint32 namespace")
 	}
 }
 

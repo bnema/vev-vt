@@ -546,7 +546,11 @@ func (s *Session) place(c Controls, imageID uint64, assetID graphics.AssetID) ([
 	}
 	placementID := c.PlacementID
 	if placementID == 0 {
-		placementID = s.nextPlacementID()
+		var ok bool
+		placementID, ok = s.takePlacementID()
+		if !ok {
+			return nil, nil, graphics.ErrIdentifierOverflow
+		}
 	}
 	if existing, ok := s.placements[placementID]; ok {
 		if err := s.scene.UpdatePlacement(existing, spec); err != nil {
@@ -603,15 +607,15 @@ func (s *Session) delete(c Controls) ([][]byte, *Mutation, error) {
 			return s.failure(c, id, ErrNoScene)
 		}
 		snapshot := s.scene.Snapshot()
+		placementIDs := make([]uint64, 0)
 		for placementID, mapped := range s.placements {
 			placement, ok := snapshot.Placement(mapped)
-			if !ok || placement.AssetID() != asset {
-				continue
+			if ok && placement.AssetID() == asset {
+				placementIDs = append(placementIDs, placementID)
 			}
-			if err := s.scene.RemovePlacement(mapped); err != nil {
-				return s.failure(c, id, err)
-			}
-			delete(s.placements, placementID)
+		}
+		if err := s.removePlacements(placementIDs); err != nil {
+			return s.failure(c, id, err)
 		}
 		return s.success(c, id), &Mutation{Kind: MutationDeletePlacements, ImageID: id, AssetID: asset}, nil
 	case DeletePlacement:
@@ -630,11 +634,12 @@ func (s *Session) delete(c Controls) ([][]byte, *Mutation, error) {
 			return s.failure(c, responseID, ErrNoScene)
 		}
 		if target == DeleteAllPlacements {
-			for placementID, mapped := range s.placements {
-				if err := s.scene.RemovePlacement(mapped); err != nil {
-					return s.failure(c, responseID, err)
-				}
-				delete(s.placements, placementID)
+			placementIDs := make([]uint64, 0, len(s.placements))
+			for placementID := range s.placements {
+				placementIDs = append(placementIDs, placementID)
+			}
+			if err := s.removePlacements(placementIDs); err != nil {
+				return s.failure(c, responseID, err)
 			}
 		} else {
 			if err := s.scene.Clear(); err != nil {
@@ -649,6 +654,33 @@ func (s *Session) delete(c Controls) ([][]byte, *Mutation, error) {
 	default:
 		return s.failure(c, responseID, ErrUnsupported)
 	}
+}
+
+func (s *Session) removePlacements(ids []uint64) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	operations := make([]graphics.Operation, 0, len(ids))
+	for _, id := range ids {
+		mapped, ok := s.placements[id]
+		if !ok {
+			continue
+		}
+		operations = append(operations, graphics.Operation{
+			Kind:        graphics.OperationRemovePlacement,
+			PlacementID: mapped,
+		})
+	}
+	if len(operations) == 0 {
+		return nil
+	}
+	if err := s.scene.ApplyOperations(operations); err != nil {
+		return err
+	}
+	for _, id := range ids {
+		delete(s.placements, id)
+	}
+	return nil
 }
 
 func (s *Session) removeMappingsForAsset(asset graphics.AssetID) {
@@ -730,14 +762,19 @@ func (s *Session) nextImageID() uint64 {
 	}
 }
 
-func (s *Session) nextPlacementID() uint64 {
-	max := uint64(0)
-	for id := range s.placements {
-		if id > max {
-			max = id
+func (s *Session) takePlacementID() (uint64, bool) {
+	for s.nextPlacement != 0 && s.nextPlacement <= MaxKittyID {
+		id := s.nextPlacement
+		if s.nextPlacement == MaxKittyID {
+			s.nextPlacement = 0
+		} else {
+			s.nextPlacement++
+		}
+		if _, exists := s.placements[id]; !exists {
+			return id, true
 		}
 	}
-	return max + 1
+	return 0, false
 }
 
 func checkedProduct(left, right uint64) (uint64, bool) {

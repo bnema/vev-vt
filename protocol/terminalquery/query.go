@@ -145,20 +145,35 @@ func da1Terminator(data []byte) (int, bool) {
 }
 
 func validKittyResponse(data []byte) bool {
-	if len(data) < len("\x1b_Gi=31;OK\x1b\\") || !bytes.HasPrefix(data, []byte("\x1b_G")) || !bytes.HasSuffix(data, []byte("\x1b\\")) {
-		return false
-	}
-	head := data[3 : len(data)-2]
-	return bytes.Contains(head, []byte("i=31")) && bytes.Contains(head, []byte("OK"))
+	return bytes.Equal(data, []byte("\x1b_Gi=31;OK\x1b\\"))
 }
 
 func validDA1Response(data []byte) bool {
-	if len(data) < 4 || !bytes.HasPrefix(data, []byte("\x1b[")) || data[len(data)-1] != 'c' {
+	if len(data) < 5 || !bytes.HasPrefix(data, []byte("\x1b[")) || data[len(data)-1] != 'c' || data[2] != '?' || len(data) > maxProbeResponseBytes {
 		return false
 	}
 	// DA1 is a primary response. Secondary DA (ESC[>...c) is deliberately
-	// not sufficient for a direct graphics declaration.
-	return data[2] == '?' && len(data) <= maxProbeResponseBytes
+	// not sufficient for a direct graphics declaration. The parameter body is
+	// a non-empty semicolon-separated list of decimal numbers.
+	body := data[3 : len(data)-1]
+	if len(body) == 0 || body[0] == ';' || body[len(body)-1] == ';' {
+		return false
+	}
+	previousSeparator := false
+	for _, b := range body {
+		switch {
+		case b >= '0' && b <= '9':
+			previousSeparator = false
+		case b == ';':
+			if previousSeparator {
+				return false
+			}
+			previousSeparator = true
+		default:
+			return false
+		}
+	}
+	return !previousSeparator
 }
 
 func suffixPrefixLen(data []byte) int {

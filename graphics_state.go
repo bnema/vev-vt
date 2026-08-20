@@ -48,34 +48,37 @@ func (g *screenGraphicsState) clearPlacements() {
 }
 
 func (s *Screen) graphicsClearPlacements() {
-	if s != nil && s.graphics != nil {
+	if s == nil {
+		return
+	}
+	if s.graphics != nil {
 		s.graphics.clearPlacements()
 	}
+	s.kittyPendingDisplay = nil
 }
 
-// GraphicsScene returns the active screen buffer's graphics scene, or nil
-// before graphics has been used. Calling it never allocates graphics state.
-func (s *Screen) GraphicsScene() *graphics.Scene {
-	if s == nil || s.graphics == nil {
-		return nil
+func (s *Screen) abortKittyPendingDisplay() {
+	if s == nil {
+		return
 	}
-	return s.graphics.scene
-}
-
-// Graphics is a concise alias for GraphicsScene.
-func (s *Screen) Graphics() *graphics.Scene { return s.GraphicsScene() }
-
-// GraphicsSession returns the active screen buffer's Kitty graphics adapter,
-// or nil before graphics has been used.
-func (s *Screen) GraphicsSession() *kittygraphics.Session {
-	if s == nil || s.graphics == nil {
-		return nil
+	s.kittyPendingDisplay = nil
+	if s.graphics != nil && s.graphics.kitty != nil {
+		s.graphics.kitty.AbortPendingUpload()
 	}
-	return s.graphics.kitty
 }
 
-// KittyGraphics is an adapter-named alias for GraphicsSession.
-func (s *Screen) KittyGraphics() *kittygraphics.Session { return s.GraphicsSession() }
+func (s *Screen) abortAllKittyPending() {
+	if s == nil {
+		return
+	}
+	s.abortKittyPendingDisplay()
+	if state := s.alternate; state != nil {
+		state.kittyPendingDisplay = nil
+		if state.graphics != nil && state.graphics.kitty != nil {
+			state.graphics.kitty.AbortPendingUpload()
+		}
+	}
+}
 
 // GraphicsSnapshot returns an immutable snapshot of the active screen
 // buffer's graphics scene, or nil before graphics has been used.

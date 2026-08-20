@@ -39,6 +39,31 @@ func TestProbeRecognizesFragmentedResponsesAndReplaysInput(t *testing.T) {
 	require.Equal(t, "abz", string(unrelated))
 }
 
+func TestProbeRequiresExactCapabilityResponses(t *testing.T) {
+	for _, data := range []string{
+		"\x1b_Gi=31;OK,extra\x1b\\",
+		"\x1b_Gi=310;OK\x1b\\",
+		"\x1b_Gi=31;OKAY\x1b\\",
+		"\x1b[?1;;2c",
+		"\x1b[?x;2c",
+	} {
+		var p Probe
+		got := append(p.Feed([]byte(data)), p.Finish()...)
+		require.False(t, p.Ready(), "response %q was accepted", data)
+		require.Equal(t, data, string(got))
+	}
+}
+
+func FuzzProbeNeverPanics(f *testing.F) {
+	f.Add([]byte("text\x1b[?1;2c\x1b_Gi=31;OK\x1b\\"))
+	f.Add([]byte("\x1b_G"))
+	f.Fuzz(func(t *testing.T, data []byte) {
+		var p Probe
+		_ = p.Feed(data)
+		_ = p.Finish()
+	})
+}
+
 func TestProbeBoundsUnterminatedResponse(t *testing.T) {
 	var p Probe
 	input := append([]byte("prefix"), []byte("\x1b_G")...)

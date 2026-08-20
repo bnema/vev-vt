@@ -325,16 +325,17 @@ const MaxKittyID = uint64(^uint32(0))
 // Feed and query methods serially; the mutex also makes read-only mapping
 // access safe while a caller publishes a snapshot.
 type Session struct {
-	mu           sync.Mutex
-	scene        *graphics.Scene
-	limits       Limits
-	parser       *Parser
-	images       map[uint64]graphics.AssetID
-	imageNumbers map[uint64]uint64
-	placements   map[uint64]graphics.PlacementID
-	children     map[uint64]Child
-	nextChild    uint64
-	upload       *upload
+	mu            sync.Mutex
+	scene         *graphics.Scene
+	limits        Limits
+	parser        *Parser
+	images        map[uint64]graphics.AssetID
+	imageNumbers  map[uint64]uint64
+	placements    map[uint64]graphics.PlacementID
+	children      map[uint64]Child
+	nextChild     uint64
+	nextPlacement uint64
+	upload        *upload
 }
 
 // Adapter is an alias for the stateful Kitty graphics session.
@@ -359,14 +360,15 @@ func NewSession(scene *graphics.Scene, config ...Limits) *Session {
 	}
 	l = normalizeLimits(l)
 	return &Session{
-		scene:        scene,
-		limits:       l,
-		parser:       NewParser(l),
-		images:       make(map[uint64]graphics.AssetID),
-		imageNumbers: make(map[uint64]uint64),
-		placements:   make(map[uint64]graphics.PlacementID),
-		children:     make(map[uint64]Child),
-		nextChild:    1,
+		scene:         scene,
+		limits:        l,
+		parser:        NewParser(l),
+		images:        make(map[uint64]graphics.AssetID),
+		imageNumbers:  make(map[uint64]uint64),
+		placements:    make(map[uint64]graphics.PlacementID),
+		children:      make(map[uint64]Child),
+		nextChild:     1,
+		nextPlacement: 1,
 	}
 }
 
@@ -377,14 +379,6 @@ func NewAdapter(scene *graphics.Scene, config ...Limits) *Session {
 
 // New is a concise constructor alias for NewSession.
 func New(scene *graphics.Scene, config ...Limits) *Session { return NewSession(scene, config...) }
-
-// Scene returns the scene owned by the session.
-func (s *Session) Scene() *graphics.Scene {
-	if s == nil {
-		return nil
-	}
-	return s.scene
-}
 
 // Image returns the graphics asset mapped from a Kitty image ID.
 func (s *Session) Image(imageID uint64) (graphics.AssetID, bool) {

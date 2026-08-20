@@ -88,6 +88,45 @@ func TestScreenFullClearAbortsPendingUploadAndClearsPlacements(t *testing.T) {
 	require.Equal(t, uint64(0), graphicsSnapshot.Usage().Placements)
 }
 
+func TestScreenPendingTransmitDisplayFailsClosedAcrossErrorAndResize(t *testing.T) {
+	pending := []byte("\x1b_Ga=T,i=1,f=32,s=1,v=1,m=1,C=1;AQ\x1b\\")
+	continuation := []byte("\x1b_Gm=0;IDBA\x1b\\")
+
+	screen := NewScreen(4, 2)
+	screen.Write(pending)
+	screen.Write([]byte("\x1b_Ga=p,i=1;\x1b\\"))
+	screen.Write(continuation)
+	require.NotNil(t, screen.GraphicsSnapshot())
+	require.Equal(t, uint64(0), screen.GraphicsSnapshot().Usage().Placements)
+
+	screen.Write(pending)
+	screen.Resize(4, 2)
+	screen.Write(continuation)
+	require.NotNil(t, screen.GraphicsSnapshot())
+	require.Equal(t, uint64(0), screen.GraphicsSnapshot().Usage().Placements)
+}
+
+func TestScreenPendingTransmitDisplayIsScopedToScreenBuffer(t *testing.T) {
+	screen := NewScreen(4, 2)
+	screen.Write([]byte("\x1b_Ga=T,i=1,f=32,s=1,v=1,m=1,C=1;AQ\x1b\\"))
+	screen.Write([]byte("\x1b[?1049h"))
+	screen.Write([]byte("\x1b_Gm=0;IDBA\x1b\\"))
+	require.NotNil(t, screen.GraphicsSnapshot())
+	require.Equal(t, uint64(0), screen.GraphicsSnapshot().Usage().Placements)
+	screen.Write([]byte("\x1b[?1049l"))
+	screen.Write([]byte("\x1b_Gm=0;IDBA\x1b\\"))
+	require.Equal(t, uint64(1), screen.GraphicsSnapshot().Usage().Placements)
+}
+
+func TestScreenPartialPixelGeometryUsesCellCoordinatesForBothAxes(t *testing.T) {
+	screen := NewScreen(10, 4)
+	screen.SetGeometry(Geometry{Cols: 10, Rows: 4, PixelWidth: 100})
+	screen.Write([]byte("\x1b[2;3H"))
+	screen.Write(screenKittyImageAPC("T"))
+	placement := screen.GraphicsSnapshot().Placements()[0]
+	require.Equal(t, graphics.PixelRect{X: 2, Y: 1, Width: 1, Height: 1}, placement.Destination())
+}
+
 func TestScreenKittyGraphicsOrdinaryResetClearScrollAndResize(t *testing.T) {
 	screen := NewScreen(3, 2)
 	screen.Write(screenKittyImageAPC("T"))
@@ -133,7 +172,7 @@ func TestScreenSnapshotCapturesOwnedActiveGraphicsSnapshot(t *testing.T) {
 func TestScreenOrdinaryTextPathDoesNotAllocateGraphicsState(t *testing.T) {
 	screen := NewScreen(4, 2)
 	screen.Write([]byte("text"))
-	require.Nil(t, screen.GraphicsScene())
+	require.Nil(t, screen.GraphicsSnapshot())
 	require.Nil(t, screen.Snapshot().GraphicsSnapshot())
 	require.Equal(t, "text", rowText(screen.Snapshot().Row(0)))
 }

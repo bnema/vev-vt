@@ -99,7 +99,9 @@ const (
 // AssetBlob is the caller-owned description of one encoded asset. AddAsset
 // copies Encoded before returning, so later caller mutations cannot alter a
 // scene or any snapshot. Width and Height describe the decoded pixel extent
-// used for clipping and quota accounting.
+// used for clipping and quota accounting. DecodedPixels is an optional
+// compatibility declaration; when non-zero it must equal Width*Height, and
+// accounting always uses the checked product of the dimensions.
 type AssetBlob struct {
 	Encoded       []byte
 	Data          []byte

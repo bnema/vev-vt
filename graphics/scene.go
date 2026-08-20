@@ -646,8 +646,12 @@ func decodedPixels(width, height int64, declared uint64) (uint64, bool) {
 		return 0, false
 	}
 	computed := w * h
-	if declared != 0 {
-		return declared, true
+	// DecodedPixels is retained as an optional compatibility field, but it is
+	// only a valid declaration when it agrees with the dimensions. Resource
+	// accounting must never trust a caller-supplied number that can undercount
+	// the pixels represented by the asset.
+	if declared != 0 && declared != computed {
+		return 0, false
 	}
 	return computed, true
 }
