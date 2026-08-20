@@ -144,6 +144,10 @@ func (s *Screen) applyCSI(params string, cmd byte) {
 		s.deleteLines(firstPositive(parts, 1))
 	case 'r':
 		s.setScrollRegion(parts)
+	case 't':
+		if !private {
+			s.reportWindowSize(parts)
+		}
 	case 's':
 		s.saveCursor()
 	case 'u':

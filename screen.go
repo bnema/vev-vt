@@ -54,6 +54,7 @@ type Screen struct {
 	buffer  *buffer
 
 	nextRowID RowID
+	geometry  Geometry
 
 	defaultFG          renderer.RGB
 	defaultBG          renderer.RGB
@@ -93,6 +94,7 @@ func NewScreen(width, height int) *Screen {
 		damage:           []renderer.Damage{renderer.FullRedraw()},
 		damageGeneration: 1,
 		cursorVisible:    true,
+		geometry:         Geometry{Cols: width, Rows: height},
 	}
 	s.buffer = s.newBuffer(width, height)
 	s.Frame = s.buffer.frame
