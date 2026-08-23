@@ -2,7 +2,7 @@ package graphics
 
 import (
 	"fmt"
-	"math/big"
+	"math/bits"
 	"sort"
 	"sync"
 )
@@ -10,6 +10,7 @@ import (
 type assetRecord struct {
 	id      AssetID
 	encoded []byte
+	format  AssetFormat
 	width   int64
 	height  int64
 	pixels  uint64
@@ -390,12 +391,6 @@ func (s *Scene) Usage() Usage {
 
 func (s *Scene) prepareAsset(blob AssetBlob, state *sceneState) (assetRecord, error) {
 	data := blob.Encoded
-	if data == nil {
-		data = blob.Data
-	}
-	if len(data) == 0 && blob.Encoded != nil && blob.Data != nil && len(blob.Data) != 0 {
-		data = blob.Data
-	}
 	if blob.Width <= 0 || blob.Height <= 0 {
 		return assetRecord{}, fmt.Errorf("add asset: %w", ErrInvalidAsset)
 	}
@@ -419,14 +414,11 @@ func (s *Scene) prepareAsset(blob AssetBlob, state *sceneState) (assetRecord, er
 	if !within(state.usage.DecodedPixels, pixels, s.limits.MaxDecodedPixels) {
 		return assetRecord{}, fmt.Errorf("add asset: %w", ErrDecodedPixelBudget)
 	}
-	return assetRecord{encoded: append([]byte(nil), data...), width: blob.Width, height: blob.Height, pixels: pixels}, nil
+	return assetRecord{encoded: append([]byte(nil), data...), format: blob.Format, width: blob.Width, height: blob.Height, pixels: pixels}, nil
 }
 
 func (s *Scene) preparePlacement(state *sceneState, spec PlacementSpec, existing *placementRecord) (placementRecord, error) {
 	asset := spec.Asset
-	if !asset.Valid() {
-		asset = spec.AssetID
-	}
 	if !asset.Valid() && existing != nil {
 		asset = existing.asset
 	}
@@ -435,9 +427,6 @@ func (s *Scene) preparePlacement(state *sceneState, spec PlacementSpec, existing
 		return placementRecord{}, fmt.Errorf("place: %w", ErrAssetNotFound)
 	}
 	destination := spec.Destination
-	if destination == (PixelRect{}) {
-		destination = spec.Dest
-	}
 	if existing != nil && destination == (PixelRect{}) {
 		destination = existing.destination
 	}
@@ -460,9 +449,6 @@ func (s *Scene) preparePlacement(state *sceneState, spec PlacementSpec, existing
 		return placementRecord{}, fmt.Errorf("place: %w", ErrInvalidPlacement)
 	}
 	cells := spec.Cells
-	if cells == (CellRect{}) {
-		cells = spec.CellBounds
-	}
 	if existing != nil && !spec.HasCells && cells == (CellRect{}) {
 		cells = existing.cells
 	}
@@ -523,11 +509,7 @@ func (s *Scene) applyOperation(state *sceneState, operation Operation) error {
 		state.usage.EncodedBytes += uint64(len(record.encoded))
 		state.usage.DecodedPixels += record.pixels
 	case OperationRemoveAsset:
-		id := operation.Asset
-		if !id.Valid() {
-			id = operation.AssetID
-		}
-		if err := removeAsset(state, id, false); err != nil {
+		if err := removeAsset(state, operation.Asset, false); err != nil {
 			return err
 		}
 	case OperationPlace:
@@ -661,6 +643,7 @@ func decodedPixels(width, height int64, declared uint64) (uint64, bool) {
 type AssetView struct {
 	id      AssetID
 	encoded []byte
+	format  AssetFormat
 	width   int64
 	height  int64
 	pixels  uint64
@@ -670,6 +653,7 @@ type AssetView struct {
 type Asset = AssetView
 
 func (a AssetView) ID() AssetID           { return a.id }
+func (a AssetView) Format() AssetFormat   { return a.format }
 func (a AssetView) Width() int64          { return a.width }
 func (a AssetView) Height() int64         { return a.height }
 func (a AssetView) DecodedPixels() uint64 { return a.pixels }
@@ -677,7 +661,7 @@ func (a AssetView) EncodedSize() uint64   { return uint64(len(a.encoded)) }
 func (a AssetView) Encoded() []byte       { return append([]byte(nil), a.encoded...) }
 func (a AssetView) Bytes() []byte         { return a.Encoded() }
 func (a AssetView) Blob() AssetBlob {
-	return AssetBlob{Encoded: a.Encoded(), Width: a.width, Height: a.height, DecodedPixels: a.pixels}
+	return AssetBlob{Encoded: a.Encoded(), Format: a.format, Width: a.width, Height: a.height, DecodedPixels: a.pixels}
 }
 
 // PlacementView is an immutable view of a sparse placement.
@@ -994,16 +978,24 @@ func ratio(offset, numerator, denominator int64, ceil bool) (int64, bool) {
 	if offset < 0 || numerator <= 0 || denominator <= 0 {
 		return 0, false
 	}
-	product := new(big.Int).Mul(big.NewInt(offset), big.NewInt(numerator))
-	quotient, remainder := new(big.Int), new(big.Int)
-	quotient.QuoRem(product, big.NewInt(denominator), remainder)
-	if ceil && remainder.Sign() != 0 {
-		quotient.Add(quotient, big.NewInt(1))
-	}
-	if !quotient.IsInt64() || quotient.Sign() < 0 {
+	hi, lo := bits.Mul64(uint64(offset), uint64(numerator))
+	divisor := uint64(denominator)
+	// bits.Div64 requires hi < divisor. Otherwise the quotient cannot fit in
+	// uint64 and consequently cannot fit in the int64 result type.
+	if hi >= divisor {
 		return 0, false
 	}
-	return quotient.Int64(), true
+	quotient, remainder := bits.Div64(hi, lo, divisor)
+	if ceil && remainder != 0 {
+		if quotient == ^uint64(0) {
+			return 0, false
+		}
+		quotient++
+	}
+	if quotient > uint64(maxInt64) {
+		return 0, false
+	}
+	return int64(quotient), true
 }
 
 func checkedAdd(a, b int64) (int64, bool) {

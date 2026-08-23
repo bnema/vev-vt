@@ -64,6 +64,14 @@ func FuzzProbeNeverPanics(f *testing.F) {
 	})
 }
 
+func TestProbeDoesNotRetainLargeInputFragments(t *testing.T) {
+	var p Probe
+	input := append(make([]byte, 1<<20), []byte("\x1b_G")...)
+	got := append(p.Feed(input), p.Finish()...)
+	require.Equal(t, input, got)
+	require.LessOrEqual(t, cap(p.pending), maxProbeResponseBytes+2)
+}
+
 func TestProbeBoundsUnterminatedResponse(t *testing.T) {
 	var p Probe
 	input := append([]byte("prefix"), []byte("\x1b_G")...)

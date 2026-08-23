@@ -30,7 +30,7 @@ func (g *screenGraphicsState) snapshot() *graphics.Snapshot {
 
 // clearPlacements applies the ordinary full-screen erase policy without
 // discarding uploaded image mappings. The protocol session owns those
-// mappings, so the operation goes through its delete-all-placements command
+// mappings, so the operation goes through Kitty's delete-all-visible command
 // rather than mutating the scene directly.
 func (g *screenGraphicsState) clearPlacements() {
 	if g == nil || g.kitty == nil {
@@ -40,7 +40,7 @@ func (g *screenGraphicsState) clearPlacements() {
 	_, _ = g.kitty.Process(kittygraphics.Command{Controls: kittygraphics.Controls{
 		Action:    kittygraphics.ActionDelete,
 		HasAction: true,
-		Delete:    kittygraphics.DeleteAllPlacements,
+		Delete:    kittygraphics.DeleteAll,
 		HasDelete: true,
 		Quiet:     kittygraphics.QuietAll,
 		HasQuiet:  true,
@@ -81,17 +81,11 @@ func (s *Screen) abortAllKittyPending() {
 }
 
 // GraphicsSnapshot returns an immutable snapshot of the active screen
-// buffer's graphics scene, or nil before graphics has been used.
+// buffer's graphics scene, or nil before graphics has been used. The returned
+// reference remains valid after subsequent Screen mutations.
 func (s *Screen) GraphicsSnapshot() *graphics.Snapshot {
 	if s == nil || s.graphics == nil {
 		return nil
 	}
 	return s.graphics.snapshot()
-}
-
-// CaptureGraphicsSnapshot names the ownership boundary used by renderers that
-// retain graphics independently of the text frame. The returned reference is
-// immutable and remains valid after subsequent Screen mutations.
-func (s *Screen) CaptureGraphicsSnapshot() *graphics.Snapshot {
-	return s.GraphicsSnapshot()
 }

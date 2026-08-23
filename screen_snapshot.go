@@ -123,6 +123,3 @@ func (s ScreenSnapshot) Title() string          { return s.title }
 // Graphics returns the immutable graphics scene snapshot for the active
 // screen buffer, or nil when that buffer has not used Kitty graphics.
 func (s ScreenSnapshot) Graphics() *graphics.Snapshot { return s.graphics }
-
-// GraphicsSnapshot is an explicit alias for Graphics.
-func (s ScreenSnapshot) GraphicsSnapshot() *graphics.Snapshot { return s.graphics }

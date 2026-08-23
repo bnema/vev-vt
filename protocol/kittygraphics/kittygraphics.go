@@ -3,6 +3,7 @@ package kittygraphics
 import (
 	"errors"
 	"math"
+	"sort"
 	"sync"
 
 	"github.com/bnema/vev-vt/graphics"
@@ -39,6 +40,7 @@ const (
 	DefaultMaxUploadBytes  = uint64(16 << 20)
 	DefaultMaxChunks       = uint64(1024)
 	DefaultMaxPixels       = uint64(128 << 20)
+	DefaultMaxDecodedBytes = uint64(256 << 20)
 	DefaultMaxDimension    = uint64(1 << 20)
 )
 
@@ -51,6 +53,7 @@ type Limits struct {
 	MaxUploadBytes   uint64
 	MaxChunks        uint64
 	MaxDecodedPixels uint64
+	MaxDecodedBytes  uint64
 	MaxDimension     uint64
 	MaxResponseBytes uint64
 	MaxImages        uint64
@@ -75,6 +78,9 @@ func normalizeLimits(l Limits) Limits {
 	}
 	if l.MaxDecodedPixels == 0 {
 		l.MaxDecodedPixels = DefaultMaxPixels
+	}
+	if l.MaxDecodedBytes == 0 {
+		l.MaxDecodedBytes = DefaultMaxDecodedBytes
 	}
 	if l.MaxDimension == 0 {
 		l.MaxDimension = DefaultMaxDimension
@@ -157,12 +163,12 @@ const (
 type DeleteTarget byte
 
 const (
-	DeleteImage         DeleteTarget = 'i'
-	DeleteImageNumber   DeleteTarget = 'I'
-	DeletePlacement     DeleteTarget = 'p'
-	DeleteAll           DeleteTarget = 'a'
-	DeleteAllImages     DeleteTarget = 'A'
-	DeleteAllPlacements DeleteTarget = 'P'
+	DeleteImage       DeleteTarget = 'i'
+	DeleteImageNumber DeleteTarget = 'I'
+	DeleteCell        DeleteTarget = 'p'
+	DeleteAll         DeleteTarget = 'a'
+	DeleteAllImages   DeleteTarget = 'A'
+	DeleteCellAll     DeleteTarget = 'P'
 )
 
 // Transmission is the direct transmission mode. File, temporary-file and
@@ -293,7 +299,6 @@ type Parser struct {
 	candidate []byte
 	apc       []byte
 	inAPC     bool
-	discard   bool
 	escaped   bool
 	oversize  bool
 }
@@ -412,19 +417,21 @@ func (s *Session) PlacementID(imageID, placementID uint64) (graphics.PlacementID
 	return s.Placement(imageID, placementID)
 }
 
-// Child returns the session child associated with an image ID.
+// Child returns the oldest session child associated with an image ID.
 func (s *Session) Child(imageID uint64) (Child, bool) {
 	if s == nil {
 		return Child{}, false
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	var selected Child
+	found := false
 	for _, child := range s.children {
-		if child.ImageID == imageID {
-			return child, true
+		if child.ImageID == imageID && (!found || child.ID < selected.ID) {
+			selected, found = child, true
 		}
 	}
-	return Child{}, false
+	return selected, found
 }
 
 // ChildByID returns a session child by its adapter-local ID.
@@ -456,10 +463,9 @@ func (s *Session) Children() []Child {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	children := make([]Child, 0, len(s.children))
-	for id := uint64(1); id < s.nextChild; id++ {
-		if child, ok := s.children[id]; ok {
-			children = append(children, child)
-		}
+	for _, child := range s.children {
+		children = append(children, child)
 	}
+	sort.Slice(children, func(i, j int) bool { return children[i].ID < children[j].ID })
 	return children
 }

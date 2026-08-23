@@ -2,6 +2,7 @@ package vt
 
 import (
 	"bytes"
+	"encoding/base64"
 	"testing"
 
 	renderer "github.com/bnema/vev-vt/core"
@@ -234,6 +235,28 @@ func BenchmarkScreenPrintableASCII(b *testing.B) {
 	for b.Loop() {
 		s.Write(chunk)
 		s.ClearDamage()
+	}
+}
+
+func BenchmarkScreenKittyAPC(b *testing.B) {
+	payload := base64.RawStdEncoding.EncodeToString(make([]byte, 256*256*4))
+	apc := []byte("\x1b_Ga=t,i=1,f=32,s=256,v=256,q=2;" + payload + "\x1b\\")
+	b.SetBytes(int64(len(apc)))
+	for _, fragmented := range []bool{false, true} {
+		b.Run(map[bool]string{false: "single-write", true: "byte-by-byte"}[fragmented], func(b *testing.B) {
+			s := NewScreen(120, 40)
+			b.ReportAllocs()
+			for b.Loop() {
+				if fragmented {
+					for _, part := range apc {
+						s.Write([]byte{part})
+					}
+				} else {
+					s.Write(apc)
+				}
+				s.ClearDamage()
+			}
+		})
 	}
 }
 

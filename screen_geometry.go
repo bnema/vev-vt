@@ -31,7 +31,7 @@ func (s *Screen) SetGeometry(geometry Geometry) {
 // reportWindowSize answers the CSI 14 t and CSI 16 t pixel-geometry queries.
 // Unknown pixel geometry is intentionally not fabricated.
 func (s *Screen) reportWindowSize(parts []int) {
-	if s == nil || len(parts) == 0 || !s.geometry.PixelsKnown() {
+	if s == nil || len(parts) == 0 || !s.geometry.PixelsKnown() || s.geometry.Rows <= 0 || s.geometry.Cols <= 0 {
 		return
 	}
 	kind := parts[0]
@@ -40,9 +40,6 @@ func (s *Screen) reportWindowSize(parts []int) {
 	case 14:
 		rows, cols = s.geometry.PixelHeight, s.geometry.PixelWidth
 	case 16:
-		if s.geometry.Rows <= 0 || s.geometry.Cols <= 0 {
-			return
-		}
 		rows, cols = s.geometry.PixelHeight/s.geometry.Rows, s.geometry.PixelWidth/s.geometry.Cols
 	default:
 		return

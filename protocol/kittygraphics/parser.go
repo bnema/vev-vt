@@ -1,9 +1,6 @@
 package kittygraphics
 
-import (
-	"bytes"
-	"fmt"
-)
+import "bytes"
 
 var apcPrefix = [...]byte{0x1b, '_', 'G'}
 
@@ -42,7 +39,6 @@ func (p *Parser) Feed(data []byte) []Event {
 				flushText()
 				p.candidate = p.candidate[:0]
 				p.inAPC = true
-				p.discard = false
 				p.escaped = false
 				p.oversize = false
 				p.apc = p.apc[:0]
@@ -52,7 +48,7 @@ func (p *Parser) Feed(data []byte) []Event {
 
 		if p.escaped {
 			if b == '\\' {
-				if p.discard || p.oversize {
+				if p.oversize {
 					events = append(events, p.errorEvent())
 				} else {
 					events = append(events, p.commandEvent())
@@ -67,7 +63,7 @@ func (p *Parser) Feed(data []byte) []Event {
 			p.escaped = false
 		}
 		if b == 0x9c { // C1 ST is also a valid APC terminator.
-			if p.discard || p.oversize {
+			if p.oversize {
 				events = append(events, p.errorEvent())
 			} else {
 				events = append(events, p.commandEvent())
@@ -127,7 +123,7 @@ func (p *Parser) Finish() []Event {
 func (p *Parser) Flush() []Event { return p.Finish() }
 
 func (p *Parser) appendAPC(b byte) {
-	if p.discard || p.oversize {
+	if p.oversize {
 		return
 	}
 	if uint64(len(p.apc))+1 > p.limits.MaxAPCBytes {
@@ -139,7 +135,6 @@ func (p *Parser) appendAPC(b byte) {
 
 func (p *Parser) resetAPC() {
 	p.inAPC = false
-	p.discard = false
 	p.escaped = false
 	p.oversize = false
 	p.apc = p.apc[:0]
@@ -172,15 +167,15 @@ func ParseCommand(body []byte, config ...Limits) (Command, error) {
 	if uint64(len(body)) > l.MaxAPCBytes {
 		return Command{}, ErrAPCTooLarge
 	}
-	sep := bytes.IndexByte(body, ';')
-	if sep < 0 {
-		return Command{}, fmt.Errorf("%w: missing payload separator", ErrInvalidCommand)
+	controlEnd, payloadStart := len(body), len(body)
+	if sep := bytes.IndexByte(body, ';'); sep >= 0 {
+		controlEnd, payloadStart = sep, sep+1
 	}
-	controls, err := parseControls(body[:sep])
+	controls, err := parseControls(body[:controlEnd])
 	if err != nil {
 		return Command{}, err
 	}
-	payload := body[sep+1:]
+	payload := body[payloadStart:]
 	if uint64(len(payload)) > l.MaxPayloadBytes {
 		return Command{}, ErrPayloadTooLarge
 	}
@@ -189,7 +184,7 @@ func ParseCommand(body []byte, config ...Limits) (Command, error) {
 
 // ParseAPC parses a complete ESC _ G ... ST sequence.
 func ParseAPC(apc []byte, config ...Limits) (Command, error) {
-	if len(apc) < 5 || apc[0] != 0x1b || apc[1] != '_' || apc[2] != 'G' {
+	if len(apc) < 4 || apc[0] != 0x1b || apc[1] != '_' || apc[2] != 'G' {
 		return Command{}, ErrInvalidAPC
 	}
 	body := apc[3:]

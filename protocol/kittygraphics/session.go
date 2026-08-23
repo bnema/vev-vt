@@ -243,12 +243,10 @@ func (s *Session) apply(command Command) ([][]byte, *Mutation, error) {
 func (s *Session) transmit(command Command, display bool) ([][]byte, *Mutation, error) {
 	c := command.Controls
 	imageID := c.ImageID
-	persistent := c.HasImageID && imageID != 0
-	if !persistent {
+	if !c.HasImageID || imageID == 0 {
 		imageID = 0
 		if c.HasImageNumber {
 			imageID = s.nextImageID()
-			persistent = true
 		}
 	}
 	if s.upload != nil {
@@ -338,12 +336,14 @@ func (s *Session) commitUpload(value upload, display bool) ([][]byte, *Mutation,
 		// old asset and every placement that references it untouched.
 		assetID, err = s.scene.ReplaceAsset(old, graphics.AssetBlob{
 			Encoded: decoded,
+			Format:  assetFormat(format),
 			Width:   width,
 			Height:  height,
 		})
 	} else {
 		assetID, err = s.scene.AddAsset(graphics.AssetBlob{
 			Encoded: decoded,
+			Format:  assetFormat(format),
 			Width:   width,
 			Height:  height,
 		})
@@ -390,6 +390,19 @@ func (s *Session) commitUpload(value upload, display bool) ([][]byte, *Mutation,
 	return s.success(value.controls, value.imageID), mutation, nil
 }
 
+func assetFormat(format Format) graphics.AssetFormat {
+	switch format {
+	case FormatRGB:
+		return graphics.AssetFormatRGB
+	case FormatRGBA:
+		return graphics.AssetFormatRGBA
+	case FormatPNG:
+		return graphics.AssetFormatPNG
+	default:
+		return graphics.AssetFormatUnknown
+	}
+}
+
 func imageGeometry(data []byte, format Format, c Controls, limits Limits) (int64, int64, error) {
 	if format == FormatPNG {
 		config, err := png.DecodeConfig(bytes.NewReader(data))
@@ -403,7 +416,8 @@ func imageGeometry(data []byte, format Format, c Controls, limits Limits) (int64
 			return 0, 0, ErrPayloadTooLarge
 		}
 		pixels, ok := checkedProduct(uint64(config.Width), uint64(config.Height))
-		if !ok || pixels > limits.MaxDecodedPixels {
+		decodedBytes, bytesOK := checkedProduct(pixels, 4)
+		if !ok || !bytesOK || pixels > limits.MaxDecodedPixels || decodedBytes > limits.MaxDecodedBytes {
 			return 0, 0, ErrPayloadTooLarge
 		}
 		if c.HasWidth && c.Width != uint64(config.Width) || c.HasHeight && c.Height != uint64(config.Height) {
@@ -558,6 +572,9 @@ func placementSpec(c Controls, assetID graphics.AssetID, width, height int64, or
 }
 
 func (s *Session) place(c Controls, imageID uint64, assetID graphics.AssetID, origin placementOrigin) ([][]byte, *Mutation, error) {
+	if c.HasParent || c.HasCellOffsetX || c.HasCellOffsetY {
+		return nil, nil, ErrUnsupported
+	}
 	if s.scene == nil {
 		return nil, nil, ErrNoScene
 	}
@@ -658,39 +675,22 @@ func (s *Session) delete(c Controls) ([][]byte, *Mutation, error) {
 			return s.failure(c, responseID, err)
 		}
 		return s.success(c, responseID), &Mutation{Kind: MutationDeletePlacements}, nil
-	case DeletePlacement:
-		placementID := c.PlacementID
-		key := placementKey{imageID: id, placementID: placementID}
-		mapped, ok := s.placements[key]
-		if !selected || placementID == 0 || !ok || s.scene == nil {
-			return s.failure(c, responseID, ErrPlacementNotFound)
-		}
-		if err := s.scene.RemovePlacement(mapped); err != nil {
-			return s.failure(c, responseID, err)
-		}
-		delete(s.placements, key)
-		return s.success(c, responseID), &Mutation{Kind: MutationDeletePlacement, ImageID: id, PlacementID: placementID, ScenePlacementID: mapped}, nil
-	case DeleteAllImages, DeleteAllPlacements:
+	case DeleteCell, DeleteCellAll:
+		// Kitty d=p/P deletes by cell intersection, not by placement ID or
+		// all placements. Those selectors remain unsupported until the scene
+		// tracks terminal cell anchors.
+		return s.failure(c, responseID, ErrUnsupported)
+	case DeleteAllImages:
 		if s.scene == nil {
 			return s.failure(c, responseID, ErrNoScene)
 		}
-		if target == DeleteAllPlacements {
-			placementIDs := make([]placementKey, 0, len(s.placements))
-			for placementID := range s.placements {
-				placementIDs = append(placementIDs, placementID)
-			}
-			if err := s.removePlacements(placementIDs); err != nil {
-				return s.failure(c, responseID, err)
-			}
-		} else {
-			if err := s.scene.Clear(); err != nil {
-				return s.failure(c, responseID, err)
-			}
-			s.images = make(map[uint64]graphics.AssetID)
-			s.imageNumbers = make(map[uint64]uint64)
-			s.placements = make(map[placementKey]graphics.PlacementID)
-			s.children = make(map[uint64]Child)
+		if err := s.scene.Clear(); err != nil {
+			return s.failure(c, responseID, err)
 		}
+		s.images = make(map[uint64]graphics.AssetID)
+		s.imageNumbers = make(map[uint64]uint64)
+		s.placements = make(map[placementKey]graphics.PlacementID)
+		s.children = make(map[uint64]Child)
 		return s.success(c, responseID), &Mutation{Kind: MutationClear}, nil
 	default:
 		return s.failure(c, responseID, ErrUnsupported)

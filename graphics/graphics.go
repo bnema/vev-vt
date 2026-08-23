@@ -96,15 +96,25 @@ const (
 	DefaultMaxDecodedPixelsPerAsset = uint64(128 << 20)
 )
 
+// AssetFormat identifies the encoded pixel layout supplied by an asset.
+type AssetFormat uint8
+
+const (
+	AssetFormatUnknown AssetFormat = iota
+	AssetFormatRGB
+	AssetFormatRGBA
+	AssetFormatPNG
+)
+
 // AssetBlob is the caller-owned description of one encoded asset. AddAsset
 // copies Encoded before returning, so later caller mutations cannot alter a
-// scene or any snapshot. Width and Height describe the decoded pixel extent
-// used for clipping and quota accounting. DecodedPixels is an optional
-// compatibility declaration; when non-zero it must equal Width*Height, and
-// accounting always uses the checked product of the dimensions.
+// scene or any snapshot. Format preserves the encoded pixel layout for the
+// renderer. Width and Height describe the decoded pixel extent used for
+// clipping and quota accounting. DecodedPixels, when non-zero, must equal
+// Width*Height; accounting always uses the checked product.
 type AssetBlob struct {
 	Encoded       []byte
-	Data          []byte
+	Format        AssetFormat
 	Width, Height int64
 	DecodedPixels uint64
 }
@@ -113,18 +123,14 @@ type AssetBlob struct {
 type AssetSpec = AssetBlob
 
 // PlacementSpec describes one sparse placement. Source defaults to the full
-// asset. Destination is a pixel rectangle; Dest is accepted as a concise alias
-// for callers that use that spelling. Cells optionally records the cell-space
-// extent associated with the same placement. HasCells and HasLayer preserve
-// explicit zero values when updating an existing placement.
+// asset. Destination is a pixel rectangle. Cells optionally records the
+// cell-space extent associated with the same placement. HasCells and HasLayer
+// preserve explicit zero values when updating an existing placement.
 type PlacementSpec struct {
 	Asset       AssetID
-	AssetID     AssetID
 	Source      PixelRect
 	Destination PixelRect
-	Dest        PixelRect
 	Cells       CellRect
-	CellBounds  CellRect
 	HasCells    bool
 	Layer       int64
 	HasLayer    bool
@@ -178,7 +184,6 @@ type Operation struct {
 	Kind        OperationKind
 	Blob        AssetBlob
 	Asset       AssetID
-	AssetID     AssetID
 	Placement   PlacementSpec
 	PlacementID PlacementID
 }

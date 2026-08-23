@@ -34,8 +34,17 @@ func (p *Probe) Feed(data []byte) []byte {
 	if p == nil || len(data) == 0 {
 		return append([]byte(nil), data...)
 	}
-	p.pending = append(p.pending, data...)
-	return p.scan(false)
+	// Never retain or copy an unbounded caller fragment into pending. scan
+	// leaves at most a bounded incomplete probe prefix, so feeding bounded
+	// chunks also prevents a small suffix from retaining a large backing array.
+	var unrelated []byte
+	for len(data) != 0 {
+		n := min(len(data), maxProbeResponseBytes+2)
+		p.pending = append(p.pending, data[:n]...)
+		unrelated = append(unrelated, p.scan(false)...)
+		data = data[n:]
+	}
+	return unrelated
 }
 
 // Finish flushes an incomplete or unrelated prefix without recognizing any
@@ -79,6 +88,7 @@ func (p *Probe) scan(flush bool) []byte {
 					p.pending = p.pending[len(p.pending)-keep:]
 				}
 			}
+			p.retainPending()
 			break
 		}
 		if start > 0 {
@@ -93,6 +103,7 @@ func (p *Probe) scan(flush bool) []byte {
 					p.pending = p.pending[1:]
 					continue
 				}
+				p.retainPending()
 				break
 			}
 			response := p.pending[:end]
@@ -112,6 +123,7 @@ func (p *Probe) scan(flush bool) []byte {
 				p.pending = p.pending[1:]
 				continue
 			}
+			p.retainPending()
 			break
 		}
 		response := p.pending[:end]
@@ -124,6 +136,14 @@ func (p *Probe) scan(flush bool) []byte {
 		p.pending = p.pending[1:]
 	}
 	return unrelated
+}
+
+func (p *Probe) retainPending() {
+	if len(p.pending) == 0 {
+		p.pending = nil
+		return
+	}
+	p.pending = append([]byte(nil), p.pending...)
 }
 
 func probeTerminator(data []byte) (int, bool) {

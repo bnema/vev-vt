@@ -2,6 +2,7 @@ package vt
 
 import (
 	"encoding/base64"
+	"strconv"
 	"testing"
 
 	"github.com/bnema/vev-vt/graphics"
@@ -13,13 +14,13 @@ func screenKittyImageAPC(action string) []byte {
 	return []byte("\x1b_Ga=" + action + ",i=1,f=32,s=1,v=1,C=1;" + payload + "\x1b\\")
 }
 
-func screenKittyImageAPCWithID(action string, id byte) []byte {
+func screenKittyImageAPCWithID(action string, id uint64) []byte {
 	payload := base64.RawStdEncoding.EncodeToString([]byte{1, 2, 3, 4})
-	return []byte("\x1b_Ga=" + action + ",i=" + string(id) + ",f=32,s=1,v=1,C=1;" + payload + "\x1b\\")
+	return []byte("\x1b_Ga=" + action + ",i=" + strconv.FormatUint(id, 10) + ",f=32,s=1,v=1,C=1;" + payload + "\x1b\\")
 }
 
-func screenKittyPutAPC(id byte) []byte {
-	return []byte("\x1b_Ga=p,i=" + string(id) + ";\x1b\\")
+func screenKittyPutAPC(id uint64) []byte {
+	return []byte("\x1b_Ga=p,i=" + strconv.FormatUint(id, 10) + ";\x1b\\")
 }
 
 func TestScreenKittyGraphicsFragmentedAPCAndResponse(t *testing.T) {
@@ -51,7 +52,7 @@ func TestScreenKittyGraphicsPrimaryAndAlternateState(t *testing.T) {
 	screen.Write([]byte("\x1b[?1049halt"))
 	require.True(t, screen.AltScreenActive())
 	require.Nil(t, screen.GraphicsSnapshot())
-	screen.Write(screenKittyImageAPCWithID("T", '2'))
+	screen.Write(screenKittyImageAPCWithID("T", 2))
 	require.Equal(t, uint64(1), screen.GraphicsSnapshot().Usage().Placements)
 
 	screen.Write([]byte("\x1b[?1049l"))
@@ -59,7 +60,7 @@ func TestScreenKittyGraphicsPrimaryAndAlternateState(t *testing.T) {
 	require.Equal(t, primary.Usage(), screen.GraphicsSnapshot().Usage())
 }
 
-func TestScreenReenteringActiveAlternatePreservesGraphicsState(t *testing.T) {
+func TestScreenReenteringActiveAlternateClearsGraphicsState(t *testing.T) {
 	screen := NewScreen(8, 3)
 	screen.Write([]byte("\x1b[?1049h"))
 	screen.Write(screenKittyImageAPC("T"))
@@ -69,8 +70,8 @@ func TestScreenReenteringActiveAlternatePreservesGraphicsState(t *testing.T) {
 
 	screen.Write([]byte("\x1b[?1049h"))
 	after := screen.GraphicsSnapshot()
-	require.NotNil(t, after)
-	require.Equal(t, before.Usage(), after.Usage())
+	require.Nil(t, after)
+	require.Equal(t, uint64(1), before.Usage().Placements)
 }
 
 func TestScreenFullClearAbortsPendingUploadAndClearsPlacements(t *testing.T) {
@@ -100,7 +101,7 @@ func TestScreenPendingTransmitDisplayFailsClosedAcrossErrorAndResize(t *testing.
 	require.Equal(t, uint64(0), screen.GraphicsSnapshot().Usage().Placements)
 
 	screen.Write(pending)
-	screen.Resize(4, 2)
+	screen.Resize(5, 2)
 	screen.Write(continuation)
 	require.NotNil(t, screen.GraphicsSnapshot())
 	require.Equal(t, uint64(0), screen.GraphicsSnapshot().Usage().Placements)
@@ -158,7 +159,7 @@ func TestScreenKittyGraphicsOrdinaryResetClearScrollAndResize(t *testing.T) {
 	require.Equal(t, uint64(1), graphicsSnapshot.Usage().Assets)
 	require.Equal(t, uint64(0), graphicsSnapshot.Usage().Placements)
 
-	screen.Write(screenKittyPutAPC('1'))
+	screen.Write(screenKittyPutAPC(1))
 	require.Equal(t, uint64(1), screen.GraphicsSnapshot().Usage().Placements)
 	screen.Write([]byte("\x1bc"))
 	require.Nil(t, screen.GraphicsSnapshot())
@@ -170,7 +171,7 @@ func TestScreenSnapshotCapturesOwnedActiveGraphicsSnapshot(t *testing.T) {
 	captured := screen.Snapshot()
 	require.NotNil(t, captured.Graphics())
 	require.Equal(t, uint64(1), captured.Graphics().Usage().Placements)
-	require.Equal(t, captured.Graphics().Usage(), screen.CaptureGraphicsSnapshot().Usage(), "capture returns the immutable active-scene reference")
+	require.Equal(t, captured.Graphics().Usage(), screen.GraphicsSnapshot().Usage(), "screen graphics snapshot returns the immutable active-scene reference")
 
 	screen.Write([]byte("\x1b[2J"))
 	require.Equal(t, uint64(1), captured.Graphics().Usage().Placements)
@@ -185,7 +186,7 @@ func TestScreenOrdinaryTextPathDoesNotAllocateGraphicsState(t *testing.T) {
 	screen := NewScreen(4, 2)
 	screen.Write([]byte("text"))
 	require.Nil(t, screen.GraphicsSnapshot())
-	require.Nil(t, screen.Snapshot().GraphicsSnapshot())
+	require.Nil(t, screen.Snapshot().Graphics())
 	require.Equal(t, "text", rowText(screen.Snapshot().Row(0)))
 }
 

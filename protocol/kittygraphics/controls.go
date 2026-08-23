@@ -121,7 +121,7 @@ func parseControl(c *Controls, key byte, value []byte) error {
 		}
 		d := DeleteTarget(value[0])
 		switch d {
-		case DeleteImage, DeleteImageNumber, DeletePlacement, DeleteAll, DeleteAllImages, DeleteAllPlacements:
+		case DeleteImage, DeleteImageNumber, DeleteCell, DeleteAll, DeleteAllImages, DeleteCellAll:
 			c.Delete, c.HasDelete = d, true
 		default:
 			return fmt.Errorf("%w: d=%q", ErrInvalidCommand, value)
@@ -144,7 +144,10 @@ func parseControl(c *Controls, key byte, value []byte) error {
 	case ControlParent:
 		return setUint(&c.Parent, &c.HasParent, key, value)
 	default:
-		return fmt.Errorf("%w: %c", ErrUnknownControl, key)
+		// Kitty reserves unknown controls for forward-compatible extensions.
+		// Commands that depend on an unsupported control are rejected later by
+		// their action-specific validation.
+		return nil
 	}
 	return nil
 }
@@ -168,6 +171,9 @@ func setUint(dst *uint64, present *bool, key byte, value []byte) error {
 	if err != nil {
 		return fieldError(key, err)
 	}
+	if n > MaxKittyID {
+		return fieldError(key, ErrIntegerOverflow)
+	}
 	*dst = n
 	if present != nil {
 		*present = true
@@ -179,6 +185,9 @@ func setInt(dst *int64, present *bool, key byte, value []byte) error {
 	n, err := parseInt(value)
 	if err != nil {
 		return fieldError(key, err)
+	}
+	if n < -1<<31 || n > 1<<31-1 {
+		return fieldError(key, ErrIntegerOverflow)
 	}
 	*dst = n
 	if present != nil {

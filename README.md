@@ -56,7 +56,9 @@ and parser limits. File, temporary-file, shared-memory, animation, composition,
 relative placement, and Unicode-placeholder commands remain unsupported.
 
 `Screen` allocates graphics state only after a Kitty APC. Graphics snapshots are
-separate from cells and history bytes; VTH3 remains text/history-only.
+separate from cells and history bytes; VTH3 remains text/history-only. Static
+placements retain their configured pixel rectangles across text scrolling and
+reflow; row-anchored and relative-placement movement is unsupported.
 
 ## Checks
 

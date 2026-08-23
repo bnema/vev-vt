@@ -15,6 +15,7 @@ func TestScreenWindowSizeReports(t *testing.T) {
 		{name: "unknown pixels", geometry: Geometry{Cols: 80, Rows: 24}, query: "\x1b[14t"},
 		{name: "partial pixels are unknown", geometry: Geometry{Cols: 80, Rows: 24, PixelWidth: 640}, query: "\x1b[16t"},
 		{name: "unrelated window query", geometry: Geometry{Cols: 80, Rows: 24, PixelWidth: 640, PixelHeight: 384}, query: "\x1b[18t"},
+		{name: "private parameter is ignored", geometry: Geometry{Cols: 80, Rows: 24, PixelWidth: 640, PixelHeight: 384}, query: "\x1b[?14t"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -27,5 +28,17 @@ func TestScreenWindowSizeReports(t *testing.T) {
 				t.Fatalf("response = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestScreenWindowSizeReportsRequireUsableGeometry(t *testing.T) {
+	s := NewScreen(80, 24)
+	s.SetGeometry(Geometry{Cols: 80, Rows: 24, PixelWidth: 640, PixelHeight: 384})
+	s.geometry.Cols = 0
+	var got string
+	s.OnResponse = func(response []byte) { got += string(response) }
+	s.Write([]byte("\x1b[14t"))
+	if got != "" {
+		t.Fatalf("response = %q", got)
 	}
 }

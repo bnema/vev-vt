@@ -147,17 +147,3 @@ func checkedEdge(start, length int64) (int64, bool) {
 	}
 	return start + length, true
 }
-
-func max(a, b int64) int64 {
-	if a > b {
-		return a
-	}
-	return b
-}
-
-func min(a, b int64) int64 {
-	if a < b {
-		return a
-	}
-	return b
-}

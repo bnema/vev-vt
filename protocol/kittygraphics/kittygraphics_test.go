@@ -180,6 +180,18 @@ func TestPlacementIDsAreScopedToTheirImage(t *testing.T) {
 	}
 }
 
+func TestParseAPCAcceptsPayloadFreeCommands(t *testing.T) {
+	for _, raw := range []string{"\x1b_Ga=d,d=a\x1b\\", "\x1b_Ga=p,i=1\x1b\\"} {
+		command, err := ParseAPC([]byte(raw))
+		if err != nil {
+			t.Fatalf("ParseAPC(%q) error = %v", raw, err)
+		}
+		if len(command.Payload) != 0 {
+			t.Fatalf("ParseAPC(%q) payload = %q", raw, command.Payload)
+		}
+	}
+}
+
 func TestMalformedTruncatedInterleavedAndOversizeAreBounded(t *testing.T) {
 	if _, err := ParseCommand([]byte("a=q,a=t;")); !errors.Is(err, ErrDuplicateControl) {
 		t.Fatalf("duplicate control error = %v", err)
@@ -286,11 +298,58 @@ func TestChunkedTransmitAndDisplayRetainsDisplayAction(t *testing.T) {
 	}
 }
 
+func TestControlsIgnoreExtensionsAndBoundIntegerFields(t *testing.T) {
+	controls, err := ParseControls([]byte("a=p,i=1,N=1,S=2,O=3"))
+	if err != nil || controls.ImageID != 1 {
+		t.Fatalf("extension controls = %#v, %v", controls, err)
+	}
+	if _, err := ParseControls([]byte("a=p,s=4294967296")); !errors.Is(err, ErrIntegerOverflow) {
+		t.Fatalf("out-of-range uint32 control error = %v", err)
+	}
+	if _, err := ParseControls([]byte("a=p,z=2147483648")); !errors.Is(err, ErrIntegerOverflow) {
+		t.Fatalf("out-of-range int32 control error = %v", err)
+	}
+}
+
 func TestImplicitPlacementIDsStopAtKittyLimit(t *testing.T) {
 	session := NewSession(nil)
 	session.nextPlacement = MaxKittyID + 1
 	if _, ok := session.takePlacementID(1); ok {
 		t.Fatal("implicit placement ID exceeded Kitty's uint32 namespace")
+	}
+}
+
+func TestUnsupportedRelativeAndCellDeleteControlsFailClosed(t *testing.T) {
+	session := NewSession(graphics.NewScene(graphics.Limits{}))
+	payload := base64.RawStdEncoding.EncodeToString([]byte{1, 2, 3, 4})
+	if _, err := session.Feed(apc("a=t,i=1,f=32,s=1,v=1,q=2", payload)); err != nil {
+		t.Fatal(err)
+	}
+	for _, header := range []string{"a=p,i=1,P=2", "a=p,i=1,H=1", "a=d,d=p,x=1,y=1", "a=d,d=P,x=1,y=1"} {
+		if _, err := session.Feed(apc(header, "")); !errors.Is(err, ErrUnsupported) {
+			t.Fatalf("%q error = %v, want ErrUnsupported", header, err)
+		}
+	}
+}
+
+func TestPNGDecodedByteBudgetAndAssetFormat(t *testing.T) {
+	data := pngBytes(t, 2, 2)
+	if _, _, err := imageGeometry(data, FormatPNG, Controls{}, normalizeLimits(Limits{MaxDecodedBytes: 15})); !errors.Is(err, ErrPayloadTooLarge) {
+		t.Fatalf("PNG byte-budget error = %v", err)
+	}
+	scene := graphics.NewScene(graphics.Limits{})
+	session := NewSession(scene)
+	payload := base64.RawStdEncoding.EncodeToString(data)
+	if _, err := session.Feed(apc("a=t,i=1,f=100,q=2", payload)); err != nil {
+		t.Fatal(err)
+	}
+	assetID, ok := session.Image(1)
+	if !ok {
+		t.Fatal("image mapping missing")
+	}
+	asset, ok := scene.Snapshot().Asset(assetID)
+	if !ok || asset.Format() != graphics.AssetFormatPNG || asset.Blob().Format != graphics.AssetFormatPNG {
+		t.Fatalf("asset format = %#v, ok=%v", asset, ok)
 	}
 }
 

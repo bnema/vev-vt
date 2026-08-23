@@ -103,14 +103,15 @@ func TestAssetAndPlacementQuotasAreTransactional(t *testing.T) {
 	if scene.Snapshot().Generation() != generation {
 		t.Fatal("failed asset addition changed generation")
 	}
-	if _, err := scene.Place(PlacementSpec{Asset: id, Destination: PixelRect{Width: 2, Height: 2}}); err != nil {
+	firstPlacement, err := scene.Place(PlacementSpec{Asset: id, Destination: PixelRect{Width: 2, Height: 2}})
+	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := scene.Place(PlacementSpec{Asset: id, Destination: PixelRect{X: 2, Width: 2, Height: 2}}); !errors.Is(err, ErrTooManyPlacements) {
 		t.Fatalf("placement quota error = %v", err)
 	}
 	if err := scene.Apply(
-		Operation{Kind: OperationRemovePlacement, PlacementID: PlacementID{value: 1}},
+		Operation{Kind: OperationRemovePlacement, PlacementID: firstPlacement},
 		Operation{Kind: OperationPlace, Placement: PlacementSpec{Asset: id, Destination: PixelRect{Width: 2, Height: 2}}},
 	); err != nil {
 		t.Fatal(err)

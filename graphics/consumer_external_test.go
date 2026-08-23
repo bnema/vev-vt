@@ -22,7 +22,7 @@ func TestExternalConsumerCanBuildAndReadImmutableScene(t *testing.T) {
 	data[0] = 'X'
 
 	placementID, err := scene.AddPlacement(graphics.PlacementSpec{
-		AssetID:     assetID,
+		Asset:       assetID,
 		Destination: graphics.PixelRect{X: -2, Y: 3, Width: 16, Height: 8},
 	})
 	if err != nil {
