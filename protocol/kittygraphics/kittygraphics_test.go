@@ -9,6 +9,7 @@ import (
 	"image/png"
 	"math/rand"
 	"os"
+	"strconv"
 	"testing"
 
 	"github.com/bnema/vev-vt/graphics"
@@ -56,6 +57,22 @@ func TestParserRecognizesSplitPrefixAndPreservesText(t *testing.T) {
 	}
 }
 
+func TestSessionCapabilityQueryValidatesWithoutPersisting(t *testing.T) {
+	scene := graphics.NewScene(graphics.Limits{})
+	session := NewSession(scene)
+
+	result, err := session.Feed(apc("a=q,i=31,t=d,f=24,s=1,v=1", "AAAA"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(result.Bytes()); got != "\x1b_Gi=31;OK\x1b\\" {
+		t.Fatalf("response = %q", got)
+	}
+	if got := scene.Usage(); got != (graphics.Usage{}) {
+		t.Fatalf("query persisted graphics state: %#v", got)
+	}
+}
+
 func TestSessionUsesCurrentKittenChunkFixture(t *testing.T) {
 	data, err := os.ReadFile("testdata/kitten-icat-stream-chunk.bin")
 	if err != nil {
@@ -90,8 +107,8 @@ func TestSessionUsesCurrentKittenChunkFixture(t *testing.T) {
 	if len(result.Responses) != 0 {
 		t.Fatalf("quiet fixture response = %q", result.Bytes())
 	}
-	if _, ok := session.Image(1); !ok {
-		t.Fatal("fixture image mapping missing")
+	if _, ok := session.Image(0); ok {
+		t.Fatal("unidentified fixture image was retained as a reusable mapping")
 	}
 }
 
@@ -125,16 +142,41 @@ func TestSessionAcceptsRawBase64AndMapsPlacement(t *testing.T) {
 	if !ok {
 		t.Fatal("image mapping missing")
 	}
-	if _, err := session.Feed(apc("a=p,i=9,p=4,x=5,y=6,c=1,r=1", "")); err != nil {
+	if _, err := session.Feed(apc("a=p,i=9,p=4,X=5,Y=6,c=1,r=1", "")); err != nil {
 		t.Fatal(err)
 	}
-	placement, ok := session.Placement(4)
+	placement, ok := session.Placement(9, 4)
 	if !ok {
 		t.Fatal("placement mapping missing")
 	}
 	view, ok := scene.Snapshot().Placement(placement)
 	if !ok || view.AssetID() != asset || view.Destination() != (graphics.PixelRect{X: 5, Y: 6, Width: 1, Height: 1}) {
 		t.Fatalf("placement = %#v, ok=%v", view, ok)
+	}
+}
+
+func TestPlacementIDsAreScopedToTheirImage(t *testing.T) {
+	scene := graphics.NewScene(graphics.Limits{})
+	session := NewSession(scene)
+	payload := base64.RawStdEncoding.EncodeToString([]byte{1, 2, 3, 4})
+	for _, imageID := range []uint64{1, 2} {
+		if _, err := session.Feed(apc("a=t,i="+strconv.FormatUint(imageID, 10)+",f=32,s=1,v=1,q=2", payload)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := session.Feed(apc("a=p,i="+strconv.FormatUint(imageID, 10)+",p=7,q=2", "")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	first, ok := session.Placement(1, 7)
+	if !ok {
+		t.Fatal("first placement missing")
+	}
+	second, ok := session.Placement(2, 7)
+	if !ok || first == second {
+		t.Fatalf("placement mapping collision: first=%v second=%v ok=%v", first, second, ok)
+	}
+	if got := scene.Usage().Placements; got != 2 {
+		t.Fatalf("placements = %d, want 2", got)
 	}
 }
 
@@ -176,6 +218,31 @@ func TestMalformedTruncatedInterleavedAndOversizeAreBounded(t *testing.T) {
 	}
 	if _, err := session.Feed(apc("a=t,m=0,q=2", "IDBA")); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestSessionTruncationAndDeleteAbortPendingUpload(t *testing.T) {
+	for _, action := range []string{"finish", "delete"} {
+		t.Run(action, func(t *testing.T) {
+			scene := graphics.NewScene(graphics.Limits{})
+			session := NewSession(scene)
+			if _, err := session.Feed(apc("a=T,i=1,f=32,s=1,v=1,m=1,q=2", "AQ")); err != nil {
+				t.Fatal(err)
+			}
+			if action == "finish" {
+				if _, err := session.Finish(); err != nil {
+					t.Fatalf("Finish error = %v", err)
+				}
+			} else if _, err := session.Feed(apc("a=d,q=2", "")); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := session.Feed(apc("m=0,q=2", "IDBA")); err == nil {
+				t.Fatal("stale continuation unexpectedly succeeded")
+			}
+			if got := scene.Usage(); got != (graphics.Usage{}) {
+				t.Fatalf("stale continuation mutated scene: %#v", got)
+			}
+		})
 	}
 }
 
@@ -222,7 +289,7 @@ func TestChunkedTransmitAndDisplayRetainsDisplayAction(t *testing.T) {
 func TestImplicitPlacementIDsStopAtKittyLimit(t *testing.T) {
 	session := NewSession(nil)
 	session.nextPlacement = MaxKittyID + 1
-	if _, ok := session.takePlacementID(); ok {
+	if _, ok := session.takePlacementID(1); ok {
 		t.Fatal("implicit placement ID exceeded Kitty's uint32 namespace")
 	}
 }
@@ -258,7 +325,7 @@ func TestFailedImageReplacementPreservesAssetAndPlacements(t *testing.T) {
 	if !ok {
 		t.Fatal("original image mapping missing")
 	}
-	placementID, ok := session.Placement(7)
+	placementID, ok := session.Placement(1, 7)
 	if !ok {
 		t.Fatal("original placement mapping missing")
 	}
@@ -273,7 +340,7 @@ func TestFailedImageReplacementPreservesAssetAndPlacements(t *testing.T) {
 	if got, ok := session.Image(1); !ok || got != assetID {
 		t.Fatalf("replacement changed image mapping: id=%v ok=%v want=%v", got, ok, assetID)
 	}
-	if got, ok := session.Placement(7); !ok || got != placementID {
+	if got, ok := session.Placement(1, 7); !ok || got != placementID {
 		t.Fatalf("replacement changed placement mapping: id=%v ok=%v want=%v", got, ok, placementID)
 	}
 	if scene.Snapshot().Generation() != before.Generation() || scene.Usage() != before.Usage() {
@@ -294,7 +361,7 @@ func TestFailedDisplayedImageReplacementPreservesOldPlacement(t *testing.T) {
 	if !ok {
 		t.Fatal("original image mapping missing")
 	}
-	placementID, ok := session.Placement(1)
+	placementID, ok := session.Placement(1, 1)
 	if !ok {
 		t.Fatal("original placement mapping missing")
 	}
@@ -309,7 +376,7 @@ func TestFailedDisplayedImageReplacementPreservesOldPlacement(t *testing.T) {
 	if got, ok := session.Image(1); !ok || got != assetID {
 		t.Fatalf("failed displayed replacement changed image: id=%v ok=%v want=%v", got, ok, assetID)
 	}
-	if got, ok := session.Placement(1); !ok || got != placementID {
+	if got, ok := session.Placement(1, 1); !ok || got != placementID {
 		t.Fatalf("failed displayed replacement changed placement: id=%v ok=%v want=%v", got, ok, placementID)
 	}
 	if got := scene.Usage(); got.Assets != 1 || got.Placements != 1 {
@@ -338,7 +405,7 @@ func TestDeleteSelectedImagePlacementsAndImageNumberNamespace(t *testing.T) {
 	if got := scene.Usage(); got.Placements != 2 {
 		t.Fatalf("placements = %#v", got)
 	}
-	if _, err := session.Feed(apc("a=d,d=a,i=1,q=2", "")); err != nil {
+	if _, err := session.Feed(apc("a=d,d=i,i=1,q=2", "")); err != nil {
 		t.Fatal(err)
 	}
 	if got := scene.Usage(); got.Assets != 2 || got.Placements != 1 {

@@ -118,13 +118,25 @@ func TestScreenPendingTransmitDisplayIsScopedToScreenBuffer(t *testing.T) {
 	require.Equal(t, uint64(1), screen.GraphicsSnapshot().Usage().Placements)
 }
 
-func TestScreenPartialPixelGeometryUsesCellCoordinatesForBothAxes(t *testing.T) {
+func TestScreenPartialPixelGeometryDoesNotInventPixelCoordinates(t *testing.T) {
 	screen := NewScreen(10, 4)
 	screen.SetGeometry(Geometry{Cols: 10, Rows: 4, PixelWidth: 100})
 	screen.Write([]byte("\x1b[2;3H"))
 	screen.Write(screenKittyImageAPC("T"))
 	placement := screen.GraphicsSnapshot().Placements()[0]
-	require.Equal(t, graphics.PixelRect{X: 2, Y: 1, Width: 1, Height: 1}, placement.Destination())
+	require.Equal(t, graphics.PixelRect{X: 0, Y: 0, Width: 1, Height: 1}, placement.Destination())
+}
+
+func TestScreenKittyPlacementSeparatesCursorOriginCropAndPixelOffset(t *testing.T) {
+	screen := NewScreen(10, 4)
+	screen.SetGeometry(Geometry{Cols: 10, Rows: 4, PixelWidth: 100, PixelHeight: 40})
+	screen.Write([]byte("\x1b[2;3H"))
+	payload := base64.RawStdEncoding.EncodeToString(make([]byte, 64))
+	screen.Write([]byte("\x1b_Ga=T,i=1,f=32,s=4,v=4,x=1,y=1,w=2,h=2,X=3,Y=4,C=1;" + payload + "\x1b\\"))
+
+	placement := screen.GraphicsSnapshot().Placements()[0]
+	require.Equal(t, graphics.PixelRect{X: 1, Y: 1, Width: 2, Height: 2}, placement.Source())
+	require.Equal(t, graphics.PixelRect{X: 23, Y: 14, Width: 2, Height: 2}, placement.Destination())
 }
 
 func TestScreenKittyGraphicsOrdinaryResetClearScrollAndResize(t *testing.T) {

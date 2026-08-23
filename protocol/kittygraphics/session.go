@@ -10,12 +10,23 @@ import (
 	"github.com/bnema/vev-vt/graphics"
 )
 
+type placementKey struct {
+	imageID     uint64
+	placementID uint64
+}
+
+type placementOrigin struct {
+	x, y uint64
+	set  bool
+}
+
 type upload struct {
 	controls Controls
 	imageID  uint64
 	payload  []byte
 	chunks   uint64
 	display  bool
+	origin   placementOrigin
 }
 
 // MutationKind describes a scene mutation performed by a session.
@@ -94,6 +105,10 @@ func (s *Session) Feed(data []byte) (Result, error) {
 	var result Result
 	for _, event := range s.parser.Feed(data) {
 		result.Events = append(result.Events, event)
+		if event.Kind == EventError {
+			s.upload = nil
+			continue
+		}
 		if event.Kind != EventCommand {
 			continue
 		}
@@ -136,6 +151,7 @@ func (s *Session) Finish() (Result, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	result := Result{Events: s.parser.Finish()}
+	s.upload = nil
 	if len(result.Events) != 0 {
 		return result, result.Events[0].Err
 	}
@@ -158,23 +174,18 @@ func (s *Session) Process(command Command) (Result, error) {
 	return result, err
 }
 
-// SetPendingPlacement supplies the cursor-relative origin for an in-flight
-// transmit-and-display upload. Screen adapters call it immediately before the
-// final chunk so the image is anchored at the final cursor position.
+// SetPendingPlacement supplies the cursor-relative pixel origin for the next
+// placement. The origin is adapter context, not a Kitty control field: Kitty
+// X/Y remain pixel offsets within the cursor cell.
 func (s *Session) SetPendingPlacement(x, y uint64) {
 	if s == nil {
 		return
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.upload == nil {
-		return
-	}
-	if !s.upload.controls.HasX {
-		s.upload.controls.X, s.upload.controls.HasX = x, true
-	}
-	if !s.upload.controls.HasY {
-		s.upload.controls.Y, s.upload.controls.HasY = y, true
+	s.origin = placementOrigin{x: x, y: y, set: true}
+	if s.upload != nil {
+		s.upload.origin = s.origin
 	}
 }
 
@@ -202,7 +213,9 @@ func (s *Session) apply(command Command) ([][]byte, *Mutation, error) {
 	if c.HasTransmission && c.Transmission != TransmissionDirect {
 		return s.failure(c, controlsImageID(c), ErrUnsupported)
 	}
-	if s.upload != nil && action != ActionTransmit && action != ActionTransmitDisplay {
+	if action == ActionDelete {
+		s.upload = nil
+	} else if s.upload != nil && action != ActionTransmit && action != ActionTransmitDisplay {
 		return s.failure(c, controlsImageID(c), ErrInterleavedUpload)
 	}
 	switch action {
@@ -214,10 +227,7 @@ func (s *Session) apply(command Command) ([][]byte, *Mutation, error) {
 		}
 		return s.put(c)
 	case ActionQuery:
-		if len(command.Payload) != 0 {
-			return s.failure(c, controlsImageID(c), ErrInvalidCommand)
-		}
-		return s.query(c)
+		return s.query(command)
 	case ActionDelete:
 		if len(command.Payload) != 0 {
 			return s.failure(c, controlsImageID(c), ErrInvalidCommand)
@@ -233,8 +243,13 @@ func (s *Session) apply(command Command) ([][]byte, *Mutation, error) {
 func (s *Session) transmit(command Command, display bool) ([][]byte, *Mutation, error) {
 	c := command.Controls
 	imageID := c.ImageID
-	if !c.HasImageID {
+	persistent := c.HasImageID && imageID != 0
+	if !persistent {
 		imageID = 0
+		if c.HasImageNumber {
+			imageID = s.nextImageID()
+			persistent = true
+		}
 	}
 	if s.upload != nil {
 		if !continuationControlsAllowed(c, s.upload.controls) {
@@ -265,9 +280,6 @@ func (s *Session) transmit(command Command, display bool) ([][]byte, *Mutation, 
 		return s.commitUpload(complete, complete.display)
 	}
 
-	if !c.HasImageID {
-		imageID = s.nextImageID()
-	}
 	if uint64(len(command.Payload)) > s.limits.MaxUploadBytes {
 		return s.failure(c, imageID, ErrPayloadTooLarge)
 	}
@@ -278,10 +290,11 @@ func (s *Session) transmit(command Command, display bool) ([][]byte, *Mutation, 
 			payload:  append([]byte(nil), command.Payload...),
 			chunks:   1,
 			display:  display,
+			origin:   s.origin,
 		}
 		return nil, nil, nil
 	}
-	return s.commitUpload(upload{controls: c, imageID: imageID, payload: append([]byte(nil), command.Payload...), chunks: 1, display: display}, display)
+	return s.commitUpload(upload{controls: c, imageID: imageID, payload: append([]byte(nil), command.Payload...), chunks: 1, display: display, origin: s.origin}, display)
 }
 
 func (s *Session) commitUpload(value upload, display bool) ([][]byte, *Mutation, error) {
@@ -303,8 +316,12 @@ func (s *Session) commitUpload(value upload, display bool) ([][]byte, *Mutation,
 	if s.scene == nil {
 		return s.failure(value.controls, value.imageID, ErrNoScene)
 	}
+	persistent := value.controls.HasImageID && value.controls.ImageID != 0 || value.controls.HasImageNumber
 	old, replacing := s.images[value.imageID]
-	if !replacing && uint64(len(s.images)) >= s.limits.MaxImages {
+	if !persistent {
+		replacing = false
+	}
+	if !replacing && s.scene.Usage().Assets >= s.limits.MaxImages {
 		return s.failure(value.controls, value.imageID, graphics.ErrTooManyAssets)
 	}
 	if replacing && display {
@@ -337,7 +354,9 @@ func (s *Session) commitUpload(value upload, display bool) ([][]byte, *Mutation,
 	if replacing {
 		s.removeMappingsForAsset(old)
 	}
-	s.images[value.imageID] = assetID
+	if persistent {
+		s.images[value.imageID] = assetID
+	}
 	if value.controls.HasImageNumber {
 		s.imageNumbers[value.controls.ImageNumber] = value.imageID
 	}
@@ -346,7 +365,7 @@ func (s *Session) commitUpload(value upload, display bool) ([][]byte, *Mutation,
 	s.children[childID] = Child{ID: childID, ImageID: value.imageID, AssetID: assetID}
 	mutation := &Mutation{Kind: MutationUpload, ImageID: value.imageID, ChildID: childID, AssetID: assetID}
 	if display {
-		responses, placementMutation, placeErr := s.place(value.controls, value.imageID, assetID)
+		responses, placementMutation, placeErr := s.place(value.controls, value.imageID, assetID, value.origin)
 		if placementMutation != nil {
 			mutation.Kind = MutationPlacement
 			mutation.PlacementID = placementMutation.PlacementID
@@ -356,7 +375,9 @@ func (s *Session) commitUpload(value upload, display bool) ([][]byte, *Mutation,
 			// T (transmit and display) is one protocol operation. Do not
 			// leave an uploaded asset behind when its placement is rejected.
 			_ = s.scene.RemoveAssetCascade(assetID)
-			delete(s.images, value.imageID)
+			if persistent {
+				delete(s.images, value.imageID)
+			}
 			if value.controls.HasImageNumber && s.imageNumbers[value.controls.ImageNumber] == value.imageID {
 				delete(s.imageNumbers, value.controls.ImageNumber)
 			}
@@ -431,7 +452,7 @@ func (s *Session) put(c Controls) ([][]byte, *Mutation, error) {
 	if !ok {
 		return s.failure(c, responseImageID(c), ErrImageNotFound)
 	}
-	responses, mutation, err := s.place(c, imageID, assetID)
+	responses, mutation, err := s.place(c, imageID, assetID, s.origin)
 	if err != nil {
 		failureResponses, _, failureErr := s.failure(c, imageID, err)
 		return failureResponses, nil, failureErr
@@ -440,7 +461,7 @@ func (s *Session) put(c Controls) ([][]byte, *Mutation, error) {
 }
 
 func (s *Session) validateReplacementPlacement(c Controls, old graphics.AssetID, width, height int64) error {
-	if _, err := placementSpec(c, old, width, height); err != nil {
+	if _, err := placementSpec(c, old, width, height, s.origin); err != nil {
 		return err
 	}
 	snapshot := s.scene.Snapshot()
@@ -460,8 +481,8 @@ func (s *Session) validateReplacementPlacement(c Controls, old graphics.AssetID,
 	projectedSession := uint64(len(s.placements)) - removedSession
 	projectedScene := snapshot.Usage().Placements - removedScene
 	needsSlot := true
-	if c.HasPlacementID {
-		if mapped, ok := s.placements[c.PlacementID]; ok {
+	if c.HasPlacementID && c.PlacementID != 0 {
+		if mapped, ok := s.placements[placementKey{imageID: c.ImageID, placementID: c.PlacementID}]; ok {
 			if placement, ok := snapshot.Placement(mapped); ok && placement.AssetID() != old {
 				needsSlot = false
 			}
@@ -479,13 +500,13 @@ func (s *Session) validateReplacementPlacement(c Controls, old graphics.AssetID,
 	return nil
 }
 
-func placementSpec(c Controls, assetID graphics.AssetID, width, height int64) (graphics.PlacementSpec, error) {
+func placementSpec(c Controls, assetID graphics.AssetID, width, height int64, origin placementOrigin) (graphics.PlacementSpec, error) {
 	source := graphics.PixelRect{Width: width, Height: height}
 	var err error
-	if source.X, err = checkedCoordinate(c.SourceX, c.HasSourceX); err != nil {
+	if source.X, err = checkedCoordinate(c.X, c.HasX); err != nil {
 		return graphics.PlacementSpec{}, err
 	}
-	if source.Y, err = checkedCoordinate(c.SourceY, c.HasSourceY); err != nil {
+	if source.Y, err = checkedCoordinate(c.Y, c.HasY); err != nil {
 		return graphics.PlacementSpec{}, err
 	}
 	if source.Width, err = checkedDimension(c.SourceWidth, c.HasSourceWidth, width); err != nil {
@@ -494,15 +515,22 @@ func placementSpec(c Controls, assetID graphics.AssetID, width, height int64) (g
 	if source.Height, err = checkedDimension(c.SourceHeight, c.HasSourceHeight, height); err != nil {
 		return graphics.PlacementSpec{}, err
 	}
-	x, err := checkedCoordinate(c.X, c.HasX)
+	offsetX, err := checkedCoordinate(c.SourceX, c.HasSourceX)
 	if err != nil {
 		return graphics.PlacementSpec{}, err
 	}
-	y, err := checkedCoordinate(c.Y, c.HasY)
+	offsetY, err := checkedCoordinate(c.SourceY, c.HasSourceY)
 	if err != nil {
 		return graphics.PlacementSpec{}, err
 	}
-	destination := graphics.PixelRect{X: x, Y: y, Width: source.Width, Height: source.Height}
+	destination := graphics.PixelRect{X: offsetX, Y: offsetY, Width: source.Width, Height: source.Height}
+	if origin.set {
+		if origin.x > math.MaxInt64 || origin.y > math.MaxInt64 || destination.X > math.MaxInt64-int64(origin.x) || destination.Y > math.MaxInt64-int64(origin.y) {
+			return graphics.PlacementSpec{}, ErrIntegerOverflow
+		}
+		destination.X += int64(origin.x)
+		destination.Y += int64(origin.y)
+	}
 	if !source.Valid() || !destination.Valid() {
 		return graphics.PlacementSpec{}, graphics.ErrInvalidRect
 	}
@@ -529,7 +557,7 @@ func placementSpec(c Controls, assetID graphics.AssetID, width, height int64) (g
 	return spec, nil
 }
 
-func (s *Session) place(c Controls, imageID uint64, assetID graphics.AssetID) ([][]byte, *Mutation, error) {
+func (s *Session) place(c Controls, imageID uint64, assetID graphics.AssetID, origin placementOrigin) ([][]byte, *Mutation, error) {
 	if s.scene == nil {
 		return nil, nil, ErrNoScene
 	}
@@ -537,19 +565,20 @@ func (s *Session) place(c Controls, imageID uint64, assetID graphics.AssetID) ([
 	if !ok {
 		return nil, nil, ErrImageNotFound
 	}
-	spec, err := placementSpec(c, assetID, asset.Width(), asset.Height())
+	spec, err := placementSpec(c, assetID, asset.Width(), asset.Height(), origin)
 	if err != nil {
 		return nil, nil, err
 	}
 	placementID := c.PlacementID
-	if placementID == 0 {
+	if imageID == 0 || placementID == 0 {
 		var ok bool
-		placementID, ok = s.takePlacementID()
+		placementID, ok = s.takePlacementID(imageID)
 		if !ok {
 			return nil, nil, graphics.ErrIdentifierOverflow
 		}
 	}
-	if existing, ok := s.placements[placementID]; ok {
+	key := placementKey{imageID: imageID, placementID: placementID}
+	if existing, ok := s.placements[key]; ok {
 		if err := s.scene.UpdatePlacement(existing, spec); err != nil {
 			return nil, nil, err
 		}
@@ -562,29 +591,50 @@ func (s *Session) place(c Controls, imageID uint64, assetID graphics.AssetID) ([
 	if err != nil {
 		return nil, nil, err
 	}
-	s.placements[placementID] = sceneID
+	s.placements[key] = sceneID
 	return nil, &Mutation{Kind: MutationPlacement, ImageID: imageID, AssetID: assetID, PlacementID: placementID, ScenePlacementID: sceneID}, nil
 }
 
-func (s *Session) query(c Controls) ([][]byte, *Mutation, error) {
-	id, _, ok := s.resolveImage(c)
-	if c.HasImageID || c.HasImageNumber {
-		if !ok {
-			return s.failure(c, responseImageID(c), ErrImageNotFound)
-		}
+func (s *Session) query(command Command) ([][]byte, *Mutation, error) {
+	c := command.Controls
+	if len(command.Payload) == 0 {
+		return s.failure(c, responseImageID(c), ErrInvalidCommand)
 	}
-	return s.success(c, id), nil, nil
+	decoded, err := DecodeBase64(command.Payload)
+	if err != nil {
+		return s.failure(c, responseImageID(c), err)
+	}
+	format := c.Format
+	if !c.HasFormat {
+		format = FormatRGBA
+	}
+	if _, _, err := imageGeometry(decoded, format, c, s.limits); err != nil {
+		return s.failure(c, responseImageID(c), err)
+	}
+	return s.success(c, responseImageID(c)), nil, nil
 }
 
 func (s *Session) delete(c Controls) ([][]byte, *Mutation, error) {
 	target := c.Delete
 	if !c.HasDelete {
-		target = DeleteImage
+		target = DeleteAll
 	}
 	id, asset, selected := s.resolveImage(c)
 	responseID := responseImageID(c)
 	switch target {
-	case DeleteImage, DeleteImageNumber:
+	case DeleteImage:
+		if !selected || s.scene == nil {
+			return s.failure(c, responseID, ErrImageNotFound)
+		}
+		keys := s.placementKeysForAsset(asset)
+		if c.HasPlacementID && c.PlacementID != 0 {
+			keys = []placementKey{{imageID: id, placementID: c.PlacementID}}
+		}
+		if err := s.removePlacements(keys); err != nil {
+			return s.failure(c, id, err)
+		}
+		return s.success(c, id), &Mutation{Kind: MutationDeletePlacements, ImageID: id, AssetID: asset}, nil
+	case DeleteImageNumber:
 		if !selected {
 			return s.failure(c, responseID, ErrImageNotFound)
 		}
@@ -597,41 +647,35 @@ func (s *Session) delete(c Controls) ([][]byte, *Mutation, error) {
 		}
 		return s.success(c, id), &Mutation{Kind: MutationDeleteImage, ImageID: id, AssetID: asset}, nil
 	case DeleteAll:
-		if !selected {
-			return s.failure(c, responseID, ErrImageNotFound)
-		}
 		if s.scene == nil {
-			return s.failure(c, id, ErrNoScene)
+			return s.failure(c, responseID, ErrNoScene)
 		}
-		snapshot := s.scene.Snapshot()
-		placementIDs := make([]uint64, 0)
-		for placementID, mapped := range s.placements {
-			placement, ok := snapshot.Placement(mapped)
-			if ok && placement.AssetID() == asset {
-				placementIDs = append(placementIDs, placementID)
-			}
+		placementIDs := make([]placementKey, 0, len(s.placements))
+		for placementID := range s.placements {
+			placementIDs = append(placementIDs, placementID)
 		}
 		if err := s.removePlacements(placementIDs); err != nil {
-			return s.failure(c, id, err)
+			return s.failure(c, responseID, err)
 		}
-		return s.success(c, id), &Mutation{Kind: MutationDeletePlacements, ImageID: id, AssetID: asset}, nil
+		return s.success(c, responseID), &Mutation{Kind: MutationDeletePlacements}, nil
 	case DeletePlacement:
 		placementID := c.PlacementID
-		mapped, ok := s.placements[placementID]
-		if !ok || s.scene == nil {
+		key := placementKey{imageID: id, placementID: placementID}
+		mapped, ok := s.placements[key]
+		if !selected || placementID == 0 || !ok || s.scene == nil {
 			return s.failure(c, responseID, ErrPlacementNotFound)
 		}
 		if err := s.scene.RemovePlacement(mapped); err != nil {
 			return s.failure(c, responseID, err)
 		}
-		delete(s.placements, placementID)
-		return s.success(c, responseID), &Mutation{Kind: MutationDeletePlacement, PlacementID: placementID, ScenePlacementID: mapped}, nil
+		delete(s.placements, key)
+		return s.success(c, responseID), &Mutation{Kind: MutationDeletePlacement, ImageID: id, PlacementID: placementID, ScenePlacementID: mapped}, nil
 	case DeleteAllImages, DeleteAllPlacements:
 		if s.scene == nil {
 			return s.failure(c, responseID, ErrNoScene)
 		}
 		if target == DeleteAllPlacements {
-			placementIDs := make([]uint64, 0, len(s.placements))
+			placementIDs := make([]placementKey, 0, len(s.placements))
 			for placementID := range s.placements {
 				placementIDs = append(placementIDs, placementID)
 			}
@@ -644,7 +688,7 @@ func (s *Session) delete(c Controls) ([][]byte, *Mutation, error) {
 			}
 			s.images = make(map[uint64]graphics.AssetID)
 			s.imageNumbers = make(map[uint64]uint64)
-			s.placements = make(map[uint64]graphics.PlacementID)
+			s.placements = make(map[placementKey]graphics.PlacementID)
 			s.children = make(map[uint64]Child)
 		}
 		return s.success(c, responseID), &Mutation{Kind: MutationClear}, nil
@@ -653,7 +697,22 @@ func (s *Session) delete(c Controls) ([][]byte, *Mutation, error) {
 	}
 }
 
-func (s *Session) removePlacements(ids []uint64) error {
+func (s *Session) placementKeysForAsset(asset graphics.AssetID) []placementKey {
+	if s.scene == nil {
+		return nil
+	}
+	snapshot := s.scene.Snapshot()
+	keys := make([]placementKey, 0)
+	for key, mapped := range s.placements {
+		placement, ok := snapshot.Placement(mapped)
+		if ok && placement.AssetID() == asset {
+			keys = append(keys, key)
+		}
+	}
+	return keys
+}
+
+func (s *Session) removePlacements(ids []placementKey) error {
 	if len(ids) == 0 {
 		return nil
 	}
@@ -759,7 +818,7 @@ func (s *Session) nextImageID() uint64 {
 	}
 }
 
-func (s *Session) takePlacementID() (uint64, bool) {
+func (s *Session) takePlacementID(imageID uint64) (uint64, bool) {
 	for s.nextPlacement != 0 && s.nextPlacement <= MaxKittyID {
 		id := s.nextPlacement
 		if s.nextPlacement == MaxKittyID {
@@ -767,7 +826,7 @@ func (s *Session) takePlacementID() (uint64, bool) {
 		} else {
 			s.nextPlacement++
 		}
-		if _, exists := s.placements[id]; !exists {
+		if _, exists := s.placements[placementKey{imageID: imageID, placementID: id}]; !exists {
 			return id, true
 		}
 	}

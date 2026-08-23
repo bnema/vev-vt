@@ -8,8 +8,8 @@ import "bytes"
 const (
 	// KittyGraphicsQuery asks a terminal whether it understands the Kitty
 	// graphics protocol. The image id is deliberately reserved for probing and
-	// the query carries no image payload.
-	KittyGraphicsQuery = "\x1b_Gi=31,s=1,v=1,a=q;\x1b\\"
+	// the 1×1 RGB payload is validated without being retained by a=q.
+	KittyGraphicsQuery = "\x1b_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\"
 	// DeviceAttributesQuery is the primary DA1 query. It is paired with the
 	// Kitty query so a graphics declaration requires both terminal identity and
 	// protocol support.

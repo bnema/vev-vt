@@ -331,11 +331,12 @@ type Session struct {
 	parser        *Parser
 	images        map[uint64]graphics.AssetID
 	imageNumbers  map[uint64]uint64
-	placements    map[uint64]graphics.PlacementID
+	placements    map[placementKey]graphics.PlacementID
 	children      map[uint64]Child
 	nextChild     uint64
 	nextPlacement uint64
 	upload        *upload
+	origin        placementOrigin
 }
 
 // Adapter is an alias for the stateful Kitty graphics session.
@@ -365,7 +366,7 @@ func NewSession(scene *graphics.Scene, config ...Limits) *Session {
 		parser:        NewParser(l),
 		images:        make(map[uint64]graphics.AssetID),
 		imageNumbers:  make(map[uint64]uint64),
-		placements:    make(map[uint64]graphics.PlacementID),
+		placements:    make(map[placementKey]graphics.PlacementID),
 		children:      make(map[uint64]Child),
 		nextChild:     1,
 		nextPlacement: 1,
@@ -394,20 +395,21 @@ func (s *Session) Image(imageID uint64) (graphics.AssetID, bool) {
 // Asset is an alias for Image.
 func (s *Session) Asset(imageID uint64) (graphics.AssetID, bool) { return s.Image(imageID) }
 
-// Placement returns the graphics placement mapped from a Kitty placement ID.
-func (s *Session) Placement(placementID uint64) (graphics.PlacementID, bool) {
+// Placement returns the graphics placement mapped from one Kitty image and
+// placement-ID pair. Kitty placement IDs are scoped to their image ID.
+func (s *Session) Placement(imageID, placementID uint64) (graphics.PlacementID, bool) {
 	if s == nil {
 		return graphics.PlacementID{}, false
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	id, ok := s.placements[placementID]
+	id, ok := s.placements[placementKey{imageID: imageID, placementID: placementID}]
 	return id, ok
 }
 
 // PlacementID is an alias for Placement.
-func (s *Session) PlacementID(placementID uint64) (graphics.PlacementID, bool) {
-	return s.Placement(placementID)
+func (s *Session) PlacementID(imageID, placementID uint64) (graphics.PlacementID, bool) {
+	return s.Placement(imageID, placementID)
 }
 
 // Child returns the session child associated with an image ID.

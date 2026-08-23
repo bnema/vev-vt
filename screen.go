@@ -394,7 +394,6 @@ func (s *Screen) dispatchKittyGraphics(apc []byte) {
 	}
 	controls := command.Controls
 	pending := s.kittyPendingDisplay
-	continuation := pending != nil
 	action := controls.Action
 	if !controls.HasAction {
 		action = kittygraphics.ActionTransmit
@@ -407,19 +406,7 @@ func (s *Screen) dispatchKittyGraphics(apc []byte) {
 	if pending != nil {
 		movementControls = *pending
 	}
-	if display && !continuation {
-		if !controls.HasMore || controls.More != 1 {
-			if !controls.HasX {
-				controls.X, controls.HasX = s.kittyCursorX(), true
-			}
-			if !controls.HasY {
-				controls.Y, controls.HasY = s.kittyCursorY(), true
-			}
-			command.Controls = controls
-		}
-		movementControls = controls
-	}
-	if display && continuation && (!controls.HasMore || controls.More != 1) {
+	if display {
 		s.graphics.kitty.SetPendingPlacement(s.kittyCursorX(), s.kittyCursorY())
 	}
 	if display && controls.HasMore && controls.More == 1 {
@@ -448,7 +435,7 @@ func (s *Screen) kittyCursorX() uint64 {
 	if cellWidth, _, ok := s.kittyCellPixels(); ok {
 		return uint64(s.Col * cellWidth)
 	}
-	return uint64(s.Col)
+	return 0
 }
 
 func (s *Screen) kittyCursorY() uint64 {
@@ -456,7 +443,7 @@ func (s *Screen) kittyCursorY() uint64 {
 	if ok {
 		return uint64(s.Row * cellHeight)
 	}
-	return uint64(s.Row)
+	return 0
 }
 
 func (s *Screen) kittyCellPixels() (width, height int, ok bool) {
