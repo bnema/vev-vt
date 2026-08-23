@@ -135,10 +135,7 @@ func (s *Session) Finish() (Result, error) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	result := Result{}
-	for _, event := range s.parser.Finish() {
-		result.Events = append(result.Events, event)
-	}
+	result := Result{Events: s.parser.Finish()}
 	if len(result.Events) != 0 {
 		return result, result.Events[0].Err
 	}

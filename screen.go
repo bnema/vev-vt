@@ -408,7 +408,7 @@ func (s *Screen) dispatchKittyGraphics(apc []byte) {
 		movementControls = *pending
 	}
 	if display && !continuation {
-		if !(controls.HasMore && controls.More == 1) {
+		if !controls.HasMore || controls.More != 1 {
 			if !controls.HasX {
 				controls.X, controls.HasX = s.kittyCursorX(), true
 			}
@@ -419,7 +419,7 @@ func (s *Screen) dispatchKittyGraphics(apc []byte) {
 		}
 		movementControls = controls
 	}
-	if display && continuation && !(controls.HasMore && controls.More == 1) {
+	if display && continuation && (!controls.HasMore || controls.More != 1) {
 		s.graphics.kitty.SetPendingPlacement(s.kittyCursorX(), s.kittyCursorY())
 	}
 	if display && controls.HasMore && controls.More == 1 {

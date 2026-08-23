@@ -739,7 +739,7 @@ func (s *Snapshot) Asset(id AssetID) (AssetView, bool) {
 	if !ok {
 		return AssetView{}, false
 	}
-	return AssetView{id: record.id, encoded: record.encoded, width: record.width, height: record.height, pixels: record.pixels}, true
+	return AssetView(record), true
 }
 
 // GetAsset is an alias for Asset.
