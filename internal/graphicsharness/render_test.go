@@ -56,6 +56,19 @@ func TestRenderDecodesMetadataBearingPNG(t *testing.T) {
 	require.Equal(t, 32, frame.Bounds().Dy())
 }
 
+func TestRenderRejectsPNGDimensionsDifferentFromSnapshot(t *testing.T) {
+	encoded, err := base64.StdEncoding.DecodeString(pngSuiteEXIFBase64)
+	require.NoError(t, err)
+	scene := graphics.NewScene(graphics.Limits{})
+	assetID, err := scene.AddAsset(graphics.AssetBlob{Format: graphics.AssetFormatPNG, Width: 31, Height: 32, Encoded: encoded})
+	require.NoError(t, err)
+	_, err = scene.Place(graphics.PlacementSpec{Asset: assetID, Destination: graphics.PixelRect{Width: 31, Height: 32}})
+	require.NoError(t, err)
+
+	_, err = Render(scene.Snapshot(), graphics.PixelRect{Width: 31, Height: 32})
+	require.EqualError(t, err, "decode asset a1: PNG dimensions do not match snapshot")
+}
+
 func TestRenderScalesCropsAndClips(t *testing.T) {
 	scene := graphics.NewScene(graphics.Limits{})
 	assetID, err := scene.AddAsset(graphics.AssetBlob{

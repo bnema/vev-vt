@@ -58,10 +58,19 @@ func scaleFrame(source *image.RGBA, scale int) (*image.RGBA, error) {
 		return nil, fmt.Errorf("scale must be positive")
 	}
 	width, height := source.Bounds().Dx(), source.Bounds().Dy()
-	if uint64(width)*uint64(height)*uint64(scale)*uint64(scale) > 64<<20 {
+	maxInt := int(^uint(0) >> 1)
+	if width > 0 && scale > maxInt/width {
 		return nil, fmt.Errorf("scaled frame exceeds 67108864 pixels")
 	}
-	result := image.NewRGBA(image.Rect(0, 0, width*scale, height*scale))
+	if height > 0 && scale > maxInt/height {
+		return nil, fmt.Errorf("scaled frame exceeds 67108864 pixels")
+	}
+	scaledWidth, scaledHeight := width*scale, height*scale
+	const maxScaledPixels = uint64(64 << 20)
+	if scaledWidth > 0 && uint64(scaledHeight) > maxScaledPixels/uint64(scaledWidth) {
+		return nil, fmt.Errorf("scaled frame exceeds 67108864 pixels")
+	}
+	result := image.NewRGBA(image.Rect(0, 0, scaledWidth, scaledHeight))
 	for y := range height {
 		for x := range width {
 			pixel := source.RGBAAt(x, y)

@@ -75,12 +75,16 @@ func decodeAsset(asset graphics.AssetView) (*image.RGBA, error) {
 	encoded := asset.Encoded()
 	switch asset.Format() {
 	case graphics.AssetFormatPNG:
-		decoded, err := png.Decode(bytes.NewReader(encoded))
+		config, err := png.DecodeConfig(bytes.NewReader(encoded))
 		if err != nil {
 			return nil, fmt.Errorf("decode asset %s: %w", asset.ID(), err)
 		}
-		if decoded.Bounds().Dx() != width || decoded.Bounds().Dy() != height {
+		if config.Width != width || config.Height != height {
 			return nil, fmt.Errorf("decode asset %s: PNG dimensions do not match snapshot", asset.ID())
+		}
+		decoded, err := png.Decode(bytes.NewReader(encoded))
+		if err != nil {
+			return nil, fmt.Errorf("decode asset %s: %w", asset.ID(), err)
 		}
 		result := image.NewRGBA(image.Rect(0, 0, width, height))
 		for y := range height {

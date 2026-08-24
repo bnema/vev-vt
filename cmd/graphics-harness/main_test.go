@@ -26,3 +26,8 @@ func TestScaleFrameRejectsInvalidScale(t *testing.T) {
 	_, err := scaleFrame(image.NewRGBA(image.Rect(0, 0, 1, 1)), 0)
 	require.Error(t, err)
 }
+
+func TestScaleFrameRejectsMaximumIntScale(t *testing.T) {
+	_, err := scaleFrame(image.NewRGBA(image.Rect(0, 0, 1, 1)), int(^uint(0)>>1))
+	require.EqualError(t, err, "scaled frame exceeds 67108864 pixels")
+}
