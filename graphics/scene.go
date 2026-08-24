@@ -894,8 +894,8 @@ func visiblePlacement(placement PlacementView, pixels PixelRect, cells CellRect,
 }
 
 // mapSubRect maps a non-empty sub-rectangle from one rectangle's coordinate
-// space into another rectangle's coordinate space. It uses exact 128+-bit
-// arithmetic through math/big so products cannot wrap before division.
+// space into another rectangle's coordinate space. Its range mapping uses
+// exact 128-bit arithmetic so products cannot wrap before division.
 func mapSubRect(from, to, sub PixelRect) (PixelRect, bool) {
 	if !from.Valid() || !to.Valid() || !sub.Valid() || from.Empty() || to.Empty() || sub.Empty() || !containsRect(from, sub) {
 		return PixelRect{}, false

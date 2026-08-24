@@ -60,6 +60,22 @@ separate from cells and history bytes; VTH3 remains text/history-only. Static
 placements retain their configured pixel rectangles across text scrolling and
 reflow; row-anchored and relative-placement movement is unsupported.
 
+### Headless graphics harness
+
+`cmd/graphics-harness` feeds a terminal byte capture into a fresh `Screen` and
+writes its active graphics snapshot as a PNG using an internal reference
+compositor. It is a development inspection tool, not a terminal emulator.
+
+```sh
+go run ./cmd/graphics-harness \
+  -input internal/graphicsharness/testdata/demo.apc \
+  -output /tmp/graphics-harness.png \
+  -cols 4 -rows 4 -pixel-width 4 -pixel-height 4 -scale 64
+```
+
+The included demo has an opaque blue background and a semi-transparent red
+overlay. Its output is suitable for direct image inspection.
+
 ## Checks
 
 ```sh
