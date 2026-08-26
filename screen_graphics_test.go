@@ -233,7 +233,7 @@ func TestScreenKittyPlacementUsesCursorAndCControlsMovement(t *testing.T) {
 	require.Equal(t, 2, screen.CursorCol())
 
 	screen.Write([]byte("\x1b_Ga=T,i=2,f=32,s=2,v=2,C=0;" + payload + "\x1b\\"))
-	require.Equal(t, 2, screen.CursorRow())
+	require.Equal(t, 1, screen.CursorRow())
 	require.Equal(t, 3, screen.CursorCol())
 
 	screen.Write([]byte("\x1b[3;4H\x1b_Ga=T,i=3,f=32,s=1,v=1,m=1,C=1;AQ\x1b\\"))
@@ -243,4 +243,17 @@ func TestScreenKittyPlacementUsesCursorAndCControlsMovement(t *testing.T) {
 	require.Equal(t, graphics.PixelRect{X: 30, Y: 20, Width: 1, Height: 1}, placements[2].Destination())
 	require.Equal(t, 2, screen.CursorRow())
 	require.Equal(t, 3, screen.CursorCol())
+}
+
+func TestScreenKittyNaturalImageHeightMovesCursorBelowPlacement(t *testing.T) {
+	screen := NewScreen(10, 5)
+	screen.SetGeometry(Geometry{Cols: 10, Rows: 5, PixelWidth: 100, PixelHeight: 50})
+	payload := base64.RawStdEncoding.EncodeToString(make([]byte, 15*25*4))
+
+	screen.Write([]byte("\x1b_Ga=T,i=1,f=32,s=15,v=25;" + payload + "\x1b\\"))
+
+	// A 15x25 image occupies 2x3 cells. Kitty leaves the cursor immediately to
+	// the right of the placement and on its final occupied row.
+	require.Equal(t, 2, screen.CursorRow())
+	require.Equal(t, 2, screen.CursorCol())
 }

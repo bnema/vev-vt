@@ -422,7 +422,8 @@ func (s *Screen) dispatchKittyGraphics(apc []byte) {
 	}
 	if len(result.Mutations) != 0 {
 		if display {
-			s.applyKittyCursorMovement(movementControls)
+			mutation := result.Mutations[len(result.Mutations)-1]
+			s.applyKittyCursorMovement(movementControls, mutation)
 			s.kittyPendingDisplay = nil
 		}
 		// Graphics are rendered independently from Frame. A graphics mutation
@@ -458,35 +459,73 @@ func (s *Screen) kittyCellPixels() (width, height int, ok bool) {
 	return width, height, true
 }
 
-func (s *Screen) applyKittyCursorMovement(c kittygraphics.Controls) {
-	if c.HasCursor && c.Cursor == 1 {
+func (s *Screen) applyKittyCursorMovement(c kittygraphics.Controls, mutation kittygraphics.Mutation) {
+	if c.HasCursor && c.Cursor == 1 || s.Frame.Width <= 0 || s.Frame.Height <= 0 {
 		return
 	}
-	columns, rows := 1, 1
-	if c.HasColumns {
-		columns = kittyCursorAdvance(c.Columns)
+	columns, rows := s.kittyPlacementGridSize(c, mutation)
+	targetColumn := s.Col + columns
+	wraps := targetColumn >= s.Frame.Width
+	rowMoves := max(rows-1, 0)
+	if wraps {
+		rowMoves++
 	}
-	if c.HasRows {
-		rows = kittyCursorAdvance(c.Rows)
+	// Bound work for adversarial dimensions while retaining enough index calls
+	// to reach and then scroll one complete screen, matching terminal behavior.
+	rowMoves = min(rowMoves, s.Frame.Height*2)
+	for range rowMoves {
+		s.index()
 	}
-	s.Col = advanceKittyCursor(s.Col, columns, 0, s.Frame.Width-1)
-	s.Row = advanceKittyCursor(s.Row, rows, s.cursorMinRow(), s.cursorMaxRow())
+	if wraps {
+		s.Col = 0
+	} else {
+		s.Col = targetColumn
+	}
 }
 
-func advanceKittyCursor(current, amount, minimum, maximum int) int {
-	if maximum < minimum {
-		return minimum
+func (s *Screen) kittyPlacementGridSize(c kittygraphics.Controls, mutation kittygraphics.Mutation) (columns, rows int) {
+	columns, rows = 1, 1
+	if c.HasColumns {
+		columns = max(kittyCursorAdvance(c.Columns), 1)
 	}
-	if current < minimum {
-		current = minimum
+	if c.HasRows {
+		rows = max(kittyCursorAdvance(c.Rows), 1)
 	}
-	if current > maximum {
-		current = maximum
+	if c.HasColumns && c.HasRows || s.graphics == nil || s.graphics.scene == nil {
+		return columns, rows
 	}
-	if amount > maximum-current {
-		return maximum
+	placement, ok := s.graphics.scene.Snapshot().Placement(mutation.ScenePlacementID)
+	if !ok {
+		return columns, rows
 	}
-	return current + amount
+	cellWidth, cellHeight, pixelsKnown := s.kittyCellPixels()
+	if !pixelsKnown {
+		return columns, rows
+	}
+	destination := placement.Destination()
+	if !c.HasColumns {
+		offset := destination.X % int64(cellWidth)
+		columns = kittyPixelCellSpan(offset, destination.Width, cellWidth)
+	}
+	if !c.HasRows {
+		offset := destination.Y % int64(cellHeight)
+		rows = kittyPixelCellSpan(offset, destination.Height, cellHeight)
+	}
+	return columns, rows
+}
+
+func kittyPixelCellSpan(offset, size int64, cellSize int) int {
+	if offset < 0 || size <= 0 || cellSize <= 0 {
+		return 1
+	}
+	span := (offset + size + int64(cellSize) - 1) / int64(cellSize)
+	if span <= 0 {
+		return 1
+	}
+	if span > int64(^uint(0)>>1) {
+		return int(^uint(0) >> 1)
+	}
+	return int(span)
 }
 
 func kittyCursorAdvance(value uint64) int {
