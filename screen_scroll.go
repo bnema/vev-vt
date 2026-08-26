@@ -2,6 +2,7 @@ package vt
 
 import (
 	"errors"
+	"fmt"
 	"math"
 
 	renderer "github.com/bnema/vev-vt/core"
@@ -175,12 +176,17 @@ func (s *Screen) scrollGraphicsRegion(top, bottom, rows int) {
 			continue
 		}
 		destination.Y += delta
+		if _, valid := destination.Bottom(); !valid {
+			continue
+		}
 		spec := placement.Spec()
 		spec.Destination = destination
 		operations = append(operations, graphics.Operation{Kind: graphics.OperationUpdatePlacement, PlacementID: placement.ID(), Placement: spec})
 	}
 	if len(operations) != 0 {
-		_ = s.graphics.scene.Apply(operations...)
+		if err := s.graphics.scene.Apply(operations...); err != nil {
+			panic(fmt.Errorf("scroll graphics placements: %w", err))
+		}
 	}
 }
 

@@ -407,7 +407,7 @@ func decodeImagePayload(payload []byte, controls Controls, limits Limits) ([]byt
 	if err != nil {
 		return nil, fmt.Errorf("%w: zlib: %v", ErrInvalidCommand, err)
 	}
-	defer zr.Close()
+	defer func() { _ = zr.Close() }()
 	limit := limits.MaxDecodedBytes
 	if limit >= math.MaxInt64 {
 		limit = math.MaxInt64 - 1

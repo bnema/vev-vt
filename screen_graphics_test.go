@@ -2,6 +2,7 @@ package vt
 
 import (
 	"encoding/base64"
+	"math"
 	"strconv"
 	"testing"
 
@@ -282,4 +283,37 @@ func TestScreenKittyPlacementScrollsWithTallImageCursorAdvance(t *testing.T) {
 	require.Equal(t, graphics.PixelRect{X: 0, Y: 0, Width: 15, Height: 45}, placement.Destination(), "the placement must scroll with the text buffer")
 	require.Equal(t, 4, screen.CursorRow())
 	require.Equal(t, 2, screen.CursorCol())
+}
+
+func TestScreenKittyPlacementScrollsOnlyWhenContainedInRegion(t *testing.T) {
+	screen := NewScreen(10, 6)
+	screen.SetGeometry(Geometry{Cols: 10, Rows: 6, PixelWidth: 100, PixelHeight: 60})
+	screen.Write([]byte("\x1b[2;5r"))
+
+	insidePayload := base64.RawStdEncoding.EncodeToString(make([]byte, 1*10*4))
+	screen.Write([]byte("\x1b[3;1H\x1b_Ga=T,i=1,f=32,s=1,v=10,C=1;" + insidePayload + "\x1b\\"))
+	straddlingPayload := base64.RawStdEncoding.EncodeToString(make([]byte, 1*20*4))
+	screen.Write([]byte("\x1b[1;1H\x1b_Ga=T,i=2,f=32,s=1,v=20,Y=5,C=1;" + straddlingPayload + "\x1b\\"))
+
+	screen.Write([]byte("\x1b[S"))
+
+	placements := screen.GraphicsSnapshot().Placements()
+	require.Len(t, placements, 2)
+	require.Equal(t, graphics.PixelRect{X: 0, Y: 10, Width: 1, Height: 10}, placements[0].Destination(), "a placement contained in the margin must scroll")
+	require.Equal(t, graphics.PixelRect{X: 0, Y: 5, Width: 1, Height: 20}, placements[1].Destination(), "a placement crossing the margin must remain fixed")
+}
+
+func TestScreenKittyPlacementScrollSkipsBottomEdgeOverflow(t *testing.T) {
+	screen := NewScreen(1, 2)
+	screen.SetGeometry(Geometry{Cols: 1, Rows: 2, PixelWidth: 10, PixelHeight: 20})
+	payload := base64.RawStdEncoding.EncodeToString(make([]byte, 1*10*4))
+	screen.Write([]byte("\x1b_Ga=T,i=1,f=32,s=1,v=10,C=1;" + payload + "\x1b\\"))
+	placement := screen.GraphicsSnapshot().Placements()[0]
+	nearLimit := graphics.PixelRect{X: 0, Y: math.MaxInt64 - 11, Width: 1, Height: 10}
+	require.NoError(t, screen.graphics.scene.UpdatePlacement(placement.ID(), graphics.PlacementSpec{Destination: nearLimit}))
+
+	require.NotPanics(t, func() { screen.Write([]byte("\x1b[T")) })
+
+	placement = screen.GraphicsSnapshot().Placements()[0]
+	require.Equal(t, nearLimit, placement.Destination())
 }
