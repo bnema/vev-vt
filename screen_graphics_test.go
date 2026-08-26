@@ -257,3 +257,17 @@ func TestScreenKittyNaturalImageHeightMovesCursorBelowPlacement(t *testing.T) {
 	require.Equal(t, 2, screen.CursorRow())
 	require.Equal(t, 2, screen.CursorCol())
 }
+
+func TestScreenKittyPlacementScrollsWithTallImageCursorAdvance(t *testing.T) {
+	screen := NewScreen(10, 5)
+	screen.SetGeometry(Geometry{Cols: 10, Rows: 5, PixelWidth: 100, PixelHeight: 50})
+	screen.Write([]byte("\x1b[2;1H"))
+	payload := base64.RawStdEncoding.EncodeToString(make([]byte, 15*45*4))
+
+	screen.Write([]byte("\x1b_Ga=T,i=1,f=32,s=15,v=45;" + payload + "\x1b\\"))
+
+	placement := screen.GraphicsSnapshot().Placements()[0]
+	require.Equal(t, graphics.PixelRect{X: 0, Y: 0, Width: 15, Height: 45}, placement.Destination(), "the placement must scroll with the text buffer")
+	require.Equal(t, 4, screen.CursorRow())
+	require.Equal(t, 2, screen.CursorCol())
+}
