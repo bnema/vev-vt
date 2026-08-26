@@ -50,15 +50,16 @@ evidence.
 The VT accepts bounded static direct transmissions used by current
 `kitten icat --transfer-mode=stream`: PNG, RGB, and RGBA assets; transmit,
 transmit-and-display, place, query, and supported delete operations; chunked
-Base64 uploads; source rectangles; cell extents; pixel offsets; z-index; and
-cursor movement policy. Assets and decoded pixels are bounded by explicit scene
-and parser limits. File, temporary-file, shared-memory, animation, composition,
-relative placement, and Unicode-placeholder commands remain unsupported.
+Base64 uploads with optional zlib compression; source rectangles; cell extents;
+pixel offsets; z-index; and cursor movement policy. Assets and decoded pixels
+are bounded by explicit scene and parser limits. File, temporary-file,
+shared-memory, animation, composition, relative placement, and
+Unicode-placeholder commands remain unsupported.
 
 `Screen` allocates graphics state only after a Kitty APC. Graphics snapshots are
 separate from cells and history bytes; VTH3 remains text/history-only. Static
-placements retain their configured pixel rectangles across text scrolling and
-reflow; row-anchored and relative-placement movement is unsupported.
+placements move with terminal row scrolling and are clipped by the active
+viewport; reflow and relative-placement movement remain unsupported.
 
 ### Headless graphics harness
 

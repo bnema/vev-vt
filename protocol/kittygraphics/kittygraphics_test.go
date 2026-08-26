@@ -113,6 +113,24 @@ func TestSessionAcceptsKittenZlibCompressedRGB(t *testing.T) {
 	}
 }
 
+func TestSessionAcceptsZlibCompressedCapabilityQuery(t *testing.T) {
+	raw := []byte{1, 2, 3}
+	var compressed bytes.Buffer
+	zw := zlib.NewWriter(&compressed)
+	_, _ = zw.Write(raw)
+	_ = zw.Close()
+
+	session := NewSession(graphics.NewScene(graphics.Limits{}))
+	payload := base64.RawStdEncoding.EncodeToString(compressed.Bytes())
+	result, err := session.Feed(apc("a=q,i=31,f=24,o=z,s=1,v=1", payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(result.Bytes()); got != "\x1b_Gi=31;OK\x1b\\" {
+		t.Fatalf("response = %q", got)
+	}
+}
+
 func TestSessionBoundsZlibDecompression(t *testing.T) {
 	raw := bytes.Repeat([]byte{1}, 64)
 	var compressed bytes.Buffer
@@ -384,6 +402,14 @@ func TestUnsupportedRelativeAndCellDeleteControlsFailClosed(t *testing.T) {
 		if _, err := session.Feed(apc(header, "")); !errors.Is(err, ErrUnsupported) {
 			t.Fatalf("%q error = %v, want ErrUnsupported", header, err)
 		}
+	}
+}
+
+func TestImageGeometryRejectsRawDecodedByteLimit(t *testing.T) {
+	controls := Controls{Width: 2, HasWidth: true, Height: 2, HasHeight: true}
+	limits := normalizeLimits(Limits{MaxDecodedBytes: 11})
+	if _, _, err := imageGeometry(make([]byte, 12), FormatRGB, controls, limits); !errors.Is(err, ErrPayloadTooLarge) {
+		t.Fatalf("error = %v, want ErrPayloadTooLarge", err)
 	}
 }
 

@@ -484,7 +484,7 @@ func imageGeometry(data []byte, format Format, c Controls, limits Limits) (int64
 		return 0, 0, ErrPayloadTooLarge
 	}
 	expected, ok := checkedProduct(c.Width, rowBytes)
-	if !ok {
+	if !ok || expected > limits.MaxDecodedBytes {
 		return 0, 0, ErrPayloadTooLarge
 	}
 	if uint64(len(data)) != expected {
@@ -649,7 +649,7 @@ func (s *Session) query(command Command) ([][]byte, *Mutation, error) {
 	if len(command.Payload) == 0 {
 		return s.failure(c, responseImageID(c), ErrInvalidCommand)
 	}
-	decoded, err := DecodeBase64(command.Payload)
+	decoded, err := decodeImagePayload(command.Payload, c, s.limits)
 	if err != nil {
 		return s.failure(c, responseImageID(c), err)
 	}

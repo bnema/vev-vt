@@ -434,9 +434,16 @@ func (s *Screen) dispatchKittyGraphics(apc []byte) {
 
 func (s *Screen) kittyCursorX() uint64 {
 	if cellWidth, _, ok := s.kittyCellPixels(); ok {
-		return uint64(s.Col * cellWidth)
+		return uint64(s.kittyCursorColumn() * cellWidth)
 	}
 	return 0
+}
+
+func (s *Screen) kittyCursorColumn() int {
+	if s.Frame.Width <= 0 {
+		return 0
+	}
+	return clamp(s.Col, 0, s.Frame.Width-1)
 }
 
 func (s *Screen) kittyCursorY() uint64 {
@@ -464,23 +471,35 @@ func (s *Screen) applyKittyCursorMovement(c kittygraphics.Controls, mutation kit
 		return
 	}
 	columns, rows := s.kittyPlacementGridSize(c, mutation)
-	targetColumn := s.Col + columns
+	targetColumn := s.kittyCursorColumn() + columns
 	wraps := targetColumn >= s.Frame.Width
 	rowMoves := max(rows-1, 0)
 	if wraps {
 		rowMoves++
 	}
-	// Bound work for adversarial dimensions while retaining enough index calls
-	// to reach and then scroll one complete screen, matching terminal behavior.
-	rowMoves = min(rowMoves, s.Frame.Height*2)
-	for range rowMoves {
-		s.index()
-	}
+	s.advanceKittyCursorRows(rowMoves)
 	if wraps {
 		s.Col = 0
 	} else {
 		s.Col = targetColumn
 	}
+}
+
+func (s *Screen) advanceKittyCursorRows(rows int) {
+	if rows <= 0 || s.Frame.Height <= 0 {
+		return
+	}
+	if s.Row >= s.scrollTop && s.Row <= s.scrollBottom {
+		beforeScroll := s.scrollBottom - s.Row
+		if rows <= beforeScroll {
+			s.Row += rows
+			return
+		}
+		s.Row = s.scrollBottom
+		s.scrollUpRegion(s.scrollTop, s.scrollBottom, rows-beforeScroll)
+		return
+	}
+	s.Row = min(s.Row+rows, s.Frame.Height-1)
 }
 
 func (s *Screen) kittyPlacementGridSize(c kittygraphics.Controls, mutation kittygraphics.Mutation) (columns, rows int) {

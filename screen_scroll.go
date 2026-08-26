@@ -79,10 +79,11 @@ func (s *Screen) scrollUpRegion(top, bottom, n int) (shifted bool) {
 	}
 	w := s.Frame.Width
 	height := bottom - top + 1
+	graphicsRows := n
 	if n > height {
 		n = height
 	}
-	s.scrollGraphicsRegion(top, bottom, -n)
+	s.scrollGraphicsRegion(top, bottom, -graphicsRows)
 	// VT scroll regions always span the full frame width, so we rotate the
 	// frame's line offsets (recycling and blanking the evicted rows in place)
 	// instead of copying cells. See renderer.Frame.ScrollUp.
@@ -132,10 +133,11 @@ func (s *Screen) scrollDownRegion(top, bottom, n int) {
 	}
 	w := s.Frame.Width
 	height := bottom - top + 1
+	graphicsRows := n
 	if n > height {
 		n = height
 	}
-	s.scrollGraphicsRegion(top, bottom, n)
+	s.scrollGraphicsRegion(top, bottom, graphicsRows)
 	// Full-width region: rotate line offsets instead of copying cells.
 	s.Frame.ScrollDown(top, bottom, n)
 	s.buffer.scrollDown(top, bottom, n)

@@ -245,6 +245,18 @@ func TestScreenKittyPlacementUsesCursorAndCControlsMovement(t *testing.T) {
 	require.Equal(t, 3, screen.CursorCol())
 }
 
+func TestScreenKittyPlacementNormalizesDeferredWrapCursor(t *testing.T) {
+	screen := NewScreen(3, 3)
+	screen.SetGeometry(Geometry{Cols: 3, Rows: 3, PixelWidth: 30, PixelHeight: 30})
+	screen.Write([]byte("abc"))
+	payload := base64.RawStdEncoding.EncodeToString(make([]byte, 4))
+
+	screen.Write([]byte("\x1b_Ga=T,i=1,f=32,s=1,v=1,C=1;" + payload + "\x1b\\"))
+
+	placement := screen.GraphicsSnapshot().Placements()[0]
+	require.Equal(t, graphics.PixelRect{X: 20, Width: 1, Height: 1}, placement.Destination())
+}
+
 func TestScreenKittyNaturalImageHeightMovesCursorBelowPlacement(t *testing.T) {
 	screen := NewScreen(10, 5)
 	screen.SetGeometry(Geometry{Cols: 10, Rows: 5, PixelWidth: 100, PixelHeight: 50})
