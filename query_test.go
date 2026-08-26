@@ -13,8 +13,8 @@ func TestScreenQueryResponses(t *testing.T) {
 		input string
 		want  string
 	}{
-		{name: "primary DA bare", input: "\x1b[c", want: "\x1b[?6c"},
-		{name: "primary DA with 0", input: "\x1b[0c", want: "\x1b[?6c"},
+		{name: "primary DA bare", input: "\x1b[c", want: "\x1b[?62;22c"},
+		{name: "primary DA with 0", input: "\x1b[0c", want: "\x1b[?62;22c"},
 		{name: "secondary DA", input: "\x1b[>c", want: "\x1b[>0;0;0c"},
 		{name: "secondary DA with 0", input: "\x1b[>0c", want: "\x1b[>0;0;0c"},
 		{name: "DSR status report", input: "\x1b[5n", want: "\x1b[0n"},
@@ -35,7 +35,7 @@ func TestScreenQueryResponses(t *testing.T) {
 		{name: "DECRQM unknown mode", input: "\x1b[?1337$p", want: "\x1b[?1337;0$y"},
 		{name: "kitty keyboard query unanswered", input: "\x1b[?u", want: ""},
 		{name: "XTVERSION unanswered", input: "\x1b[>0q", want: ""},
-		{name: "DA split across writes", input: "", want: "\x1b[?6c"},
+		{name: "DA split across writes", input: "", want: "\x1b[?62;22c"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

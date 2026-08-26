@@ -2,8 +2,11 @@ package vt
 
 import (
 	"errors"
+	"fmt"
+	"math"
 
 	renderer "github.com/bnema/vev-vt/core"
+	"github.com/bnema/vev-vt/graphics"
 )
 
 // index moves to the next physical row, scrolling the region when the cursor
@@ -77,9 +80,11 @@ func (s *Screen) scrollUpRegion(top, bottom, n int) (shifted bool) {
 	}
 	w := s.Frame.Width
 	height := bottom - top + 1
+	graphicsRows := n
 	if n > height {
 		n = height
 	}
+	s.scrollGraphicsRegion(top, bottom, -graphicsRows)
 	// VT scroll regions always span the full frame width, so we rotate the
 	// frame's line offsets (recycling and blanking the evicted rows in place)
 	// instead of copying cells. See renderer.Frame.ScrollUp.
@@ -129,14 +134,60 @@ func (s *Screen) scrollDownRegion(top, bottom, n int) {
 	}
 	w := s.Frame.Width
 	height := bottom - top + 1
+	graphicsRows := n
 	if n > height {
 		n = height
 	}
+	s.scrollGraphicsRegion(top, bottom, graphicsRows)
 	// Full-width region: rotate line offsets instead of copying cells.
 	s.Frame.ScrollDown(top, bottom, n)
 	s.buffer.scrollDown(top, bottom, n)
 	s.fillMissingRowIDs(s.buffer)
 	s.record(renderer.Damage{Kind: renderer.DamageText, X: 0, Y: top, Width: w, Height: height, Count: 1})
+}
+
+func (s *Screen) scrollGraphicsRegion(top, bottom, rows int) {
+	if rows == 0 || s.graphics == nil || s.graphics.scene == nil {
+		return
+	}
+	_, cellHeight, ok := s.kittyCellPixels()
+	if !ok || cellHeight <= 0 {
+		return
+	}
+	delta := int64(rows) * int64(cellHeight)
+	fullScreen := top == 0 && bottom == s.Frame.Height-1
+	snapshot := s.graphics.scene.Snapshot()
+	placements := snapshot.Placements()
+	operations := make([]graphics.Operation, 0, len(placements))
+	for _, placement := range placements {
+		destination := placement.Destination()
+		if !fullScreen {
+			end, valid := destination.Bottom()
+			if !valid || destination.Y < 0 || end <= destination.Y {
+				continue
+			}
+			startRow := int(destination.Y / int64(cellHeight))
+			endRow := int((end - 1) / int64(cellHeight))
+			if startRow < top || endRow > bottom {
+				continue
+			}
+		}
+		if delta > 0 && destination.Y > math.MaxInt64-delta || delta < 0 && destination.Y < math.MinInt64-delta {
+			continue
+		}
+		destination.Y += delta
+		if _, valid := destination.Bottom(); !valid {
+			continue
+		}
+		spec := placement.Spec()
+		spec.Destination = destination
+		operations = append(operations, graphics.Operation{Kind: graphics.OperationUpdatePlacement, PlacementID: placement.ID(), Placement: spec})
+	}
+	if len(operations) != 0 {
+		if err := s.graphics.scene.Apply(operations...); err != nil {
+			panic(fmt.Errorf("scroll graphics placements: %w", err))
+		}
+	}
 }
 
 func (s *Screen) normalizedRegion(top, bottom int) (int, int, bool) {

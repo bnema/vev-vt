@@ -145,6 +145,11 @@ const (
 
 func (f Format) Valid() bool { return f == FormatRGB || f == FormatRGBA || f == FormatPNG }
 
+// Compression is the optional compression applied to raw image data.
+type Compression byte
+
+const CompressionZlib Compression = 'z'
+
 // Quiet controls protocol response emission. Kitty uses q=1 for successful
 // operations only and q=2 for all responses.
 type Quiet uint8
@@ -213,7 +218,7 @@ const (
 type Controls struct {
 	Action          Action
 	HasAction       bool
-	Compression     uint64
+	Compression     Compression
 	HasCompression  bool
 	Format          Format
 	HasFormat       bool

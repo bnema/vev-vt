@@ -2,6 +2,7 @@ package kittygraphics
 
 import (
 	"bytes"
+	"compress/zlib"
 	"encoding/base64"
 	"errors"
 	"image"
@@ -70,6 +71,78 @@ func TestSessionCapabilityQueryValidatesWithoutPersisting(t *testing.T) {
 	}
 	if got := scene.Usage(); got != (graphics.Usage{}) {
 		t.Fatalf("query persisted graphics state: %#v", got)
+	}
+}
+
+func TestSessionAcceptsKittenZlibCompressedRGB(t *testing.T) {
+	raw := []byte{
+		255, 0, 0, 0, 255, 0,
+		0, 0, 255, 255, 255, 255,
+	}
+	var compressed bytes.Buffer
+	zw := zlib.NewWriter(&compressed)
+	if _, err := zw.Write(raw); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	scene := graphics.NewScene(graphics.Limits{})
+	session := NewSession(scene)
+	payload := base64.RawStdEncoding.EncodeToString(compressed.Bytes())
+	split := len(payload) / 2
+	split -= split % 4
+	first, err := session.Feed(apc("a=T,q=2,f=24,o=z,m=1,s=2,v=2", payload[:split]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first.Mutations) != 0 {
+		t.Fatalf("first chunk mutations = %#v", first.Mutations)
+	}
+	result, err := session.Feed(apc("m=0", payload[split:]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Mutations) != 1 || result.Mutations[0].Kind != MutationPlacement {
+		t.Fatalf("mutations = %#v", result.Mutations)
+	}
+	assets := scene.Snapshot().Assets()
+	if len(assets) != 1 || assets[0].Format() != graphics.AssetFormatRGB || !bytes.Equal(assets[0].Encoded(), raw) {
+		t.Fatalf("assets = %#v", assets)
+	}
+}
+
+func TestSessionAcceptsZlibCompressedCapabilityQuery(t *testing.T) {
+	raw := []byte{1, 2, 3}
+	var compressed bytes.Buffer
+	zw := zlib.NewWriter(&compressed)
+	_, _ = zw.Write(raw)
+	_ = zw.Close()
+
+	session := NewSession(graphics.NewScene(graphics.Limits{}))
+	payload := base64.RawStdEncoding.EncodeToString(compressed.Bytes())
+	result, err := session.Feed(apc("a=q,i=31,f=24,o=z,s=1,v=1", payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(result.Bytes()); got != "\x1b_Gi=31;OK\x1b\\" {
+		t.Fatalf("response = %q", got)
+	}
+}
+
+func TestSessionBoundsZlibDecompression(t *testing.T) {
+	raw := bytes.Repeat([]byte{1}, 64)
+	var compressed bytes.Buffer
+	zw := zlib.NewWriter(&compressed)
+	_, _ = zw.Write(raw)
+	_ = zw.Close()
+
+	session := NewSession(graphics.NewScene(graphics.Limits{}), Limits{MaxDecodedBytes: 32})
+	payload := base64.RawStdEncoding.EncodeToString(compressed.Bytes())
+	_, err := session.Feed(apc("a=T,f=24,o=z,s=1,v=1", payload))
+	if !errors.Is(err, ErrPayloadTooLarge) {
+		t.Fatalf("error = %v, want ErrPayloadTooLarge", err)
 	}
 }
 
@@ -329,6 +402,14 @@ func TestUnsupportedRelativeAndCellDeleteControlsFailClosed(t *testing.T) {
 		if _, err := session.Feed(apc(header, "")); !errors.Is(err, ErrUnsupported) {
 			t.Fatalf("%q error = %v, want ErrUnsupported", header, err)
 		}
+	}
+}
+
+func TestImageGeometryRejectsRawDecodedByteLimit(t *testing.T) {
+	controls := Controls{Width: 2, HasWidth: true, Height: 2, HasHeight: true}
+	limits := normalizeLimits(Limits{MaxDecodedBytes: 11})
+	if _, _, err := imageGeometry(make([]byte, 12), FormatRGB, controls, limits); !errors.Is(err, ErrPayloadTooLarge) {
+		t.Fatalf("error = %v, want ErrPayloadTooLarge", err)
 	}
 }
 

@@ -2,8 +2,10 @@ package kittygraphics
 
 import (
 	"bytes"
+	"compress/zlib"
 	"fmt"
 	"image/png"
+	"io"
 	"math"
 	"strconv"
 
@@ -207,7 +209,7 @@ func (s *Session) apply(command Command) ([][]byte, *Mutation, error) {
 	if !c.HasAction {
 		action = ActionTransmit
 	}
-	if c.HasCompression && c.Compression != 0 {
+	if c.HasCompression && c.Compression != CompressionZlib {
 		return s.failure(c, controlsImageID(c), ErrUnsupported)
 	}
 	if c.HasTransmission && c.Transmission != TransmissionDirect {
@@ -299,7 +301,7 @@ func (s *Session) commitUpload(value upload, display bool) ([][]byte, *Mutation,
 	if uint64(len(value.payload)) > s.limits.MaxPayloadBytes || uint64(len(value.payload)) > s.limits.MaxUploadBytes {
 		return s.failure(value.controls, value.imageID, ErrPayloadTooLarge)
 	}
-	decoded, err := DecodeBase64(value.payload)
+	decoded, err := decodeImagePayload(value.payload, value.controls, s.limits)
 	if err != nil {
 		return s.failure(value.controls, value.imageID, err)
 	}
@@ -390,6 +392,36 @@ func (s *Session) commitUpload(value upload, display bool) ([][]byte, *Mutation,
 	return s.success(value.controls, value.imageID), mutation, nil
 }
 
+func decodeImagePayload(payload []byte, controls Controls, limits Limits) ([]byte, error) {
+	decoded, err := DecodeBase64(payload)
+	if err != nil {
+		return nil, err
+	}
+	if !controls.HasCompression {
+		return decoded, nil
+	}
+	if controls.Compression != CompressionZlib {
+		return nil, ErrUnsupported
+	}
+	zr, err := zlib.NewReader(bytes.NewReader(decoded))
+	if err != nil {
+		return nil, fmt.Errorf("%w: zlib: %v", ErrInvalidCommand, err)
+	}
+	defer func() { _ = zr.Close() }()
+	limit := limits.MaxDecodedBytes
+	if limit >= math.MaxInt64 {
+		limit = math.MaxInt64 - 1
+	}
+	decompressed, err := io.ReadAll(io.LimitReader(zr, int64(limit)+1))
+	if err != nil {
+		return nil, fmt.Errorf("%w: zlib: %v", ErrInvalidCommand, err)
+	}
+	if uint64(len(decompressed)) > limits.MaxDecodedBytes {
+		return nil, ErrPayloadTooLarge
+	}
+	return decompressed, nil
+}
+
 func assetFormat(format Format) graphics.AssetFormat {
 	switch format {
 	case FormatRGB:
@@ -452,7 +484,7 @@ func imageGeometry(data []byte, format Format, c Controls, limits Limits) (int64
 		return 0, 0, ErrPayloadTooLarge
 	}
 	expected, ok := checkedProduct(c.Width, rowBytes)
-	if !ok {
+	if !ok || expected > limits.MaxDecodedBytes {
 		return 0, 0, ErrPayloadTooLarge
 	}
 	if uint64(len(data)) != expected {
@@ -617,7 +649,7 @@ func (s *Session) query(command Command) ([][]byte, *Mutation, error) {
 	if len(command.Payload) == 0 {
 		return s.failure(c, responseImageID(c), ErrInvalidCommand)
 	}
-	decoded, err := DecodeBase64(command.Payload)
+	decoded, err := decodeImagePayload(command.Payload, c, s.limits)
 	if err != nil {
 		return s.failure(c, responseImageID(c), err)
 	}

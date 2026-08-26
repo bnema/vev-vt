@@ -39,7 +39,7 @@ func TestRenderTerminalDemo(t *testing.T) {
 }
 
 func TestRenderTerminalAPC(t *testing.T) {
-	frame, err := RenderTerminal([]byte("\x1b_Ga=T,i=1,f=32,s=1,v=1;/wAA/w\x1b\\"), vt.Geometry{Cols: 1, Rows: 1, PixelWidth: 1, PixelHeight: 1})
+	frame, err := RenderTerminal([]byte("\x1b_Ga=T,i=1,f=32,s=1,v=1,C=1;/wAA/w\x1b\\"), vt.Geometry{Cols: 1, Rows: 1, PixelWidth: 1, PixelHeight: 1})
 	require.NoError(t, err)
 	require.Equal(t, color.RGBA{255, 0, 0, 255}, frame.RGBAAt(0, 0))
 }

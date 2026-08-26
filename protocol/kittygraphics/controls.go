@@ -65,11 +65,11 @@ func parseControl(c *Controls, key byte, value []byte) error {
 		}
 		c.Action, c.HasAction = Action(value[0]), true
 	case ControlCompression:
-		n, err := parseUint(value)
-		if err != nil {
-			return fieldError(key, err)
+		if len(value) != 1 {
+			return fmt.Errorf("%w: o=%q", ErrInvalidCommand, value)
 		}
-		c.Compression, c.HasCompression = n, true
+		// Preserve unknown one-byte algorithms so Session can return ENOTSUP.
+		c.Compression, c.HasCompression = Compression(value[0]), true
 	case ControlFormat:
 		n, err := parseUint(value)
 		if err != nil {
@@ -127,10 +127,13 @@ func parseControl(c *Controls, key byte, value []byte) error {
 			return fmt.Errorf("%w: d=%q", ErrInvalidCommand, value)
 		}
 	case ControlTransmission:
-		if len(value) != 1 || Transmission(value[0]) != TransmissionDirect {
-			return fmt.Errorf("%w: t=%q", ErrUnsupported, value)
+		if len(value) != 1 {
+			return fmt.Errorf("%w: t=%q", ErrInvalidCommand, value)
 		}
-		c.Transmission, c.HasTransmission = TransmissionDirect, true
+		// Preserve unsupported transports long enough for Session to emit the
+		// protocol ENOTSUP response. Rejecting them during header parsing leaves
+		// capability probes such as kitten icat waiting until timeout.
+		c.Transmission, c.HasTransmission = Transmission(value[0]), true
 	case ControlCursor:
 		return setUint(&c.Cursor, &c.HasCursor, key, value)
 	case ControlSourceX:

@@ -176,7 +176,7 @@ func validDA1Response(data []byte) bool {
 	// not sufficient for a direct graphics declaration. The parameter body is
 	// a non-empty semicolon-separated list of decimal numbers.
 	body := data[3 : len(data)-1]
-	if len(body) == 0 || body[0] == ';' || body[len(body)-1] == ';' {
+	if len(body) == 0 || body[0] == ';' {
 		return false
 	}
 	previousSeparator := false
@@ -193,7 +193,9 @@ func validDA1Response(data []byte) bool {
 			return false
 		}
 	}
-	return !previousSeparator
+	// Kitty terminates its DA1 parameter list with a separator. DEC treats the
+	// resulting empty final parameter as zero, so both forms are valid.
+	return true
 }
 
 func suffixPrefixLen(data []byte) int {

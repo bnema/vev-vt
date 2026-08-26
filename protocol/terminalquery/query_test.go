@@ -15,6 +15,7 @@ func TestProbeRequiresKittyAndDA1(t *testing.T) {
 		unrelated string
 	}{
 		{name: "both and input", data: "x\x1b[?1;2c" + "\x1b_Gi=31;OK\x1b\\y", kitty: true, da1: true, unrelated: "xy"},
+		{name: "kitty DA1 with trailing separator", data: "\x1b_Gi=31;OK\x1b\\\x1b[?62;52;c", kitty: true, da1: true},
 		{name: "secondary DA is insufficient", data: "\x1b[>1;2c\x1b_Gi=31;OK\x1b\\", kitty: true, unrelated: "\x1b[>1;2c"},
 		{name: "ordinary input", data: "hello", unrelated: "hello"},
 	} {
