@@ -91,7 +91,16 @@ func TestSessionAcceptsKittenZlibCompressedRGB(t *testing.T) {
 	scene := graphics.NewScene(graphics.Limits{})
 	session := NewSession(scene)
 	payload := base64.RawStdEncoding.EncodeToString(compressed.Bytes())
-	result, err := session.Feed(apc("a=T,q=2,f=24,o=z,s=2,v=2", payload))
+	split := len(payload) / 2
+	split -= split % 4
+	first, err := session.Feed(apc("a=T,q=2,f=24,o=z,m=1,s=2,v=2", payload[:split]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first.Mutations) != 0 {
+		t.Fatalf("first chunk mutations = %#v", first.Mutations)
+	}
+	result, err := session.Feed(apc("m=0", payload[split:]))
 	if err != nil {
 		t.Fatal(err)
 	}
