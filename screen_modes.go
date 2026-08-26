@@ -1,18 +1,23 @@
 package vt
 
-import renderer "github.com/bnema/vev-vt/core"
+import (
+	renderer "github.com/bnema/vev-vt/core"
+	"github.com/bnema/vev-vt/protocol/kittygraphics"
+)
 
 type screenState struct {
-	frame        renderer.Frame
-	buffer       *buffer
-	row          int
-	col          int
-	style        renderer.Style
-	scrollTop    int
-	scrollBottom int
-	savedCursor  cursorState
-	originMode   bool
-	insertMode   bool
+	frame               renderer.Frame
+	buffer              *buffer
+	row                 int
+	col                 int
+	style               renderer.Style
+	scrollTop           int
+	scrollBottom        int
+	savedCursor         cursorState
+	graphics            *screenGraphicsState
+	kittyPendingDisplay *kittygraphics.Controls
+	originMode          bool
+	insertMode          bool
 }
 
 // SyncUpdateActive reports whether DEC private mode 2026 (synchronized update)
@@ -92,8 +97,12 @@ func (s *Screen) reset() {
 	s.Row, s.Col = 0, 0
 	s.Style = renderer.DefaultStyle()
 	s.escapeBuf = s.escapeBuf[:0]
+	s.kittyDiscard = false
+	s.kittyDiscardEscaped = false
+	s.kittyPendingDisplay = nil
 	s.savedCursor = cursorState{}
 	s.alternate = nil
+	s.graphics = nil
 	s.originMode = false
 	s.insertMode = false
 	s.cursorVisible = true
@@ -191,18 +200,22 @@ func (s *Screen) setMode(private bool, parts []int, enabled bool) {
 func (s *Screen) enterAlternateScreen() {
 	if s.alternate == nil {
 		s.alternate = &screenState{
-			frame:        cloneFrame(s.Frame),
-			buffer:       s.buffer.clone(),
-			row:          s.Row,
-			col:          s.Col,
-			style:        s.Style,
-			scrollTop:    s.scrollTop,
-			scrollBottom: s.scrollBottom,
-			savedCursor:  s.savedCursor,
-			originMode:   s.originMode,
-			insertMode:   s.insertMode,
+			frame:               cloneFrame(s.Frame),
+			buffer:              s.buffer.clone(),
+			row:                 s.Row,
+			col:                 s.Col,
+			style:               s.Style,
+			scrollTop:           s.scrollTop,
+			scrollBottom:        s.scrollBottom,
+			savedCursor:         s.savedCursor,
+			graphics:            s.graphics,
+			kittyPendingDisplay: s.kittyPendingDisplay,
+			originMode:          s.originMode,
+			insertMode:          s.insertMode,
 		}
 	}
+	s.graphics = nil
+	s.kittyPendingDisplay = nil
 	s.buffer = s.newBuffer(s.Frame.Width, s.Frame.Height)
 	s.Frame = s.buffer.frame
 	s.Row, s.Col = 0, 0
@@ -229,6 +242,8 @@ func (s *Screen) exitAlternateScreen() {
 	s.scrollTop = state.scrollTop
 	s.scrollBottom = state.scrollBottom
 	s.savedCursor = state.savedCursor
+	s.graphics = state.graphics
+	s.kittyPendingDisplay = state.kittyPendingDisplay
 	s.originMode = state.originMode
 	s.insertMode = state.insertMode
 	s.alternate = nil

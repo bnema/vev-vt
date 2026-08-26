@@ -4,6 +4,7 @@ import renderer "github.com/bnema/vev-vt/core"
 
 func (s *Screen) Resize(width, height int) {
 	if width == s.Frame.Width && height == s.Frame.Height {
+		s.geometry.Cols, s.geometry.Rows = width, height
 		return
 	}
 	if width <= 0 || height <= 0 {
@@ -60,9 +61,13 @@ func (s *Screen) Resize(width, height int) {
 		}
 	}
 	s.Frame = s.buffer.frame
+	s.geometry.Cols, s.geometry.Rows = width, height
 	// A resize can split an in-flight escape sequence from the terminal state it
 	// was meant to mutate; keep the durable child state but discard partial bytes.
 	s.escapeBuf = s.escapeBuf[:0]
+	s.kittyDiscard = false
+	s.kittyDiscardEscaped = false
+	s.abortAllKittyPending()
 	s.resetScrollRegion()
 	s.fullRedraw()
 }

@@ -144,6 +144,10 @@ func (s *Screen) applyCSI(params string, cmd byte) {
 		s.deleteLines(firstPositive(parts, 1))
 	case 'r':
 		s.setScrollRegion(parts)
+	case 't':
+		if !private {
+			s.reportWindowSize(parts)
+		}
 	case 's':
 		s.saveCursor()
 	case 'u':
@@ -414,6 +418,7 @@ func (s *Screen) clearScreenMode(mode int) {
 			s.buffer.boundaries[y] = LineBound{Soft: s.buffer.boundaries[y].Soft}
 			s.buffer.rowIDs[y] = s.nextRowIDValue()
 		}
+		s.graphicsClearPlacements()
 		s.record(renderer.Damage{Kind: renderer.DamageClear, X: 0, Y: 0, Width: s.Frame.Width, Height: s.Frame.Height, Count: 1})
 	default:
 		for y := s.Row; y < s.Frame.Height; y++ {
