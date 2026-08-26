@@ -65,11 +65,11 @@ func parseControl(c *Controls, key byte, value []byte) error {
 		}
 		c.Action, c.HasAction = Action(value[0]), true
 	case ControlCompression:
-		n, err := parseUint(value)
-		if err != nil {
-			return fieldError(key, err)
+		if len(value) != 1 {
+			return fmt.Errorf("%w: o=%q", ErrInvalidCommand, value)
 		}
-		c.Compression, c.HasCompression = n, true
+		// Preserve unknown one-byte algorithms so Session can return ENOTSUP.
+		c.Compression, c.HasCompression = Compression(value[0]), true
 	case ControlFormat:
 		n, err := parseUint(value)
 		if err != nil {

@@ -2,6 +2,7 @@ package kittygraphics
 
 import (
 	"bytes"
+	"compress/zlib"
 	"encoding/base64"
 	"errors"
 	"image"
@@ -70,6 +71,51 @@ func TestSessionCapabilityQueryValidatesWithoutPersisting(t *testing.T) {
 	}
 	if got := scene.Usage(); got != (graphics.Usage{}) {
 		t.Fatalf("query persisted graphics state: %#v", got)
+	}
+}
+
+func TestSessionAcceptsKittenZlibCompressedRGB(t *testing.T) {
+	raw := []byte{
+		255, 0, 0, 0, 255, 0,
+		0, 0, 255, 255, 255, 255,
+	}
+	var compressed bytes.Buffer
+	zw := zlib.NewWriter(&compressed)
+	if _, err := zw.Write(raw); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	scene := graphics.NewScene(graphics.Limits{})
+	session := NewSession(scene)
+	payload := base64.RawStdEncoding.EncodeToString(compressed.Bytes())
+	result, err := session.Feed(apc("a=T,q=2,f=24,o=z,s=2,v=2", payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Mutations) != 1 || result.Mutations[0].Kind != MutationPlacement {
+		t.Fatalf("mutations = %#v", result.Mutations)
+	}
+	assets := scene.Snapshot().Assets()
+	if len(assets) != 1 || assets[0].Format() != graphics.AssetFormatRGB || !bytes.Equal(assets[0].Encoded(), raw) {
+		t.Fatalf("assets = %#v", assets)
+	}
+}
+
+func TestSessionBoundsZlibDecompression(t *testing.T) {
+	raw := bytes.Repeat([]byte{1}, 64)
+	var compressed bytes.Buffer
+	zw := zlib.NewWriter(&compressed)
+	_, _ = zw.Write(raw)
+	_ = zw.Close()
+
+	session := NewSession(graphics.NewScene(graphics.Limits{}), Limits{MaxDecodedBytes: 32})
+	payload := base64.RawStdEncoding.EncodeToString(compressed.Bytes())
+	_, err := session.Feed(apc("a=T,f=24,o=z,s=1,v=1", payload))
+	if !errors.Is(err, ErrPayloadTooLarge) {
+		t.Fatalf("error = %v, want ErrPayloadTooLarge", err)
 	}
 }
 
