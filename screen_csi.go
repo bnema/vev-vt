@@ -31,7 +31,10 @@ func (s *Screen) applyCSI(params string, cmd byte) {
 	case 'c':
 		switch params {
 		case "", "0":
-			s.respond([]byte("\x1b[?6c"))
+			// Identify as a VT220-compatible terminal with ANSI color. Modern
+			// capability probes require a DA1 response with a conformance level;
+			// the shorter VT102 response is ignored by kitten icat.
+			s.respond([]byte("\x1b[?62;22c"))
 		case ">", ">0":
 			s.respond([]byte("\x1b[>0;0;0c"))
 		}

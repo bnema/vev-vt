@@ -56,7 +56,7 @@ func TestScreenKittyIcatDetectionResponses(t *testing.T) {
 		"\x1b_Gi=1;OK\x1b\\",
 		"\x1b_Gi=2;ENOTSUP\x1b\\",
 		"\x1b_Gi=3;ENOTSUP\x1b\\",
-		"\x1b[?6c",
+		"\x1b[?62;22c",
 	}, responses)
 }
 
