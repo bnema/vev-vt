@@ -42,6 +42,24 @@ func TestScreenKittyGraphicsFragmentedAPCAndResponse(t *testing.T) {
 	require.Equal(t, uint64(1), snapshot.Usage().Placements)
 }
 
+func TestScreenKittyIcatDetectionResponses(t *testing.T) {
+	screen := NewScreen(80, 24)
+	var responses []string
+	screen.OnResponse = func(response []byte) { responses = append(responses, string(response)) }
+
+	screen.Write([]byte("\x1b_Ga=q,f=24,s=1,v=1,S=3,i=1;MTIz\x1b\\"))
+	screen.Write([]byte("\x1b_Ga=q,f=24,t=t,s=1,v=1,S=47,i=2;L2Rldi9zaG0va2l0dHktdHR5LWdyYXBoaWNzLXByb3RvY29sLTMzMTU3NTkxNjc\x1b\\"))
+	screen.Write([]byte("\x1b_Ga=q,f=24,t=s,s=1,v=1,S=18,i=3;aWNhdC1aQlJCWFdNQ0lIQ0ZD\x1b\\"))
+	screen.Write([]byte("\x1b[c"))
+
+	require.Equal(t, []string{
+		"\x1b_Gi=1;OK\x1b\\",
+		"\x1b_Gi=2;ENOTSUP\x1b\\",
+		"\x1b_Gi=3;ENOTSUP\x1b\\",
+		"\x1b[?6c",
+	}, responses)
+}
+
 func TestScreenKittyGraphicsPrimaryAndAlternateState(t *testing.T) {
 	screen := NewScreen(8, 3)
 	screen.Write(screenKittyImageAPC("T"))
