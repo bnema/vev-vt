@@ -901,13 +901,19 @@ func signedCoordinateInt(n int64, present bool) int64 {
 
 func (s *Session) success(c Controls, imageID uint64, prior ...[]byte) [][]byte {
 	responses := prior
-	if c.Quiet != QuietSuccess && c.Quiet != QuietAll {
+	if responseRequested(c) && c.Quiet != QuietSuccess && c.Quiet != QuietAll {
 		response := makeControlResponse(c, imageID, "OK")
 		if uint64(len(response)) <= s.limits.MaxResponseBytes {
 			responses = append(responses, response)
 		}
 	}
 	return responses
+}
+
+// responseRequested matches Kitty's response routing: commands without a
+// non-zero image ID or image number are anonymous and never receive replies.
+func responseRequested(c Controls) bool {
+	return c.HasImageID && c.ImageID != 0 || c.HasImageNumber && c.ImageNumber != 0
 }
 
 func makeControlResponse(c Controls, imageID uint64, code string) []byte {
@@ -924,7 +930,7 @@ func (s *Session) failure(c Controls, imageID uint64, err error) ([][]byte, *Mut
 	if err == nil {
 		err = ErrInvalidCommand
 	}
-	if c.Quiet != QuietAll {
+	if responseRequested(c) && c.Quiet != QuietAll {
 		code := errorCode(err)
 		response := makeControlResponse(c, imageID, code)
 		if uint64(len(response)) <= s.limits.MaxResponseBytes {

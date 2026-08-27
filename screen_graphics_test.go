@@ -43,6 +43,20 @@ func TestScreenKittyGraphicsFragmentedAPCAndResponse(t *testing.T) {
 	require.Equal(t, uint64(1), snapshot.Usage().Placements)
 }
 
+func TestScreenKittyGraphicsWithoutImageIDDoesNotRespond(t *testing.T) {
+	screen := NewScreen(16, 3)
+	var responses []string
+	screen.OnResponse = func(response []byte) { responses = append(responses, string(response)) }
+	payload := base64.RawStdEncoding.EncodeToString([]byte{1, 2, 3, 4})
+
+	screen.Write([]byte("\x1b_Ga=T,f=32,s=1,v=1,C=1;" + payload + "\x1b\\"))
+	screen.Write([]byte("\x1b_Ga=T,i=0,f=32,s=1,v=1,C=1;" + payload + "\x1b\\"))
+	screen.Write([]byte("\x1b_Ga=q,f=24,s=1,v=1;invalid\x1b\\"))
+
+	require.Empty(t, responses)
+	require.Equal(t, uint64(2), screen.GraphicsSnapshot().Usage().Placements)
+}
+
 func TestScreenKittyIcatDetectionResponses(t *testing.T) {
 	screen := NewScreen(80, 24)
 	var responses []string
