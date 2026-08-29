@@ -120,8 +120,14 @@ func (r *Renderer) validateFrame(frame core.Frame) error {
 				return fmt.Errorf("html: cell (%d,%d): %w", x, y, err)
 			}
 			if cell.Continuation {
+				if cell.Rune != 0 {
+					return fmt.Errorf("html: cell (%d,%d): wide continuation contains a rune", x, y)
+				}
 				if x == 0 || row[x-1].Continuation || core.RuneWidth(row[x-1].Rune) != 2 {
 					return fmt.Errorf("html: cell (%d,%d): orphan wide continuation", x, y)
+				}
+				if !cell.Style.Equal(row[x-1].Style) {
+					return fmt.Errorf("html: cell (%d,%d): wide continuation style differs from its head", x, y)
 				}
 				continue
 			}

@@ -416,8 +416,11 @@
     function position(event) {
       if (width === 0 || height === 0) return { row: 0, column: 0, x: 0, y: 0 };
       const bounds = viewport.getBoundingClientRect();
-      const x = Math.max(0, Math.min(bounds.width, event.clientX - bounds.left));
-      const y = Math.max(0, Math.min(bounds.height, event.clientY - bounds.top));
+      if (bounds.width <= 0 || bounds.height <= 0) return { row: 0, column: 0, x: 0, y: 0 };
+      const clientX = Number.isFinite(event.clientX) ? event.clientX : bounds.left;
+      const clientY = Number.isFinite(event.clientY) ? event.clientY : bounds.top;
+      const x = Math.max(0, Math.min(bounds.width, clientX - bounds.left));
+      const y = Math.max(0, Math.min(bounds.height, clientY - bounds.top));
       const column = Math.min(width - 1, Math.floor(x / (bounds.width / width)));
       const row = Math.min(height - 1, Math.floor(y / (bounds.height / height)));
       return { row, column, x, y };
@@ -428,6 +431,9 @@
     }
 
     function pointerPayload(event, action) {
+      const invalidButton = !Number.isInteger(event.button) || event.button < -1 || event.button > 4;
+      const invalidButtons = !Number.isInteger(event.buttons) || event.buttons < 0 || event.buttons > 31;
+      if (invalidButton || invalidButtons) return null;
       return { type: 'pointer', action, button: event.button, buttons: event.buttons, ...position(event), ...modifierFields(event) };
     }
 
@@ -436,7 +442,7 @@
       if (pendingPointer) {
         const [event, payload] = pendingPointer;
         pendingPointer = null;
-        dispatch(payload, event);
+        if (payload) dispatch(payload, event);
       }
     }
 
@@ -478,10 +484,12 @@
     }, { signal });
     input.addEventListener('keydown', event => {
       if (composing || event.isComposing) return;
-      const nonText = event.key.length !== 1 || event.ctrlKey || event.altKey || event.metaKey;
+      const key = event.key || 'Unidentified';
+      const code = event.code || 'Unidentified';
+      const nonText = key.length !== 1 || event.ctrlKey || event.altKey || event.metaKey;
       if (!nonText) return;
-      if (event.key.length > 128 || event.code.length > 128) fail('key event exceeds its string limit');
-      dispatch({ type: 'key', key: event.key, code: event.code, repeat: event.repeat, location: event.location, ...modifierFields(event) }, event);
+      if (key.length > 128 || code.length > 128) fail('key event exceeds its string limit');
+      dispatch({ type: 'key', key, code, repeat: event.repeat, location: event.location, ...modifierFields(event) }, event);
     }, { signal });
     input.addEventListener('paste', event => {
       const text = event.clipboardData?.getData('text/plain') || '';
@@ -492,16 +500,27 @@
     input.addEventListener('blur', event => dispatch({ type: 'focus', focused: false }, event), { signal });
 
     viewport.addEventListener('pointerdown', event => {
+      const payload = pointerPayload(event, 'down');
+      if (!payload) return;
       if (mouseCapture && viewport.setPointerCapture) viewport.setPointerCapture(event.pointerId);
-      dispatch(pointerPayload(event, 'down'), event);
+      dispatch(payload, event);
     }, { signal });
-    viewport.addEventListener('pointerup', event => dispatch(pointerPayload(event, 'up'), event), { signal });
-    viewport.addEventListener('pointercancel', event => dispatch(pointerPayload(event, 'cancel'), event), { signal });
+    viewport.addEventListener('pointerup', event => {
+      const payload = pointerPayload(event, 'up');
+      if (payload) dispatch(payload, event);
+    }, { signal });
+    viewport.addEventListener('pointercancel', event => {
+      const payload = pointerPayload(event, 'cancel');
+      if (payload) dispatch(payload, event);
+    }, { signal });
     viewport.addEventListener('pointermove', event => {
       pendingPointer = [event, pointerPayload(event, 'move')];
       if (!pointerFrame) pointerFrame = requestAnimationFrame(flushPointer);
     }, { signal });
     viewport.addEventListener('wheel', event => {
+      const invalidDelta = !Number.isFinite(event.deltaX) || !Number.isFinite(event.deltaY);
+      const invalidMode = !Number.isInteger(event.deltaMode) || event.deltaMode < 0 || event.deltaMode > 2;
+      if (invalidDelta || invalidMode) return;
       const { row, column } = position(event);
       dispatch({ type: 'wheel', deltaX: event.deltaX, deltaY: event.deltaY, deltaMode: event.deltaMode, row, column, ...modifierFields(event) }, event);
     }, { signal, passive: false });
