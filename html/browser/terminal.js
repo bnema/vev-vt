@@ -469,16 +469,20 @@
 
     input.addEventListener('beforeinput', event => {
       if (composing || event.inputType === 'insertFromPaste' || !event.data) return;
-      if (encoder.encode(event.data).byteLength > configured.maxTextBytes) fail('text input exceeds its byte limit');
+      if (encoder.encode(event.data).byteLength > configured.maxTextBytes) {
+        event.preventDefault();
+        return;
+      }
       dispatch({ type: 'text', text: event.data }, event);
     }, { signal });
-    input.addEventListener('input', () => { input.value = ''; }, { signal });
+    input.addEventListener('input', event => {
+      if (!composing && !event.isComposing) input.value = '';
+    }, { signal });
     input.addEventListener('compositionstart', () => { composing = true; }, { signal });
     input.addEventListener('compositionend', event => {
       composing = false;
       input.value = '';
-      if (event.data) {
-        if (encoder.encode(event.data).byteLength > configured.maxTextBytes) fail('composed text exceeds its byte limit');
+      if (event.data && encoder.encode(event.data).byteLength <= configured.maxTextBytes) {
         dispatch({ type: 'text', text: event.data }, event);
       }
     }, { signal });
@@ -488,12 +492,18 @@
       const code = event.code || 'Unidentified';
       const nonText = key.length !== 1 || event.ctrlKey || event.altKey || event.metaKey;
       if (!nonText) return;
-      if (key.length > 128 || code.length > 128) fail('key event exceeds its string limit');
+      if (key.length > 128 || code.length > 128) {
+        event.preventDefault();
+        return;
+      }
       dispatch({ type: 'key', key, code, repeat: event.repeat, location: event.location, ...modifierFields(event) }, event);
     }, { signal });
     input.addEventListener('paste', event => {
       const text = event.clipboardData?.getData('text/plain') || '';
-      if (encoder.encode(text).byteLength > configured.maxPasteBytes) fail('paste exceeds its byte limit');
+      if (encoder.encode(text).byteLength > configured.maxPasteBytes) {
+        event.preventDefault();
+        return;
+      }
       dispatch({ type: 'paste', text }, event);
     }, { signal });
     input.addEventListener('focus', event => dispatch({ type: 'focus', focused: true }, event), { signal });

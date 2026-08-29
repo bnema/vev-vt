@@ -8,9 +8,9 @@ import (
 
 func TestHTMLProductionImportBoundary(t *testing.T) {
 	command := exec.Command("go", "list", "-deps", "./...")
-	output, err := command.Output()
+	output, err := command.CombinedOutput()
 	if err != nil {
-		t.Fatalf("go list HTML dependencies: %v", err)
+		t.Fatalf("go list HTML dependencies: %v\n%s", err, output)
 	}
 	for _, dependency := range strings.Fields(string(output)) {
 		if dependency == "net/http" || strings.Contains(dependency, "/websocket") ||
@@ -20,9 +20,9 @@ func TestHTMLProductionImportBoundary(t *testing.T) {
 	}
 
 	command = exec.Command("go", "list", "-deps", "github.com/bnema/vev-vt/core")
-	output, err = command.Output()
+	output, err = command.CombinedOutput()
 	if err != nil {
-		t.Fatalf("go list core dependencies: %v", err)
+		t.Fatalf("go list core dependencies: %v\n%s", err, output)
 	}
 	for _, dependency := range strings.Fields(string(output)) {
 		if dependency == "github.com/bnema/vev-vt/html" || strings.HasPrefix(dependency, "github.com/bnema/vev-vt/html/") {

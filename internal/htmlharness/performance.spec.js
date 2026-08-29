@@ -44,7 +44,7 @@ test('keeps sustained snapshot and row replacement work bounded', async ({ page,
       terminal.apply(rowUpdate);
       rows.push(performance.now() - start);
     }
-    const percentile = (values, ratio) => [...values].sort((a, b) => a - b)[Math.floor((values.length - 1) * ratio)];
+    const percentile = (values, ratio) => [...values].sort((a, b) => a - b)[Math.ceil(values.length * ratio) - 1];
     const largeStart = performance.now();
     terminal.apply(large);
     const largeApply = performance.now() - largeStart;

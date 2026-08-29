@@ -63,6 +63,7 @@ func TestRendererEnforcesEncodedByteAndStyleLimits(t *testing.T) {
 	require.NoError(t, err)
 	_, err = byteLimited.Prepare(core.NewFrame(1, 1), nil, false, Cursor{})
 	require.ErrorIs(t, err, ErrLimitExceeded)
+	require.ErrorContains(t, err, "at least 768 bytes")
 	_, err = byteLimited.Prepare(core.NewFrame(1, 1), nil, false, Cursor{})
 	require.ErrorIs(t, err, ErrLimitExceeded)
 }
