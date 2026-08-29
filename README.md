@@ -1,9 +1,12 @@
 # vev-vt
 
-`github.com/bnema/vev-vt` is a frontend-neutral VT terminal engine for Go.
-It provides the terminal screen, scrollback history, immutable snapshots,
+`github.com/bnema/vev-vt` is a VT terminal engine for Go with a
+frontend-neutral core and concrete output packages. It provides the terminal
+screen, scrollback history, immutable snapshots,
 stable history chunks, VTH3 history bytes, and the reusable cell/frame model.
 The `ansi` package turns core frames and damage into transactional ANSI output.
+The `html` package prepares typed browser updates, and `html/browser` provides a
+safe interactive DOM adapter without owning transport or terminal-input policy.
 
 ## Packages
 
@@ -15,6 +18,11 @@ The `ansi` package turns core frames and damage into transactional ANSI output.
   or application dependencies.
 - `github.com/bnema/vev-vt/ansi` is the concrete ANSI output package. It consumes
   core frames and damage; it does not define a renderer-backend interface.
+- `github.com/bnema/vev-vt/html` prepares transactional typed snapshots and
+  complete-row browser updates, structural CSS, and generic terminal themes.
+- `github.com/bnema/vev-vt/html/browser` embeds the dependency-free DOM runtime
+  and strictly decodes neutral browser events. It does not own HTTP, WebSocket,
+  PTY encoding, authentication, sessions, or application bindings.
 - `github.com/bnema/vev-vt/graphics` owns bounded renderer-neutral raster assets,
   sparse placements, clipping fragments, and immutable scene snapshots. It has no
   Kitty, ANSI, VT-policy, or transport dependency.
@@ -44,6 +52,49 @@ The module has no production dependencies. `github.com/stretchr/testify` is
 used only by the test suite. Keep the public v0.x API and byte formats immutable
 once released; behavior changes require explicit versioning and compatibility
 evidence.
+
+## HTML frontend
+
+The HTML renderer compares every row with its committed shadow; damage values are
+non-authoritative hints. `Prepare` permits one outstanding draw and requires an
+explicit `Commit` or `Abort`. `Reset` invalidates retained prepared draws.
+Updates are immutable, schema-versioned JSON-compatible values. Complete-row
+replacement preserves wide-cell atomicity, and scroll damage uses a safe
+snapshot fallback. `html.DefaultLimits()` documents the default 1,000,000-cell,
+10,000-row, 64 MiB generated-update, and 65,536-style bounds.
+
+The browser adapter builds DOM nodes with `textContent` and fixed classes. It
+provides a labeled input proxy, synchronized plain-text accessible output,
+typed CSS themes, IME-aware text input, keys, paste, pointer, wheel, resize, and
+focus events. A synchronous consumer callback decides default prevention.
+Consumers remain responsible for transport and mapping events to terminal bytes
+or application actions. `browser.DefaultEventLimits()` documents the default
+2 MiB event, 64 KiB text, 1 MiB paste, and 10,000×10,000 geometry bounds.
+
+```go
+renderer, err := html.New(html.Options{})
+if err != nil {
+    return err
+}
+prepared, err := renderer.Prepare(frame, damage, reset, html.Cursor{
+    Row: cursorRow, Column: cursorColumn, Visible: true,
+})
+if err != nil {
+    return err
+}
+if err := send(prepared.JSON()); err != nil {
+    _ = prepared.Abort()
+    return err
+}
+return prepared.Commit()
+```
+
+Embed or serve `html.Stylesheet()` and `browser.JavaScript()` from a
+consumer-owned application. The runtime supports a self-only `style-src` and
+`script-src` CSP in the pinned browser harness; dynamic colors are set through
+validated numeric DOM style properties. The current core model drops combining
+marks and does not coalesce ZWJ sequences, so rendered output inherits those
+limits even though browser IME input remains composition-aware.
 
 ## Kitty graphics subset
 
@@ -84,4 +135,15 @@ go test ./...
 go test ./... -race
 go vet ./...
 go test ./... -run '^$' -bench='.' -benchmem
+npm ci
+npm run test:browser:install
+npm run test:browser
+# Reproducible three-engine fallback on unsupported Linux hosts:
+npm run test:browser:docker
 ```
+
+Playwright 1.62.1 and its Chromium, Firefox, and WebKit revisions are pinned by
+`package-lock.json`. The matching Playwright container provides the reproducible
+fallback when host libraries cannot run one of those browser builds. Production
+Go packages retain the module's standard-library-only dependency boundary apart
+from `vev-vt/core`.
