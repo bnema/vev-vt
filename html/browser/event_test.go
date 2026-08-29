@@ -41,6 +41,27 @@ func TestDecodeEventAcceptsRuntimeEventKinds(t *testing.T) {
 			event, err := DecodeEvent([]byte(test.json), EventLimits{})
 			require.NoError(t, err)
 			require.Equal(t, test.kind, event.Kind)
+			if test.kind == EventKey {
+				require.Equal(t, "ArrowUp", event.Key.Key)
+			}
+		})
+	}
+}
+
+func TestDecodeEventRejectsInvalidRuntimePayloads(t *testing.T) {
+	tests := map[string]string{
+		"schema":                `{"schemaVersion":2,"type":"focus","focused":true}`,
+		"pointer button":        `{"schemaVersion":1,"type":"pointer","action":"down","button":5,"buttons":1,"row":0,"column":0,"x":1,"y":2}`,
+		"pointer buttons":       `{"schemaVersion":1,"type":"pointer","action":"down","button":0,"buttons":32,"row":0,"column":0,"x":1,"y":2}`,
+		"wheel mode":            `{"schemaVersion":1,"type":"wheel","deltaX":1,"deltaY":2,"deltaMode":3,"row":0,"column":0}`,
+		"resize dimension":      `{"schemaVersion":1,"type":"resize","columns":0,"rows":24,"pixelWidth":800,"pixelHeight":480,"cellWidth":10,"cellHeight":20,"devicePixelRatio":1}`,
+		"non-finite coordinate": `{"schemaVersion":1,"type":"pointer","action":"move","button":-1,"buttons":0,"row":0,"column":0,"x":1e999,"y":2}`,
+		"trailing value":        `{"schemaVersion":1,"type":"focus","focused":true} {}`,
+	}
+	for name, data := range tests {
+		t.Run(name, func(t *testing.T) {
+			_, err := DecodeEvent([]byte(data), EventLimits{})
+			require.Error(t, err)
 		})
 	}
 }

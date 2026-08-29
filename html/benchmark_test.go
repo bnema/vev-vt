@@ -18,7 +18,10 @@ func BenchmarkRenderer(b *testing.B) {
 		b.Run(fmt.Sprintf("snapshot-%dx%d", size.width, size.height), func(b *testing.B) {
 			b.ReportAllocs()
 			for range b.N {
-				renderer, _ := New(Options{})
+				renderer, err := New(Options{})
+				if err != nil {
+					b.Fatal(err)
+				}
 				prepared, err := renderer.Prepare(frame, nil, true, Cursor{})
 				if err != nil {
 					b.Fatal(err)
@@ -29,9 +32,17 @@ func BenchmarkRenderer(b *testing.B) {
 			}
 		})
 		b.Run(fmt.Sprintf("one-row-%dx%d", size.width, size.height), func(b *testing.B) {
-			renderer, _ := New(Options{})
-			first, _ := renderer.Prepare(frame, nil, false, Cursor{})
-			_ = first.Commit()
+			renderer, err := New(Options{})
+			if err != nil {
+				b.Fatal(err)
+			}
+			first, err := renderer.Prepare(frame, nil, false, Cursor{})
+			if err != nil {
+				b.Fatal(err)
+			}
+			if err := first.Commit(); err != nil {
+				b.Fatal(err)
+			}
 			left := frame.Clone()
 			right := frame.Clone()
 			right.Set(0, size.height/2, core.Cell{Rune: 'Z', Style: core.DefaultStyle()})

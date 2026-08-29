@@ -13,7 +13,9 @@ async function mount(page) {
     globalThis.terminal = VevTerminal.mount(document.querySelector('#terminal'), {
       label: 'Development terminal',
       decide(event) {
-        return { emit: true, preventDefault: event.type === 'key' && event.key === 'ArrowUp' };
+        const preventDefault = (event.type === 'key' && event.key === 'ArrowUp') ||
+          (event.type === 'pointer' && event.action === 'move');
+        return { emit: true, preventDefault };
       },
       send(event) { globalThis.events.push(event); }
     });
@@ -217,16 +219,22 @@ test('emits one composed text event and bounded pointer, wheel, resize, and focu
     return retainedValue;
   });
 
-  const box = await page.locator('.vev-terminal__viewport').boundingBox();
+  const viewport = page.locator('.vev-terminal__viewport');
+  const box = await viewport.boundingBox();
   await page.mouse.click(box.x + 1, box.y + 1);
-  await page.locator('.vev-terminal__viewport').dispatchEvent('wheel', { deltaX: 1, deltaY: 2, deltaMode: 0, clientX: box.x + 1, clientY: box.y + 1 });
+  const pointerMoveAccepted = await viewport.evaluate(node => node.dispatchEvent(new PointerEvent('pointermove', {
+    bubbles: true, cancelable: true, button: -1, buttons: 0, clientX: 1, clientY: 1
+  })));
+  await viewport.dispatchEvent('wheel', { deltaX: 1, deltaY: 2, deltaMode: 0, clientX: box.x + 1, clientY: box.y + 1 });
   await expect.poll(() => page.evaluate(() => globalThis.events.some(event => event.type === 'resize'))).toBeTruthy();
+  await expect.poll(() => page.evaluate(() => globalThis.events.some(event => event.type === 'pointer' && event.action === 'move'))).toBeTruthy();
 
   const events = await page.evaluate(() => globalThis.events);
   expect(compositionValue).toBe('e');
   expect(events.filter(event => event.type === 'text' && event.text === 'é')).toHaveLength(1);
   expect(events.some(event => event.type === 'paste' && event.text === 'paste')).toBeTruthy();
   expect(events.some(event => event.type === 'pointer' && event.action === 'down')).toBeTruthy();
+  expect(pointerMoveAccepted).toBeFalsy();
   expect(events.some(event => event.type === 'wheel' && event.row === 0 && event.column === 0)).toBeTruthy();
   expect(events.some(event => event.type === 'focus' && event.focused)).toBeTruthy();
 });
