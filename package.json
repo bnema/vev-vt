@@ -1,0 +1,15 @@
+{
+  "name": "vev-vt-browser-tests",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test:browser": "npm run test:browser:functional && npm run test:browser:performance",
+    "test:browser:functional": "PLAYWRIGHT_JSON_OUTPUT_NAME=test-results/browser-functional.json playwright test internal/htmlharness/terminal.spec.js",
+    "test:browser:performance": "PLAYWRIGHT_JSON_OUTPUT_NAME=test-results/browser-performance.json playwright test internal/htmlharness/performance.spec.js --project=chromium --workers=1",
+    "test:browser:install": "playwright install chromium firefox webkit",
+    "test:browser:docker": "docker run --rm --ipc=host -v \"$PWD\":/work -w /work mcr.microsoft.com/playwright:v1.62.1-noble npm run test:browser"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.62.1"
+  }
+}

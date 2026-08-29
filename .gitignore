@@ -2,6 +2,9 @@
 /vev-vt
 /coverage.out
 /testdata/generated/
+/node_modules/
+/playwright-report/
+/test-results/
 
 # Editor and OS files
 *.swp

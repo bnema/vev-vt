@@ -5,15 +5,23 @@ on:
     branches: [main]
     paths:
       - '**.go'
+      - '**.js'
+      - '**.css'
       - 'go.mod'
       - 'go.sum'
+      - 'package.json'
+      - 'package-lock.json'
       - '.golangci.yml'
       - '.github/workflows/**'
   pull_request:
     paths:
       - '**.go'
+      - '**.js'
+      - '**.css'
       - 'go.mod'
       - 'go.sum'
+      - 'package.json'
+      - 'package-lock.json'
       - '.golangci.yml'
       - '.github/workflows/**'
 
@@ -27,11 +35,33 @@ jobs:
       go-version: stable
       test-flags: '-race -v ./...'
 
-  quality:
-    needs: ci
+  browser:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium firefox webkit
+      - run: npm run test:browser
+      - if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: browser-evidence
+          path: test-results/
+          retention-days: 14
+
+  quality:
+    needs: [ci, browser]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: actions/setup-go@v6
         with:
           go-version: stable
@@ -46,13 +76,28 @@ jobs:
             echo 'the ANSI package must consume the core model'
             exit 1
           fi
+          if ! go list -f '{{join .Imports "\n"}}' ./html | grep -q '/core'; then
+            echo 'the HTML package must consume the core model'
+            exit 1
+          fi
+          if ! go list -f '{{join .Imports "\n"}}' ./html/browser | grep -q '/html'; then
+            echo 'the browser adapter must consume the HTML package'
+            exit 1
+          fi
+          forbidden="$(go list -deps ./html/... | grep -E '^(github\.com/bnema/vev($|/)|net/http$|.*/websocket($|/))' || true)"
+          if [ -n "$forbidden" ]; then
+            echo "$forbidden"
+            exit 1
+          fi
       - name: VT fuzz smoke
         run: go test . -run '^$' -fuzz FuzzVTInputDoesNotPanic -fuzztime=10s
       - name: ANSI fuzz smoke
         run: go test . -run '^$' -fuzz FuzzANSIRenderingDoesNotPanic -fuzztime=10s
       - name: VTH3 fuzz smoke
         run: go test . -run '^$' -fuzz FuzzHistoryPreflightMatchesUnmarshal -fuzztime=10s
+      - name: HTML event fuzz smoke
+        run: go test ./html/browser -run '^$' -fuzz FuzzDecodeEvent -fuzztime=10s
       - name: Benchmark smoke
-        run: go test ./... -run '^$' -bench='(VT|History|Snapshot|ANSI)' -benchmem -benchtime=1x
+        run: go test ./... -run '^$' -bench='(VT|History|Snapshot|ANSI|Renderer)' -benchmem -benchtime=1x
       - name: External consumer smoke
         run: scripts/consumer-smoke.sh
