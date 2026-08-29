@@ -162,6 +162,34 @@ test('emits text and synchronously decides key default prevention', async ({ pag
   expect(keyDispatchResult).toBeFalsy();
 });
 
+test('rejects oversized input without throwing from DOM callbacks', async ({ page }) => {
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await mount(page);
+  await page.evaluate(() => {
+    terminal.destroy();
+    globalThis.events = [];
+    globalThis.terminal = VevTerminal.mount(document.querySelector('#terminal'), {
+      label: 'Bounded terminal',
+      limits: { maxTextBytes: 1, maxPasteBytes: 1 },
+      send(event) { globalThis.events.push(event); }
+    });
+  });
+  const input = page.locator('.vev-terminal__input');
+  const rejected = await input.evaluate(node => {
+    const textAccepted = node.dispatchEvent(new InputEvent('beforeinput', {
+      bubbles: true, cancelable: true, inputType: 'insertText', data: 'é'
+    }));
+    const paste = new Event('paste', { bubbles: true, cancelable: true });
+    Object.defineProperty(paste, 'clipboardData', { value: { getData: () => 'xx' } });
+    const pasteAccepted = node.dispatchEvent(paste);
+    return { textAccepted, pasteAccepted };
+  });
+  expect(rejected).toEqual({ textAccepted: false, pasteAccepted: false });
+  expect(await page.evaluate(() => globalThis.events)).toEqual([]);
+  expect(errors).toEqual([]);
+});
+
 test('emits one composed text event and bounded pointer, wheel, resize, and focus events', async ({ page }) => {
   await mount(page);
   const snapshot = {
@@ -176,13 +204,17 @@ test('emits one composed text event and bounded pointer, wheel, resize, and focu
   await page.evaluate(value => terminal.apply(value), snapshot);
   const input = page.locator('.vev-terminal__input');
   await input.focus();
-  await input.evaluate(node => {
+  const compositionValue = await input.evaluate(node => {
     node.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+    node.value = 'e';
+    node.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertCompositionText', data: 'e', isComposing: true }));
+    const retainedValue = node.value;
     node.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, inputType: 'insertCompositionText', data: 'e' }));
     node.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: 'é' }));
     const paste = new Event('paste', { bubbles: true, cancelable: true });
     Object.defineProperty(paste, 'clipboardData', { value: { getData: () => 'paste' } });
     node.dispatchEvent(paste);
+    return retainedValue;
   });
 
   const box = await page.locator('.vev-terminal__viewport').boundingBox();
@@ -191,6 +223,7 @@ test('emits one composed text event and bounded pointer, wheel, resize, and focu
   await expect.poll(() => page.evaluate(() => globalThis.events.some(event => event.type === 'resize'))).toBeTruthy();
 
   const events = await page.evaluate(() => globalThis.events);
+  expect(compositionValue).toBe('e');
   expect(events.filter(event => event.type === 'text' && event.text === 'é')).toHaveLength(1);
   expect(events.some(event => event.type === 'paste' && event.text === 'paste')).toBeTruthy();
   expect(events.some(event => event.type === 'pointer' && event.action === 'down')).toBeTruthy();

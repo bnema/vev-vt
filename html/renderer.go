@@ -213,14 +213,17 @@ func (r *Renderer) buildUpdate(frame core.Frame, snapshot bool, cursor Cursor) (
 func estimatedUpdateBytes(update Update, limit int) (int, bool) {
 	estimate := 256
 	add := func(size int) bool {
-		if estimate > limit || size > limit-estimate {
-			estimate = limit
+		if estimate > math.MaxInt-size {
+			estimate = math.MaxInt
 			return false
 		}
 		estimate += size
-		return true
+		return estimate <= limit
 	}
-	if len(update.Styles) > limit/512 || !add(len(update.Styles)*512) {
+	if len(update.Styles) > (math.MaxInt-estimate)/512 {
+		return math.MaxInt, false
+	}
+	if !add(len(update.Styles) * 512) {
 		return estimate, false
 	}
 	for _, row := range update.Rows {
@@ -312,6 +315,7 @@ func styleFromCore(style core.Style) Style {
 	}
 }
 
+// Prepare validates every indexed color before these uint8 conversions.
 func colorFromCore(index int, hasRGB bool, rgb core.RGB) Color {
 	if hasRGB {
 		return Color{Kind: ColorRGB, RGB: RGB{R: rgb.R, G: rgb.G, B: rgb.B}}

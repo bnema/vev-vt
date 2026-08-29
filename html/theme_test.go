@@ -9,6 +9,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestDefaultThemeMatchesStylesheetFallbacks(t *testing.T) {
+	stylesheet := strings.NewReplacer(" ", "", "\n", "", "\t", "").Replace(Stylesheet())
+	for declaration := range strings.SplitSeq(DefaultTheme().CSS(), ";") {
+		if declaration != "" {
+			require.Contains(t, stylesheet, declaration)
+		}
+	}
+}
+
 func TestThemeCSSUsesOnlyTypedColorValues(t *testing.T) {
 	theme := DefaultTheme()
 	theme.Foreground = core.RGB{R: 1, G: 2, B: 3}
