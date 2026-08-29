@@ -44,9 +44,9 @@ run produced:
 
 | Workload | Recorded | Gate |
 |---|---:|---:|
-| 120×40 snapshot p95 | 32.8 ms | < 100 ms |
-| 120-column row replacement p95 | 0.9 ms | < 33 ms |
-| 240×80 snapshot | 87.5 ms | < 500 ms |
+| 120×40 snapshot p95 | 33.3 ms | < 100 ms |
+| 120-column row replacement p95 | 1.2 ms | < 33 ms |
+| 240×80 snapshot | 89.8 ms | < 500 ms |
 | Final visible cells/rows | 19,200 / 80 | exactly bounded by the frame |
 
 Performance numbers are reference evidence, not universal device guarantees.

@@ -25,6 +25,18 @@ func TestRendererRejectsMalformedOrOverLimitFramesWithoutPendingState(t *testing
 	_, err = renderer.Prepare(combining, nil, false, Cursor{})
 	require.ErrorContains(t, err, "unsupported zero-width rune")
 
+	wide := core.NewFrame(2, 1)
+	wide.Set(0, 0, core.Cell{Rune: '界', Style: core.DefaultStyle()})
+	wide.Set(1, 0, core.Cell{Rune: 'X', Continuation: true, Style: core.DefaultStyle()})
+	_, err = renderer.Prepare(wide, nil, false, Cursor{})
+	require.ErrorContains(t, err, "wide continuation contains a rune")
+
+	alternate := core.DefaultStyle()
+	alternate.Bold = true
+	wide.Set(1, 0, core.Cell{Continuation: true, Style: alternate})
+	_, err = renderer.Prepare(wide, nil, false, Cursor{})
+	require.ErrorContains(t, err, "style differs from its head")
+
 	valid := core.NewFrame(2, 1)
 	prepared, err := renderer.Prepare(valid, nil, false, Cursor{})
 	require.NoError(t, err)
