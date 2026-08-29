@@ -52,10 +52,12 @@
     return value;
   }
 
+  /** @returns {{value: string, byteLength: number}} */
   function boundedString(value, limit, name) {
     if (typeof value !== 'string') fail(`${name} must be a string`);
-    if (encoder.encode(value).byteLength > limit) fail(`${name} exceeds its byte limit`);
-    return value;
+    const byteLength = encoder.encode(value).byteLength;
+    if (byteLength > limit) fail(`${name} exceeds its byte limit`);
+    return { value, byteLength };
   }
 
   function limits(requested = {}) {
@@ -145,13 +147,14 @@
       const cellWidth = integer(candidate.width, 1, 2, `${name}.width`);
       if (current !== column) fail(`row coverage is not contiguous at row ${row} column ${column}`);
       if (current + cellWidth > width) fail(`row coverage exceeds width at row ${row}`);
+      const text = boundedString(candidate.text, configured.maxTextBytes, `${name}.text`);
       const cell = {
         column: current,
         width: cellWidth,
-        text: boundedString(candidate.text, configured.maxTextBytes, `${name}.text`),
+        text: text.value,
         style: integer(candidate.style, 0, styleCount - 1, `${name}.style`)
       };
-      textBudget.value += encoder.encode(cell.text).byteLength;
+      textBudget.value += text.byteLength;
       if (textBudget.value > configured.maxUpdateBytes) fail('update text exceeds its aggregate byte limit');
       column += cellWidth;
       return cell;
@@ -277,7 +280,7 @@
     if (root.classList.contains('vev-terminal')) fail('mount root already owns a terminal');
     object(options, 'options');
     keys(options, ['label', 'decide', 'send', 'limits'], 'options');
-    const label = boundedString(options.label, 1024, 'options.label').trim();
+    const label = boundedString(options.label, 1024, 'options.label').value.trim();
     if (label === '') fail('options.label must not be empty');
     if (options.decide !== undefined && typeof options.decide !== 'function') fail('options.decide must be a function');
     if (options.send !== undefined && typeof options.send !== 'function') fail('options.send must be a function');
@@ -344,15 +347,20 @@
       if (destroyed) fail('instance is destroyed');
     }
 
-    function dispatch(event, nativeEvent) {
+    /** @returns {Readonly<BrowserEvent>|null} */
+    function capture(event, nativeEvent) {
       const decision = decide(Object.freeze({ ...event }));
       object(decision, 'capture decision');
       keys(decision, ['emit', 'preventDefault'], 'capture decision');
       const emit = boolean(decision.emit, 'capture decision.emit');
       const preventDefault = boolean(decision.preventDefault, 'capture decision.preventDefault');
       if (preventDefault && nativeEvent && nativeEvent.cancelable) nativeEvent.preventDefault();
-      if (emit) send(Object.freeze({ schemaVersion: SCHEMA_VERSION, ...event }));
-      return decision;
+      return emit ? Object.freeze({ schemaVersion: SCHEMA_VERSION, ...event }) : null;
+    }
+
+    function dispatch(event, nativeEvent) {
+      const captured = capture(event, nativeEvent);
+      if (captured) send(captured);
     }
 
     function updateCursor(state) {
@@ -439,11 +447,9 @@
 
     function flushPointer() {
       pointerFrame = 0;
-      if (pendingPointer) {
-        const [event, payload] = pendingPointer;
-        pendingPointer = null;
-        if (payload) dispatch(payload, event);
-      }
+      const captured = pendingPointer;
+      pendingPointer = null;
+      if (captured) send(captured);
     }
 
     function scheduleResize() {
@@ -524,7 +530,11 @@
       if (payload) dispatch(payload, event);
     }, { signal });
     viewport.addEventListener('pointermove', event => {
-      pendingPointer = [event, pointerPayload(event, 'move')];
+      const payload = pointerPayload(event, 'move');
+      if (!payload) return;
+      const captured = capture(payload, event);
+      if (!captured || destroyed) return;
+      pendingPointer = captured;
       if (!pointerFrame) pointerFrame = requestAnimationFrame(flushPointer);
     }, { signal });
     viewport.addEventListener('wheel', event => {

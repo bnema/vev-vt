@@ -44,14 +44,15 @@ run produced:
 
 | Workload | Recorded | Gate |
 |---|---:|---:|
-| 120×40 snapshot p95 | 35.4 ms | < 100 ms |
-| 120-column row replacement p95 | 0.9 ms | < 33 ms |
-| 240×80 snapshot | 91.7 ms | < 500 ms |
+| 120×40 snapshot p95 | 28.2 ms | < 100 ms |
+| 120-column row replacement p95 | 0.5 ms | < 33 ms |
+| 240×80 snapshot | 68.3 ms | < 500 ms |
 | Final visible cells/rows | 19,200 / 80 | exactly bounded by the frame |
 
 Performance numbers are reference evidence, not universal device guarantees.
-The test records its metrics in `test-results/browser-evidence.json`, which is a
-local/CI artifact rather than a committed file.
+The functional matrix and serial Chromium performance run write separate JSON
+reports under `test-results/`. They are local/CI artifacts rather than committed
+files.
 
 ## Accessibility scope
 
