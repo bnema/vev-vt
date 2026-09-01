@@ -25,6 +25,7 @@
   --vev-line-height: 1.2;
   --vev-cell-width: 1ch;
   --vev-cell-height: calc(var(--vev-font-size) * var(--vev-line-height));
+
   position: relative;
   display: inline-block;
   overflow: hidden;
@@ -95,7 +96,6 @@
   padding: 0;
   margin: -1px;
   overflow: hidden;
-  clip: rect(0, 0, 0, 0);
   clip-path: inset(50%);
   white-space: pre;
   border: 0;

@@ -2,7 +2,6 @@ package html
 
 import (
 	"errors"
-	"fmt"
 )
 
 const (
@@ -21,6 +20,8 @@ var (
 	ErrStaleDraw = errors.New("html: prepared draw is stale")
 	// ErrLimitExceeded reports a configured renderer bound violation.
 	ErrLimitExceeded = errors.New("html: resource limit exceeded")
+	// ErrInvalidLimits reports a negative limit field.
+	ErrInvalidLimits = errors.New("html: limits must not be negative")
 )
 
 // Limits bounds renderer work and retained update data. Zero values select
@@ -49,7 +50,7 @@ type Options struct {
 
 func normalizeLimits(limits Limits) (Limits, error) {
 	if limits.MaxCells < 0 || limits.MaxRowsPerUpdate < 0 || limits.MaxGeneratedBytes < 0 || limits.MaxStyles < 0 {
-		return Limits{}, fmt.Errorf("html: limits must not be negative")
+		return Limits{}, ErrInvalidLimits
 	}
 	defaults := DefaultLimits()
 	if limits.MaxCells == 0 {

@@ -17,8 +17,17 @@ import (
 // EventSchemaVersion identifies the runtime-to-Go event contract.
 const EventSchemaVersion = htmlrenderer.UpdateSchemaVersion
 
-// ErrEventLimit reports that an event exceeded a configured resource bound.
-var ErrEventLimit = errors.New("html/browser: event resource limit exceeded")
+var (
+	// ErrEventLimit reports that an event exceeded a configured resource bound.
+	ErrEventLimit = errors.New("html/browser: event resource limit exceeded")
+	// ErrInvalidEventLimits reports incompatible configured event bounds.
+	ErrInvalidEventLimits = errors.New("html/browser: invalid event limits")
+)
+
+const (
+	maxJSONEscapedByteLength = 6
+	eventEnvelopeOverhead    = 64
+)
 
 // EventLimits bounds untrusted browser event decoding. Zero fields select safe
 // defaults.
@@ -33,7 +42,7 @@ type EventLimits struct {
 // DefaultEventLimits returns the bounds used for zero-valued event limits.
 func DefaultEventLimits() EventLimits {
 	return EventLimits{
-		MaxEventBytes: 2 << 20,
+		MaxEventBytes: 8 << 20,
 		MaxTextBytes:  64 << 10,
 		MaxPasteBytes: 1 << 20,
 		MaxColumns:    10_000,
@@ -61,7 +70,19 @@ func normalizeEventLimits(limits EventLimits) (EventLimits, error) {
 	if limits.MaxRows == 0 {
 		limits.MaxRows = defaults.MaxRows
 	}
+	requiredEventBytes, representable := minimumEventBytes(max(limits.MaxTextBytes, limits.MaxPasteBytes))
+	if !representable || limits.MaxEventBytes < requiredEventBytes {
+		return EventLimits{}, fmt.Errorf("%w: MaxEventBytes %d cannot contain the largest payload limit", ErrInvalidEventLimits, limits.MaxEventBytes)
+	}
 	return limits, nil
+}
+
+func minimumEventBytes(payloadBytes int) (int, bool) {
+	maxInt := int(^uint(0) >> 1)
+	if payloadBytes > (maxInt-eventEnvelopeOverhead)/maxJSONEscapedByteLength {
+		return 0, false
+	}
+	return payloadBytes*maxJSONEscapedByteLength + eventEnvelopeOverhead, true
 }
 
 // EventKind identifies one closed browser event payload.
@@ -89,7 +110,9 @@ type Modifiers struct {
 // TextEvent carries composed text input.
 type TextEvent struct{ Text string }
 
-// PasteEvent carries bounded plain-text clipboard input.
+// PasteEvent carries bounded plain-text clipboard input. DecodeEvent preserves
+// Text unchanged, including control bytes such as ESC and CR. Consumers that
+// forward it to a PTY must apply their required framing or filtering policy.
 type PasteEvent struct{ Text string }
 
 // KeyEvent carries a non-text key or modified key press.

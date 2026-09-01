@@ -68,8 +68,11 @@ provides a labeled input proxy, synchronized plain-text accessible output,
 typed CSS themes, IME-aware text input, keys, paste, pointer, wheel, resize, and
 focus events. A synchronous consumer callback decides default prevention.
 Consumers remain responsible for transport and mapping events to terminal bytes
-or application actions. `browser.DefaultEventLimits()` documents the default
-2 MiB event, 64 KiB text, 1 MiB paste, and 10,000×10,000 geometry bounds.
+or application actions. Clipboard text is preserved unchanged, including
+control bytes, so consumers forwarding paste events to a PTY must apply their
+required framing or filtering policy. `browser.DefaultEventLimits()` documents
+the default 8 MiB event, 64 KiB text, 1 MiB paste, and 10,000×10,000 geometry
+bounds.
 
 ```go
 renderer, err := html.New(html.Options{})

@@ -1,6 +1,8 @@
 package browser
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -48,6 +50,26 @@ func TestDecodeEventAcceptsRuntimeEventKinds(t *testing.T) {
 	}
 }
 
+func TestDefaultEventLimitsAcceptEscapedMaximumPaste(t *testing.T) {
+	limits := DefaultEventLimits()
+	data, err := json.Marshal(textWire{
+		SchemaVersion: EventSchemaVersion,
+		Kind:          EventPaste,
+		Text:          strings.Repeat("\x00", limits.MaxPasteBytes),
+	})
+	require.NoError(t, err)
+
+	event, err := DecodeEvent(data, EventLimits{})
+	require.NoError(t, err)
+	require.NotNil(t, event.Paste)
+	require.Len(t, event.Paste.Text, limits.MaxPasteBytes)
+}
+
+func TestNormalizeEventLimitsRejectsImpossibleEnvelope(t *testing.T) {
+	_, err := normalizeEventLimits(EventLimits{MaxEventBytes: 69, MaxTextBytes: 1, MaxPasteBytes: 1})
+	require.ErrorIs(t, err, ErrInvalidEventLimits)
+}
+
 func TestDecodeEventRejectsInvalidRuntimePayloads(t *testing.T) {
 	tests := map[string]string{
 		"schema":                `{"schemaVersion":2,"type":"focus","focused":true}`,
@@ -70,7 +92,33 @@ func FuzzDecodeEvent(f *testing.F) {
 	f.Add([]byte(`{"schemaVersion":1,"type":"focus","focused":true}`))
 	f.Add([]byte(`{"schemaVersion":1,"type":"text","text":"hello"}`))
 	f.Add([]byte(`not json`))
+	f.Add([]byte(`{"schemaVersion":1,"type":"text","text":"` + strings.Repeat("x", 4<<10) + `"}`))
 	f.Fuzz(func(t *testing.T, data []byte) {
-		_, _ = DecodeEvent(data, EventLimits{MaxEventBytes: 4 << 10})
+		event, err := DecodeEvent(data, EventLimits{MaxEventBytes: 4 << 10, MaxTextBytes: 512, MaxPasteBytes: 512})
+		if len(data) > 4<<10 {
+			require.ErrorIs(t, err, ErrEventLimit)
+			return
+		}
+		if err != nil {
+			return
+		}
+		payloads := map[EventKind]bool{
+			EventText:    event.Text != nil,
+			EventKey:     event.Key != nil,
+			EventPaste:   event.Paste != nil,
+			EventPointer: event.Pointer != nil,
+			EventWheel:   event.Wheel != nil,
+			EventResize:  event.Resize != nil,
+			EventFocus:   event.Focus != nil,
+		}
+		set := 0
+		for _, present := range payloads {
+			if present {
+				set++
+			}
+		}
+		if set != 1 || !payloads[event.Kind] {
+			t.Fatalf("decoded event violates the closed union: %#v", event)
+		}
 	})
 }

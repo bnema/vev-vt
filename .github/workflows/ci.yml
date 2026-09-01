@@ -11,6 +11,7 @@ on:
       - 'go.sum'
       - 'package.json'
       - 'package-lock.json'
+      - 'internal/htmlharness/**'
       - '.golangci.yml'
       - '.github/workflows/**'
   pull_request:
@@ -22,6 +23,7 @@ on:
       - 'go.sum'
       - 'package.json'
       - 'package-lock.json'
+      - 'internal/htmlharness/**'
       - '.golangci.yml'
       - '.github/workflows/**'
 
@@ -30,7 +32,7 @@ permissions:
 
 jobs:
   ci:
-    uses: bnema/gh-actions/.github/workflows/go-ci.yml@main
+    uses: bnema/gh-actions/.github/workflows/go-ci.yml@bdc22c9d0e0527bd1c369d4304034cdf2cde9ade # main
     with:
       go-version: stable
       test-flags: '-race -v ./...'
@@ -38,10 +40,10 @@ jobs:
   browser:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: '24'
           cache: npm
@@ -49,7 +51,7 @@ jobs:
       - run: npx playwright install --with-deps chromium firefox webkit
       - run: npm run test:browser
       - if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: browser-evidence
           path: test-results/
@@ -59,10 +61,10 @@ jobs:
     needs: [ci, browser]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version: stable
       - name: Check production import direction
