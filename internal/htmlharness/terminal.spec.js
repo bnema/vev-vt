@@ -141,6 +141,25 @@ test('rejects a malformed update before changing the DOM', async ({ page }) => {
   expect(duplicateMount).toContain('already owns a terminal');
 });
 
+test('rejects colors with a payload from another color kind', async ({ page }) => {
+  await mount(page);
+  const message = await page.evaluate(() => {
+    const color = { kind: 1, index: 4, rgb: { r: 1, g: 2, b: 3 } };
+    try {
+      terminal.apply({
+        schemaVersion: 1, width: 1, height: 1, snapshot: true,
+        styles: [{ foreground: color, background: { kind: 0 }, underlineColor: { kind: 0 } }],
+        rows: [{ row: 0, cells: [{ column: 0, width: 1, text: 'A', style: 0 }] }],
+        cursor: { row: 0, column: 0, visible: false, style: 0, styleSet: false }
+      });
+      return '';
+    } catch (error) {
+      return error.message;
+    }
+  });
+  expect(message).toContain('indexed color has an rgb payload');
+});
+
 test('emits text and synchronously decides key default prevention', async ({ page }) => {
   await mount(page);
   const input = page.locator('.vev-terminal__input');
@@ -213,6 +232,7 @@ test('emits one composed text event and bounded pointer, wheel, resize, and focu
     const retainedValue = node.value;
     node.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, inputType: 'insertCompositionText', data: 'e' }));
     node.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: 'é' }));
+    node.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, inputType: 'insertCompositionText', data: 'é' }));
     const paste = new Event('paste', { bubbles: true, cancelable: true });
     Object.defineProperty(paste, 'clipboardData', { value: { getData: () => 'paste' } });
     node.dispatchEvent(paste);

@@ -23,13 +23,19 @@ test('keeps sustained snapshot and row replacement work bounded', async ({ page,
   await page.addStyleTag({ path: path.join(root, 'html/terminal.css') });
   await page.addScriptTag({ path: path.join(root, 'html/browser/terminal.js') });
 
-  const metrics = await page.evaluate(({ first, second, large }) => {
+  const metrics = await page.evaluate(async ({ first, second, large }) => {
     const terminal = VevTerminal.mount(document.querySelector('#terminal'), { label: 'Performance terminal' });
+    const settle = async () => {
+      document.querySelector('.vev-terminal__viewport').getBoundingClientRect();
+      await new Promise(requestAnimationFrame);
+    };
     terminal.apply(first);
+    await settle();
     const snapshots = [];
     for (let index = 0; index < 10; index += 1) {
       const start = performance.now();
       terminal.apply(index % 2 === 0 ? second : first);
+      await settle();
       snapshots.push(performance.now() - start);
     }
 
@@ -42,11 +48,13 @@ test('keeps sustained snapshot and row replacement work bounded', async ({ page,
     for (let index = 0; index < 50; index += 1) {
       const start = performance.now();
       terminal.apply(rowUpdate);
+      await settle();
       rows.push(performance.now() - start);
     }
     const percentile = (values, ratio) => [...values].sort((a, b) => a - b)[Math.ceil(values.length * ratio) - 1];
     const largeStart = performance.now();
     terminal.apply(large);
+    await settle();
     const largeApply = performance.now() - largeStart;
     return {
       snapshotP95: percentile(snapshots, 0.95),

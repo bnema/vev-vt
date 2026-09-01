@@ -89,8 +89,10 @@
       return { kind };
     }
     if (kind === 1) {
+      if (value.rgb !== undefined) fail(`${name} indexed color has an rgb payload`);
       return { kind, index: integer(value.index, 0, 255, `${name}.index`) };
     }
+    if (value.index !== undefined) fail(`${name} rgb color has an index payload`);
     return { kind, rgb: validateRGB(value.rgb, `${name}.rgb`) };
   }
 
@@ -474,7 +476,7 @@
     }
 
     input.addEventListener('beforeinput', event => {
-      if (composing || event.inputType === 'insertFromPaste' || !event.data) return;
+      if (composing || event.inputType === 'insertCompositionText' || event.inputType === 'insertFromPaste' || !event.data) return;
       if (encoder.encode(event.data).byteLength > configured.maxTextBytes) {
         event.preventDefault();
         return;

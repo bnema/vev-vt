@@ -45,6 +45,7 @@ func TestRendererRejectsMalformedOrOverLimitFramesWithoutPendingState(t *testing
 
 func TestNewRejectsNegativeLimits(t *testing.T) {
 	_, err := New(Options{Limits: Limits{MaxCells: -1}})
+	require.ErrorIs(t, err, ErrInvalidLimits)
 	require.ErrorContains(t, err, "must not be negative")
 }
 
