@@ -5,25 +5,17 @@ import (
 	"math"
 )
 
-const DefaultHistoryBytes uint64 = 50_000_000
-const DefaultHistoryRows = 10_000
-
 var ErrInvalidHistoryConfig = errors.New("invalid history configuration")
 
-// HistoryConfig controls retained scrollback for one Screen (normally one
-// pane), not a session-wide pool. Live primary/alternate grids are excluded.
-// MaxRows is optional: zero with a positive MaxBytes enables byte-only retention.
-// The entirely zero limits disable history. Positive MaxRows with zero MaxBytes
-// uses DefaultHistoryBytes, independently of terminal width. ChunkRows is a
-// grouping hint in [1,256]; zero selects 256, without a retention allowance.
+// HistoryConfig enforces limits selected by the application. The library
+// supplies no byte or line defaults. Each positive limit is an independent
+// ceiling; zero omits that ceiling. Both zero disable history. Live grids are
+// excluded. ChunkRows is an internal grouping hint in [1,256]; zero selects
+// 256 and does not grant space beyond the application's retention limits.
 type HistoryConfig struct {
 	MaxRows   int
 	MaxBytes  uint64
 	ChunkRows int
-}
-
-func DefaultHistoryConfig() HistoryConfig {
-	return HistoryConfig{MaxRows: DefaultHistoryRows, MaxBytes: DefaultHistoryBytes, ChunkRows: maxHistoryChunkRows}
 }
 
 func (c HistoryConfig) Validate() error {
@@ -69,12 +61,13 @@ func (h *History) SetLimits(config HistoryConfig) error {
 	chunkRows = min(chunkRows, rows)
 	bytes := config.MaxBytes
 	if bytes == 0 {
-		bytes = DefaultHistoryBytes
+		bytes = math.MaxUint64
 	}
 	if len(h.tail) >= chunkRows {
 		h.sealTail()
 	}
 	h.maxRows, h.rowCeiling, h.maxBytes, h.chunkRows = rows, config.MaxRows, bytes, chunkRows
+	h.byteCeiling = config.MaxBytes
 	for h.rows > rows || h.logicalBytes > bytes {
 		h.evictOldest()
 	}
@@ -82,11 +75,11 @@ func (h *History) SetLimits(config HistoryConfig) error {
 	return nil
 }
 
-// Limits reports the effective policy, including the resolved byte default.
-// A zero MaxRows is an optional row ceiling, not an unlimited byte budget.
+// Limits reports the application's policy. A zero limit is omitted; both
+// zero mean history is disabled. ChunkRows reports the resolved grouping size.
 func (h *History) Limits() HistoryConfig {
 	if h == nil {
 		return HistoryConfig{}
 	}
-	return HistoryConfig{MaxRows: h.rowCeiling, MaxBytes: h.maxBytes, ChunkRows: h.chunkRows}
+	return HistoryConfig{MaxRows: h.rowCeiling, MaxBytes: h.byteCeiling, ChunkRows: h.chunkRows}
 }

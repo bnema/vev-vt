@@ -7,19 +7,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestHistoryConfigurationDefaultsAndValidation(t *testing.T) {
-	defaults := DefaultHistoryConfig()
-	require.Equal(t, uint64(50_000_000), defaults.MaxBytes)
-	require.Equal(t, 10_000, defaults.MaxRows)
+func TestHistoryConfigurationUsesOnlyApplicationLimits(t *testing.T) {
 	for _, tt := range []struct {
 		name   string
 		config HistoryConfig
 		valid  bool
 	}{
 		{"disabled", HistoryConfig{}, true},
-		{"defaults", defaults, true},
+		{"both explicit", HistoryConfig{MaxRows: 20, MaxBytes: 4096}, true},
 		{"bytes only", HistoryConfig{MaxBytes: 1024}, true},
-		{"rows with byte default", HistoryConfig{MaxRows: 4}, true},
+		{"rows only", HistoryConfig{MaxRows: 4}, true},
 		{"negative rows", HistoryConfig{MaxRows: -1}, false},
 		{"negative grouping", HistoryConfig{ChunkRows: -1}, false},
 		{"oversized grouping", HistoryConfig{ChunkRows: 257}, false},
@@ -35,7 +32,7 @@ func TestHistoryConfigurationDefaultsAndValidation(t *testing.T) {
 			require.ErrorIs(t, err, ErrInvalidHistoryConfig)
 		})
 	}
-	require.Equal(t, DefaultHistoryBytes, NewHistory(HistoryConfig{MaxRows: 4}).ByteCap())
+	require.Zero(t, NewHistory(HistoryConfig{MaxRows: 4}).ByteCap(), "library must not supply a byte policy")
 	disabled := NewHistory(HistoryConfig{})
 	require.NoError(t, disabled.Append(historyRow("ignored"), LineBound{End: 7}))
 	require.Zero(t, disabled.Len())
@@ -72,7 +69,7 @@ func TestHistoryLimitsReloadIsValidatedAndPreservesViews(t *testing.T) {
 	require.Zero(t, h.Len())
 	require.Zero(t, h.LogicalBytes())
 	require.Equal(t, next, h.NextRowID())
-	require.NoError(t, h.SetLimits(DefaultHistoryConfig()))
+	require.NoError(t, h.SetLimits(HistoryConfig{MaxBytes: 4096}))
 	require.NoError(t, h.Append(historyRow("new"), LineBound{End: 3}))
 	require.Equal(t, next, h.View().RowID(0))
 }

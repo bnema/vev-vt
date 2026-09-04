@@ -422,10 +422,13 @@ func TestHistorySplitsCompactSlabsWhenRowWidthChanges(t *testing.T) {
 	}
 }
 
-func TestHistoryDefaultByteBudgetDoesNotOverflow(t *testing.T) {
+func TestHistoryLargeRowLimitDoesNotInventByteBudget(t *testing.T) {
 	history := NewHistory(HistoryConfig{MaxRows: math.MaxInt, ChunkRows: 1})
-	if got := history.ByteCap(); got == 0 {
-		t.Fatal("default byte capacity overflowed to zero")
+	if got := history.ByteCap(); got != 0 {
+		t.Fatalf("implicit byte capacity = %d, want no byte ceiling", got)
+	}
+	if got := history.Cap(); got != math.MaxInt {
+		t.Fatalf("row ceiling = %d", got)
 	}
 }
 

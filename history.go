@@ -24,6 +24,7 @@ type History struct {
 	maxRows           int
 	rowCeiling        int
 	maxBytes          uint64
+	byteCeiling       uint64
 	chunkRows         int
 	chunks            []*HistoryChunk
 	tail              [][]renderer.Cell
@@ -647,12 +648,13 @@ func (h *History) Cap() int {
 	return h.rowCeiling
 }
 
-// ByteCap returns the configured uncompressed logical-byte capacity.
+// ByteCap returns the configured uncompressed byte ceiling. Zero means no
+// independent byte ceiling, or disabled history when Cap is also zero.
 func (h *History) ByteCap() uint64 {
 	if h == nil {
 		return 0
 	}
-	return h.maxBytes
+	return h.byteCeiling
 }
 
 func (v HistoryView) Len() int   { return v.rows }
