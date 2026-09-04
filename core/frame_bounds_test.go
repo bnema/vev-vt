@@ -24,6 +24,19 @@ func TestFrameColumnsCannotAddressAdjacentRows(t *testing.T) {
 	}
 }
 
+func TestFrameRejectsInvalidRows(t *testing.T) {
+	for _, width := range []int{0, 3} {
+		f := NewFrame(width, 3)
+		require.Len(t, f.Row(1), width)
+		for _, y := range []int{-1, 3, math.MaxInt} {
+			require.Panics(t, func() { f.Row(y) })
+			require.Panics(t, func() { f.Cell(0, y) })
+			require.Panics(t, func() { f.Set(0, y, BlankCell()) })
+		}
+		require.NoError(t, f.CheckInvariants())
+	}
+}
+
 func TestFillRowClipsColumns(t *testing.T) {
 	f := NewFrame(3, 3)
 	f.ScrollDown(0, 2, 1)

@@ -194,8 +194,9 @@ func hasScrollDamage(damage []Damage) bool {
 }
 
 func (r *Renderer) writeFull(out *bytes.Buffer, frame CellSource, st *drawState) {
+	columns := frame.Columns()
 	for y := range frame.Rows() {
-		r.emitSpan(out, frame, y, 0, frame.Columns(), st)
+		r.emitSpan(out, frame, y, 0, columns, st)
 	}
 	out.WriteString("\x1b[0m")
 }

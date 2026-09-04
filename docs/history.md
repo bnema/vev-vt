@@ -39,6 +39,8 @@ lines and `LogicalBytes()` for the amount charged to the byte limit.
 - `view.Cell(x, y)` reads one cell; `RowWidth(y)` gets its width without copying it.
 - `view.CopyRow(y, destination)` reuses a slice supplied by your application.
 - `view.Range(callback)` walks lines in order. Each callback receives its own row.
+  Check its returned error: a corrupt compressed page stops iteration rather
+  than silently yielding incomplete data.
 
 Older groups of rows, called chunks, can be shared between views. Their identity
 stays stable, which lets applications avoid saving or processing them repeatedly.

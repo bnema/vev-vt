@@ -37,6 +37,22 @@ func TestCellEqualUsesSemanticStyleEquality(t *testing.T) {
 	}
 }
 
+func TestCellEqualIncludesPayload(t *testing.T) {
+	payload, err := NewCellPayload("e\u0301", "https://example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain := Cell{Rune: 'e', Style: DefaultStyle()}
+	rich := plain
+	rich.Payload = payload
+	if plain.Equal(rich) || rich.Equal(plain) {
+		t.Fatal("different payloads must not compare equal")
+	}
+	if !rich.Equal(rich) {
+		t.Fatal("payload cell must equal itself")
+	}
+}
+
 func TestContinuationCellSemanticsRemainExplicit(t *testing.T) {
 	style := DefaultStyle()
 	head := Cell{Rune: '界', Style: style}

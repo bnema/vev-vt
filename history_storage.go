@@ -15,6 +15,8 @@ import (
 // Public history decoders reject malformed external data before installing it.
 var ErrHistoryCorrupt = errors.New("corrupt compressed history page")
 
+const maxHistoryPageEncodedBytes = 256 << 20
+
 // sealedPage owns immutable semantic contents and mutable physical backing.
 // Evicted-prefix wrappers and borrowed views share this owner. A returned Frame
 // is an internal read-only borrow: dropping the cached pointer cannot invalidate
@@ -59,7 +61,7 @@ func (p *sealedPage) decode() (renderer.Frame, error) {
 	invalid := func(err error) (renderer.Frame, error) {
 		return renderer.Frame{}, fmt.Errorf("%w: %v", ErrHistoryCorrupt, err)
 	}
-	if p.encodedSize < historyHeaderBytes || p.encodedSize > 256<<20 || len(p.compressed) == 0 {
+	if p.encodedSize < historyHeaderBytes || p.encodedSize > maxHistoryPageEncodedBytes || len(p.compressed) == 0 {
 		return invalid(errors.New("missing backing"))
 	}
 	source := bytes.NewReader(p.compressed)
@@ -136,6 +138,9 @@ func (p *sealedPage) compressIfIdle() (bool, error) {
 	raw, err := MarshalHistory(HistoryView{chunks: []*HistoryChunk{chunk}, rows: p.height, nextRowID: RowID(p.height + 1)})
 	if err != nil {
 		return false, err
+	}
+	if len(raw) > maxHistoryPageEncodedBytes {
+		return false, errors.New("history page exceeds encoded backing limit")
 	}
 	var out bytes.Buffer
 	w, err := zlib.NewWriterLevel(&out, zlib.BestSpeed)

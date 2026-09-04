@@ -55,12 +55,12 @@ func TestColdHistoryPreservesIdentityAccountingAndContents(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, encoded, again)
 	rows := 0
-	view.Range(func(row []renderer.Cell) bool {
+	require.NoError(t, view.Range(func(row []renderer.Cell) bool {
 		require.Equal(t, 'a', row[0].Rune)
 		require.Equal(t, "e\u0301", row[0].Payload.Grapheme())
 		rows++
 		return true
-	})
+	}))
 	require.Equal(t, 48, rows)
 	require.Equal(t, 2, h.CompressionStats().ColdPages)
 	require.Equal(t, 'a', view.Cell(0, 0).Rune)

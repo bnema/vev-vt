@@ -698,21 +698,23 @@ func (v HistoryView) Chunk(i int) *HistoryChunk {
 	return v.chunks[i]
 }
 
-// Range calls yield with a decoded owned row in oldest-first order.
-func (v HistoryView) Range(yield func([]renderer.Cell) bool) {
+// Range calls yield with a decoded owned row in oldest-first order. Returning
+// false stops iteration successfully; a backing restore failure returns an error.
+func (v HistoryView) Range(yield func([]renderer.Cell) bool) error {
 	for _, chunk := range v.chunks {
 		// Streaming search restores at most one transient page at a time and
 		// does not populate the random-access cache of every cold page.
 		frame, err := chunk.page.readFrame(false)
 		if err != nil {
-			panic(err)
+			return err
 		}
 		for i := range chunk.len() {
 			if !yield(frame.Row(chunk.start + i)) {
-				return
+				return nil
 			}
 		}
 	}
+	return nil
 }
 
 // Row returns a decoded owned copy of the row at i, or nil when out of range.

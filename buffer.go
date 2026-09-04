@@ -316,10 +316,6 @@ func (b *buffer) layoutReflow(width int, points *[2]reflowPoint, dst *buffer, sh
 			for i := range out {
 				out[i] = renderer.BlankCell()
 			}
-			return
-		}
-		if dst != nil && outputRow < shift+dst.frame.Height {
-			dst.frame.FillRow(outputRow-shift, 0, width, renderer.BlankCell())
 		}
 	}
 	setOutput := func(outputRow, column int, cell renderer.Cell) {
@@ -331,9 +327,7 @@ func (b *buffer) layoutReflow(width int, points *[2]reflowPoint, dst *buffer, sh
 			dst.frame.Set(column, outputRow-shift, cell)
 		}
 	}
-	if dst != nil && (shift > 0 || dst.frame.Height > 0) {
-		blankOutput(0)
-	}
+	blankOutput(0)
 	finishRow := func(soft bool) {
 		// An output row belongs either to history or to the retained viewport, and
 		// only this pass knows where it ended, so both destinations are written here.

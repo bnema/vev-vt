@@ -275,6 +275,9 @@ func (f Frame) Set(x, y int, cell Cell) {
 }
 
 func (f Frame) Row(y int) []Cell {
+	if y < 0 || y >= f.Height {
+		panic("frame row out of range")
+	}
 	row := make([]Cell, f.Width)
 	for x := range row {
 		row[x] = f.Cell(x, y)
@@ -332,6 +335,9 @@ func (f Frame) ScrollDown(top, bottom, n int) {
 func (f Frame) offset(x, y int) int {
 	if x < 0 || x >= f.Width {
 		panic("frame column out of range")
+	}
+	if y < 0 || y >= f.Height {
+		panic("frame row out of range")
 	}
 	return int(f.page.rows[y]) + x
 }
