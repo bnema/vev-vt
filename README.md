@@ -37,8 +37,15 @@ identity is stable for the lifetime of a view.
 ## Compatibility
 
 VTH3 history bytes are canonical and are decoded strictly, including malformed,
-truncated, and trailing input rejection. VEVS is an application-owned outer
-snapshot envelope and is intentionally not implemented here.
+truncated, and trailing input rejection. VTH3 preserves every raw `Style` field,
+including payloads inactive under `Style.Equal`, so decoding and re-encoding does
+not change canonical bytes. VEVS is an application-owned outer snapshot envelope
+and is intentionally not implemented here.
+
+`DefaultStyle()` is the canonical unset style and differs from `Style{}`, whose
+zero-valued color indexes are active. `Style.Canonical()` clears inactive color
+payloads and produces a representation whose Go equality exactly matches
+`Style.Equal`; it does not collapse `Style{}` into `DefaultStyle()`.
 
 The module has no production dependencies. `github.com/stretchr/testify` is
 used only by the test suite. Keep the public v0.x API and byte formats immutable
@@ -85,3 +92,15 @@ go test ./... -race
 go vet ./...
 go test ./... -run '^$' -bench='.' -benchmem
 ```
+
+The storage redesign baseline from issue #9 can be measured independently with:
+
+```sh
+go test . -run '^$' \
+  -bench '^BenchmarkHistory(Build|Retained)10Kx120$' \
+  -benchmem -benchtime=1x -count=1
+```
+
+It reports construction allocations and retained heap bytes for plain ASCII,
+repeated indexed and RGB styles, high-cardinality RGB churn, wide Unicode, and
+styled blanks.
