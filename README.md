@@ -34,13 +34,7 @@ storage with the lifetimes documented by their APIs; borrowed storage must not
 be mutated or retained beyond its documented lifetime. Sealed `HistoryChunk`
 identity is stable for the lifetime of a view.
 
-## Compatibility
-
-VTH3 history bytes are canonical and are decoded strictly, including malformed,
-truncated, and trailing input rejection. VTH3 preserves every raw `Style` field,
-including payloads inactive under `Style.Equal`, so decoding and re-encoding does
-not change canonical bytes. VEVS is an application-owned outer snapshot envelope
-and is intentionally not implemented here.
+## Alpha stability
 
 `DefaultStyle()` is the canonical unset style and differs from `Style{}`, whose
 zero-valued color indexes are active. `Style.Canonical()` clears inactive color
@@ -48,9 +42,11 @@ payloads and produces a representation whose Go equality exactly matches
 `Style.Equal`; it does not collapse `Style{}` into `DefaultStyle()`.
 
 The module has no production dependencies. `github.com/stretchr/testify` is
-used only by the test suite. Keep the public v0.x API and byte formats immutable
-once released; behavior changes require explicit versioning and compatibility
-evidence.
+used only by the test suite. During v0.x alpha development, public APIs and byte
+formats may change without compatibility adapters or migration readers. Prefer
+a direct, documented break and removal of obsolete code when that produces a
+cleaner design. VEVS remains an application-owned outer snapshot envelope and
+is intentionally not implemented here.
 
 ## Kitty graphics subset
 
