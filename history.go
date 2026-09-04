@@ -17,18 +17,12 @@ var errInvalidHistoryRowID = errors.New("invalid history row ID")
 
 const maxTailPreallocCells = 32 * 1024
 
-// HistoryConfig controls the bounded terminal history retained by a Screen.
-type HistoryConfig struct {
-	MaxRows   int
-	MaxBytes  uint64
-	ChunkRows int
-}
-
 // History stores terminal rows in immutable chunks. It is intended to be
 // mutated by the owner of a Screen; views are safe to retain after later
 // appends.
 type History struct {
 	maxRows           int
+	rowCeiling        int
 	maxBytes          uint64
 	chunkRows         int
 	chunks            []*HistoryChunk
@@ -202,37 +196,6 @@ type HistorySnapshotView struct {
 	cells        int
 	logicalBytes uint64
 	nextRowID    RowID
-}
-
-func NewHistory(config HistoryConfig) *History {
-	if config.MaxRows <= 0 {
-		return &History{}
-	}
-	chunkRows := config.ChunkRows
-	if chunkRows <= 0 {
-		chunkRows = 256
-	}
-	chunkRows = min(chunkRows, 256)
-	chunkRows = min(chunkRows, config.MaxRows)
-	maxBytes := config.MaxBytes
-	if maxBytes == 0 {
-		maxBytes = defaultHistoryMaxBytes(config.MaxRows, chunkRows)
-	}
-	return &History{maxRows: config.MaxRows, maxBytes: maxBytes, chunkRows: chunkRows, nextRowID: 1}
-}
-
-func defaultHistoryMaxBytes(maxRows, chunkRows int) uint64 {
-	const defaultRowBytes = 160*renderer.StoredCellLogicalBytes + renderer.RowDescriptorLogicalBytes
-	rows := uint64(maxRows)
-	pages := (rows + uint64(chunkRows) - 1) / uint64(chunkRows)
-	if rows > math.MaxUint64/defaultRowBytes {
-		return math.MaxUint64
-	}
-	bytes := rows * defaultRowBytes
-	if pages > (math.MaxUint64-bytes)/renderer.StyleRecordLogicalBytes {
-		return math.MaxUint64
-	}
-	return bytes + pages*renderer.StyleRecordLogicalBytes
 }
 
 func historyRowBaseLogicalBytes(width int) uint64 {
@@ -675,12 +638,13 @@ func (h *History) NextRowID() RowID {
 	return h.nextRowID
 }
 
-// Cap returns the configured bounded row capacity.
+// Cap returns the configured row ceiling; zero means no independent row
+// ceiling, or disabled history when ByteCap is also zero.
 func (h *History) Cap() int {
 	if h == nil {
 		return 0
 	}
-	return h.maxRows
+	return h.rowCeiling
 }
 
 // ByteCap returns the configured uncompressed logical-byte capacity.

@@ -91,6 +91,26 @@ segmentation engine or OSC 8 parser. The VT parser and ANSI output still support
 their existing rune-based text semantics; callers must not infer new protocol
 support from the ability to retain payload values.
 
+## Scrollback limits
+
+Use `DefaultHistoryConfig()` for **50,000,000 uncompressed logical bytes and
+10,000 lines per screen/pane**. These are independent ceilings, not a session
+pool. Primary/alternate live grids are excluded, and there is no extra page
+allowance. `MaxRows: 0` with a positive `MaxBytes` means byte-only retention;
+both limits zero disable history. A positive row limit with zero bytes selects
+the fixed 50 MB byte default, not a width-derived cell budget.
+
+`HistoryConfig.Validate()` rejects negative limits/grouping and grouping above
+256 rows. Constructors panic for invalid programmer input; applications should
+validate user configuration before construction. `History.SetLimits()` returns
+validation errors without mutation and applies valid reductions immediately by
+evicting oldest rows. Existing borrowed views remain valid. `Limits`, `Cap`,
+`ByteCap`, `Len` and `LogicalBytes` report effective policy and usage.
+
+Persistence has separate per-blob resource ceilings described above; increasing
+retention does not bypass decoder budgets. Chunk-by-chunk snapshot persistence
+avoids requiring one enormous history blob.
+
 ## Cold history compression
 
 The owner may call `History.CompressIdle(maxPages)` from an idle timer. Each call

@@ -77,6 +77,9 @@ func MarshalSealedHistory(view HistoryView) ([][]byte, []byte, error) {
 // HistoryFromBlobs restores history directly from sealed, oldest-first blobs
 // and the mandatory tail blob. It never feeds decoded rows through Append.
 func HistoryFromBlobs(config HistoryConfig, sealed [][]byte, tail []byte) (*History, error) {
+	if err := config.Validate(); err != nil {
+		return nil, err
+	}
 	sealedViews, tailView, err := decodeRestoredHistoryBlobs(sealed, tail)
 	if err != nil {
 		return nil, err
@@ -198,6 +201,9 @@ func validateRestoredHistoryView(view HistoryView, seen map[RowID]struct{}) bool
 // history contains the restored bounded history followed by the recovery
 // transcript. The transcript is decoded in full before history is restored.
 func NewScreenWithRecoveryTranscript(width, height int, config HistoryConfig, sealed [][]byte, tail, transcript []byte) (*Screen, error) {
+	if err := config.Validate(); err != nil {
+		return nil, err
+	}
 	transcriptView, err := UnmarshalHistory(transcript)
 	if err != nil {
 		return nil, fmt.Errorf("restore recovery transcript: %w", err)
