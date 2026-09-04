@@ -5,7 +5,7 @@ import (
 	"strconv"
 )
 
-func findSafeScroll(frame Frame, damage []Damage) (Damage, bool) {
+func findSafeScroll(frame CellSource, damage []Damage) (Damage, bool) {
 	for _, d := range damage {
 		if d.Kind == DamageScrollUp && isSafeScroll(frame, d) {
 			return d, true
@@ -14,8 +14,8 @@ func findSafeScroll(frame Frame, damage []Damage) (Damage, bool) {
 	return Damage{}, false
 }
 
-func isSafeScroll(frame Frame, d Damage) bool {
-	return d.X == 0 && d.Width == frame.Width && d.Y >= 0 && d.Y <= frame.Height && d.Height > 0 && d.Height <= frame.Height-d.Y && d.Count > 0 && d.Count < d.Height
+func isSafeScroll(frame CellSource, d Damage) bool {
+	return d.X == 0 && d.Width == frame.Columns() && d.Y >= 0 && d.Y <= frame.Rows() && d.Height > 0 && d.Height <= frame.Rows()-d.Y && d.Count > 0 && d.Count < d.Height
 }
 
 func emitScrollUp(out *bytes.Buffer, d Damage) {
@@ -42,13 +42,33 @@ func emitScrollUp(out *bytes.Buffer, d Damage) {
 	out.WriteString("\x1b[r")
 }
 
-func canApplyScrollAgainst(frame Frame, scroll Damage, damage []Damage, committed Frame) bool {
+func canApplyScrollAgainst(frame CellSource, scroll Damage, damage []Damage, committed Frame) bool {
+	switch frame := frame.(type) {
+	case Frame:
+		return canApplyDenseScrollAgainst(frame, scroll, damage, committed)
+	case *Frame:
+		return canApplyDenseScrollAgainst(*frame, scroll, damage, committed)
+	}
 	for y := scroll.Y; y < scroll.Y+scroll.Height-scroll.Count; y++ {
-		frameRow := frame.Row(y)
-		committedRow := committed.Row(y + scroll.Count)
 		for x := range scroll.Width {
 			column := scroll.X + x
-			committedCell, frameCell := committedRow[column], frameRow[column]
+			committedCell, frameCell := committed.Cell(column, y+scroll.Count), frame.Cell(column, y)
+			if committedCell == frameCell || committedCell.Equal(frameCell) {
+				continue
+			}
+			if !damageCoversCell(damage, column, y) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func canApplyDenseScrollAgainst(frame Frame, scroll Damage, damage []Damage, committed Frame) bool {
+	for y := scroll.Y; y < scroll.Y+scroll.Height-scroll.Count; y++ {
+		for x := range scroll.Width {
+			column := scroll.X + x
+			committedCell, frameCell := committed.At(column, y+scroll.Count), frame.At(column, y)
 			if committedCell == frameCell || committedCell.Equal(frameCell) {
 				continue
 			}

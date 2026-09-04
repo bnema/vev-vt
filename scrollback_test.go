@@ -92,7 +92,7 @@ func TestOnLineEvictedAltScreenAndRotation(t *testing.T) {
 			if got := evictedTexts(evicted); !equalStrings(got, tt.wantRows) {
 				t.Fatalf("evicted rows = %#v, want %#v", got, tt.wantRows)
 			}
-			if err := s.Frame.CheckInvariants(); err != nil {
+			if err := s.frame.CheckInvariants(); err != nil {
 				t.Fatalf("frame invariants after scrollback callback: %v", err)
 			}
 		})

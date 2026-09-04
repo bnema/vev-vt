@@ -2,8 +2,8 @@
 // github.com/bnema/vev-vt/core model.
 //
 // The package owns output planning, ANSI encoding, and a transactional renderer
-// shadow. It does not own Cell, Style, RGB, Frame, Damage, or RuneWidth; those
-// values are aliases of the core package and are owned by core.
+// shadow. Renderers consume the read-only CellSource contract. Cell, Style, RGB,
+// Frame, CellSource, Damage, and RuneWidth are aliases of the core package.
 //
 // [New] preserves the historical truecolor behavior. A renderer created by
 // [NewWithColorProfile] projects every color-bearing style field to its chosen

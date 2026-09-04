@@ -206,9 +206,8 @@ func BenchmarkRendererScrollFastPath(b *testing.B) {
 	}
 
 	scrolled := NewFrame(120, 40)
-	copy(scrolled.Cells[0:39*120], frame.Cells[120:40*120])
-	for i := 39 * 120; i < 40*120; i++ {
-		scrolled.Cells[i] = BlankCell()
+	for y := 0; y < 39; y++ {
+		scrolled.WriteRow(y, 0, frame.Row(y+1))
 	}
 	for x, r := range []rune("new output line") {
 		scrolled.Set(x, 39, Cell{Rune: r, Style: DefaultStyle()})

@@ -1,9 +1,7 @@
 package vt
 
-import renderer "github.com/bnema/vev-vt/core"
-
 func (s *Screen) Resize(width, height int) {
-	if width == s.Frame.Width && height == s.Frame.Height {
+	if width == s.frame.Width && height == s.frame.Height {
 		s.geometry.Cols, s.geometry.Rows = width, height
 		return
 	}
@@ -15,7 +13,6 @@ func (s *Screen) Resize(width, height int) {
 		s.Row, s.Col = 0, 0
 		if state := s.alternate; state != nil {
 			state.buffer = s.newBuffer(width, height)
-			state.frame = state.buffer.frame
 			state.row, state.col = 0, 0
 			state.scrollTop, state.scrollBottom = 0, height-1
 		}
@@ -49,18 +46,13 @@ func (s *Screen) Resize(width, height int) {
 			// cursors for each state are mapped by their single buffer layout pass.
 			s.Row, s.Col = resize(s.buffer, s.Row, s.Col, &s.savedCursor, false)
 			state := s.alternate
-			if state.buffer == nil {
-				state.buffer = bufferFromFrame(state.frame)
-				s.fillMissingRowIDs(state.buffer)
-			}
 			state.row, state.col = resize(state.buffer, state.row, state.col, &state.savedCursor, true)
-			state.frame = state.buffer.frame
 			state.scrollTop, state.scrollBottom = 0, height-1
 		} else {
 			s.Row, s.Col = resize(s.buffer, s.Row, s.Col, &s.savedCursor, true)
 		}
 	}
-	s.Frame = s.buffer.frame
+	s.frame = s.buffer.frame
 	s.geometry.Cols, s.geometry.Rows = width, height
 	// A resize can split an in-flight escape sequence from the terminal state it
 	// was meant to mutate; keep the durable child state but discard partial bytes.
@@ -70,17 +62,6 @@ func (s *Screen) Resize(width, height int) {
 	s.abortAllKittyPending()
 	s.resetScrollRegion()
 	s.fullRedraw()
-}
-
-// cloneFrame produces an independent copy in canonical layout: it copies the
-// source's logical rows (via Row) into a fresh frame whose offsets are already
-// canonical, so a rotated source is normalized in the clone.
-func cloneFrame(frame renderer.Frame) renderer.Frame {
-	out := renderer.NewFrame(frame.Width, frame.Height)
-	for y := range frame.Height {
-		copy(out.Row(y), frame.Row(y))
-	}
-	return out
 }
 
 func clamp(v, lo, hi int) int {

@@ -84,7 +84,7 @@ func TestSnapshotCodecsPreserveEveryTerminalCellAcrossHistoryAndRecoveryTranscri
 				screen := NewScreen(4, 2)
 				want := [][]renderer.Cell{makeRow('D', rgb), makeRow('E', indexed)}
 				for y, row := range want {
-					copy(screen.Frame.Row(y), row)
+					screen.frame.WriteRow(y, 0, row)
 					screen.buffer.boundaries[y] = LineBound{End: len(row)}
 				}
 

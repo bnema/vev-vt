@@ -11,6 +11,7 @@ type StyleAttrs = core.StyleAttrs
 type UnderlineStyle = core.UnderlineStyle
 type Style = core.Style
 type Frame = core.Frame
+type CellSource = core.CellSource
 
 type DamageKind = core.DamageKind
 type Damage = core.Damage

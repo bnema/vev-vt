@@ -13,12 +13,12 @@ func TestCollapsedResizeUpdatesSavedPrimaryAndClearsEscape(t *testing.T) {
 	if len(s.escapeBuf) != 0 {
 		t.Fatalf("partial escape survives collapsed resize: %q", s.escapeBuf)
 	}
-	if s.Frame.Width != 0 || s.Frame.Height != 0 {
-		t.Fatalf("active frame = %dx%d, want 0x0", s.Frame.Width, s.Frame.Height)
+	if s.frame.Width != 0 || s.frame.Height != 0 {
+		t.Fatalf("active frame = %dx%d, want 0x0", s.frame.Width, s.frame.Height)
 	}
 	s.Write([]byte("\x1b[?1049l"))
-	if s.Frame.Width != 0 || s.Frame.Height != 0 {
-		t.Fatalf("saved primary frame = %dx%d, want 0x0", s.Frame.Width, s.Frame.Height)
+	if s.frame.Width != 0 || s.frame.Height != 0 {
+		t.Fatalf("saved primary frame = %dx%d, want 0x0", s.frame.Width, s.frame.Height)
 	}
 }
 

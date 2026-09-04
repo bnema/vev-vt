@@ -30,21 +30,21 @@ type DeltaCandidate struct {
 	frame Frame
 }
 
-func newDeltaCandidate(frame Frame, plan DeltaPlan) DeltaCandidate {
+func newDeltaCandidate(frame CellSource, plan DeltaPlan) DeltaCandidate {
 	candidate := DeltaCandidate{Plan: plan}
 	if plan.Snapshot || plan.Scroll.Height != 0 || len(plan.Spans) != 0 {
-		candidate.frame = frame.Clone()
+		candidate.frame = cloneCellSource(frame)
 	}
 	return candidate
 }
 
 // PlanDelta prepares a non-mutating update from committed to frame.
-func PlanDelta(frame Frame, damage []Damage, committed Frame, reset bool) (DeltaCandidate, error) {
-	if err := frame.Validate(); err != nil {
+func PlanDelta(frame CellSource, damage []Damage, committed Frame, reset bool) (DeltaCandidate, error) {
+	if err := validateCellSource(frame); err != nil {
 		return DeltaCandidate{}, err
 	}
 
-	if reset || frame.Width != committed.Width || frame.Height != committed.Height {
+	if reset || frame.Columns() != committed.Columns() || frame.Rows() != committed.Rows() {
 		return newDeltaCandidate(frame, DeltaPlan{Snapshot: true}), nil
 	}
 	if err := committed.Validate(); err != nil {
@@ -92,7 +92,7 @@ func PlanDelta(frame Frame, damage []Damage, committed Frame, reset bool) (Delta
 	return newDeltaCandidate(frame, plan), nil
 }
 
-func planSingleDamage(frame Frame, d Damage) DeltaPlan {
+func planSingleDamage(frame CellSource, d Damage) DeltaPlan {
 	spans, full := buildSingleDamageSpans(frame, d)
 	if full {
 		return DeltaPlan{Snapshot: true}
@@ -104,14 +104,12 @@ func planSingleDamage(frame Frame, d Damage) DeltaPlan {
 	return plan
 }
 
-func buildDirtyLinePlan(frame, committed Frame) ([]Span, bool) {
+func buildDirtyLinePlan(frame, committed CellSource) ([]Span, bool) {
 	var spans []Span
-	for y := range frame.Height {
-		frameRow := frame.Row(y)
-		committedRow := committed.Row(y)
+	for y := range frame.Rows() {
 		dirty := false
-		for x := range frame.Width {
-			if !frameRow[x].Equal(committedRow[x]) {
+		for x := range frame.Columns() {
+			if !frame.Cell(x, y).Equal(committed.Cell(x, y)) {
 				dirty = true
 				break
 			}
@@ -120,14 +118,14 @@ func buildDirtyLinePlan(frame, committed Frame) ([]Span, bool) {
 			if len(spans) == maxPlannedDamageSpans {
 				return nil, true
 			}
-			spans = append(spans, Span{Y: y, Width: frame.Width})
+			spans = append(spans, Span{Y: y, Width: frame.Columns()})
 		}
 	}
 	return spans, false
 }
 
-func deltaCostsSnapshot(frame Frame, spans []Span, hasScroll bool) bool {
-	if !hasScroll && frame.Height > 1 && len(spans) == 1 {
+func deltaCostsSnapshot(frame CellSource, spans []Span, hasScroll bool) bool {
+	if !hasScroll && frame.Rows() > 1 && len(spans) == 1 {
 		return false
 	}
 
@@ -139,11 +137,11 @@ func deltaCostsSnapshot(frame Frame, spans []Span, hasScroll bool) bool {
 		deltaCost += 12 + int64(span.Width)
 	}
 
-	minimumSnapshotCost := int64(frame.Height) * (12 + int64(frame.Width))
+	minimumSnapshotCost := int64(frame.Rows()) * (12 + int64(frame.Columns()))
 	if deltaCost < minimumSnapshotCost {
 		return false
 	}
-	maximumSnapshotCost := int64(frame.Height) * (8 + 5*int64(frame.Width))
+	maximumSnapshotCost := int64(frame.Rows()) * (8 + 5*int64(frame.Columns()))
 	if deltaCost >= maximumSnapshotCost {
 		return true
 	}
@@ -152,40 +150,43 @@ func deltaCostsSnapshot(frame Frame, spans []Span, hasScroll bool) bool {
 	}
 
 	for _, span := range spans {
-		deltaCost += 4 * int64(styleRunCount(frame.Row(span.Y)[span.X:span.X+span.Width])-1)
+		deltaCost += 4 * int64(styleRunCountIn(frame, span.Y, span.X, span.Width)-1)
 	}
 	var snapshotCost int64
-	for y := range frame.Height {
-		snapshotCost += spanCost(frame, y, 0, frame.Width)
+	for y := range frame.Rows() {
+		snapshotCost += spanCost(frame, y, 0, frame.Columns())
 	}
 	return deltaCost >= snapshotCost
 }
 
-func fullWidthRows(frame Frame, spans []Span) bool {
-	if len(spans) != frame.Height {
+func fullWidthRows(frame CellSource, spans []Span) bool {
+	if len(spans) != frame.Rows() {
 		return false
 	}
 	for y, span := range spans {
-		if span.Y != y || span.X != 0 || span.Width != frame.Width {
+		if span.Y != y || span.X != 0 || span.Width != frame.Columns() {
 			return false
 		}
 	}
 	return true
 }
 
-func spanCost(frame Frame, y, x, width int) int64 {
-	return 8 + int64(width) + 4*int64(styleRunCount(frame.Row(y)[x:x+width]))
+func spanCost(frame CellSource, y, x, width int) int64 {
+	return 8 + int64(width) + 4*int64(styleRunCountIn(frame, y, x, width))
 }
 
-func styleRunCount(cells []Cell) int {
-	if len(cells) == 0 {
+func styleRunCountIn(frame CellSource, y, x, width int) int {
+	if width == 0 {
 		return 0
 	}
 	runs := 1
-	for i := 1; i < len(cells); i++ {
-		if cells[i-1].Style != cells[i].Style && !cells[i-1].Style.Equal(cells[i].Style) {
+	previous := frame.Cell(x, y).Style
+	for column := x + 1; column < x+width; column++ {
+		style := frame.Cell(column, y).Style
+		if previous != style && !previous.Equal(style) {
 			runs++
 		}
+		previous = style
 	}
 	return runs
 }
@@ -204,9 +205,9 @@ func (c DeltaCandidate) Commit(dst *Frame) {
 		dst.ScrollUp(scroll.Y, scroll.Y+scroll.Height-1, scroll.Count)
 	}
 	for _, span := range c.Plan.Spans {
-		dstRow := dst.Row(span.Y)
-		srcRow := c.frame.Row(span.Y)
-		copy(dstRow[span.X:span.X+span.Width], srcRow[span.X:span.X+span.Width])
+		for x := span.X; x < span.X+span.Width; x++ {
+			dst.Set(x, span.Y, c.frame.Cell(x, span.Y))
+		}
 	}
 }
 

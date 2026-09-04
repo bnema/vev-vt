@@ -26,7 +26,7 @@ func TestExternalLineEvictionCallbackReceivesStableCopy(t *testing.T) {
 		t.Fatalf("evicted rows = %#v, want one stable AAAA row", evicted)
 	}
 	evicted[0][0] = core.Cell{Rune: 'X'}
-	if got := screen.Frame.At(0, 0).Rune; got != 'B' {
+	if got := screen.Cell(0, 0).Rune; got != 'B' {
 		t.Fatalf("mutating callback row changed live frame to %q", got)
 	}
 	if got := evicted[0][0].Rune; got != 'X' {

@@ -11,13 +11,13 @@ func TestZshAutosuggestionRepaintEmitsForwardDamage(t *testing.T) {
 	r := renderer.New(renderer.Capabilities{})
 
 	s.Write([]byte("❯ "))
-	if _, err := r.Draw(s.Frame, s.Damage()); err != nil {
+	if _, err := r.Draw(s.frame, s.Damage()); err != nil {
 		t.Fatal(err)
 	}
 	s.ClearDamage()
 
 	s.Write([]byte("h"))
-	if _, err := r.Draw(s.Frame, s.Damage()); err != nil {
+	if _, err := r.Draw(s.frame, s.Damage()); err != nil {
 		t.Fatal(err)
 	}
 	s.ClearDamage()
@@ -25,16 +25,16 @@ func TestZshAutosuggestionRepaintEmitsForwardDamage(t *testing.T) {
 	s.Write([]byte("\x1b[31mh\x1b[39m"))
 	s.Write([]byte("\x1b[38mello\x1b[39m\r \x1b[31mh\x1b[39m"))
 
-	for y := range s.Frame.Height {
-		for x := range s.Frame.Width {
-			r := s.Frame.At(x, y).Rune
+	for y := range s.frame.Height {
+		for x := range s.frame.Width {
+			r := s.frame.At(x, y).Rune
 			if r == '\r' || r == '\n' {
 				t.Fatalf("cell(%d,%d) contains control rune %q", x, y, r)
 			}
 		}
 	}
 
-	out, err := r.Draw(s.Frame, s.Damage())
+	out, err := r.Draw(s.frame, s.Damage())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,18 +56,18 @@ func TestIntegrationScenarios(t *testing.T) {
 				s := NewScreen(8, 2)
 				r := renderer.New(renderer.Capabilities{})
 				s.Write([]byte("abcdef"))
-				if _, err := r.Draw(s.Frame, s.Damage()); err != nil {
+				if _, err := r.Draw(s.frame, s.Damage()); err != nil {
 					t.Fatal(err)
 				}
 				s.ClearDamage()
 
 				s.Write([]byte("\x1b[1;3H\x1b[2@XY"))
-				if _, err := r.Draw(s.Frame, s.Damage()); err != nil {
+				if _, err := r.Draw(s.frame, s.Damage()); err != nil {
 					t.Fatal(err)
 				}
 				s.ClearDamage()
 
-				out, err := r.Draw(s.Frame, nil)
+				out, err := r.Draw(s.frame, nil)
 				if err != nil {
 					t.Fatal(err)
 				}

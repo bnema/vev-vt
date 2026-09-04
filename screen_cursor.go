@@ -25,28 +25,28 @@ func (s *Screen) cursorReportRow() int {
 
 func (s *Screen) cursorMinRow() int {
 	if s.originMode {
-		return clamp(s.scrollTop, 0, s.Frame.Height-1)
+		return clamp(s.scrollTop, 0, s.frame.Height-1)
 	}
 	return 0
 }
 
 func (s *Screen) cursorMaxRow() int {
 	if s.originMode {
-		return clamp(s.scrollBottom, 0, s.Frame.Height-1)
+		return clamp(s.scrollBottom, 0, s.frame.Height-1)
 	}
-	return max(s.Frame.Height-1, 0)
+	return max(s.frame.Height-1, 0)
 }
 
 func (s *Screen) addressedRow(row int) int {
 	if s.originMode {
 		return clamp(s.scrollTop+row-1, s.cursorMinRow(), s.cursorMaxRow())
 	}
-	return clamp(row-1, 0, s.Frame.Height-1)
+	return clamp(row-1, 0, s.frame.Height-1)
 }
 
 func (s *Screen) addressCursor(row, col int) {
 	s.Row = s.addressedRow(row)
-	s.Col = clamp(col-1, 0, s.Frame.Width-1)
+	s.Col = clamp(col-1, 0, s.frame.Width-1)
 }
 
 func (s *Screen) homeCursor() {
@@ -81,8 +81,8 @@ func (s *Screen) restoreCursor() {
 	if !s.savedCursor.saved {
 		return
 	}
-	s.Row = clamp(s.savedCursor.row, 0, s.Frame.Height-1)
-	s.Col = clamp(s.savedCursor.col, 0, s.Frame.Width-1)
+	s.Row = clamp(s.savedCursor.row, 0, s.frame.Height-1)
+	s.Col = clamp(s.savedCursor.col, 0, s.frame.Width-1)
 	s.Style = s.savedCursor.style
 	s.originMode = s.savedCursor.originMode
 	s.insertMode = s.savedCursor.insertMode

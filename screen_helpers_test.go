@@ -25,7 +25,7 @@ func hasDamageKind(d []renderer.Damage, kind renderer.DamageKind) bool {
 }
 
 func cellAt(s *Screen, x, y int) renderer.Cell {
-	return s.Frame.At(x, y)
+	return s.frame.At(x, y)
 }
 
 func assertFramesEqual(t *testing.T, got, want renderer.Frame) {
@@ -70,8 +70,8 @@ func assertBlank(t *testing.T, s *Screen, x, y int) {
 
 func assertNoOrphanWideCells(t *testing.T, s *Screen) {
 	t.Helper()
-	for y := range s.Frame.Height {
-		for x := range s.Frame.Width {
+	for y := range s.frame.Height {
+		for x := range s.frame.Width {
 			c := cellAt(s, x, y)
 			if c.Continuation {
 				if x == 0 || cellAt(s, x-1, y).Continuation || renderer.RuneWidth(cellAt(s, x-1, y).Rune) != 2 {
@@ -79,7 +79,7 @@ func assertNoOrphanWideCells(t *testing.T, s *Screen) {
 				}
 				continue
 			}
-			if renderer.RuneWidth(c.Rune) == 2 && (x+1 >= s.Frame.Width || !cellAt(s, x+1, y).Continuation) {
+			if renderer.RuneWidth(c.Rune) == 2 && (x+1 >= s.frame.Width || !cellAt(s, x+1, y).Continuation) {
 				t.Fatalf("orphan wide head at (%d,%d) rune %q", x, y, c.Rune)
 			}
 		}
@@ -87,9 +87,9 @@ func assertNoOrphanWideCells(t *testing.T, s *Screen) {
 }
 
 func lineText(s *Screen, y int) string {
-	out := make([]rune, s.Frame.Width)
-	for x := range s.Frame.Width {
-		out[x] = s.Frame.At(x, y).Rune
+	out := make([]rune, s.frame.Width)
+	for x := range s.frame.Width {
+		out[x] = s.frame.At(x, y).Rune
 	}
 	return string(out)
 }

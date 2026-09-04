@@ -135,7 +135,7 @@ func TestScreenRowIDBoundaryMatchesHistoryPersistence(t *testing.T) {
 			allocate()
 			row := historyRow("x")
 			screen.buffer.rowIDs[0] = test.want
-			screen.buffer.frame.Row(0)[0] = row[0]
+			screen.buffer.frame.Set(0, 0, row[0])
 			screen.buffer.boundaries[0] = LineBound{End: 1}
 			transcript, err := screen.RecoveryTranscriptSnapshot().Marshal()
 			require.NoError(t, err)

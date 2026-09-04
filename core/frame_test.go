@@ -14,6 +14,35 @@ func TestFrameCanonicalOffsetsAndInvariants(t *testing.T) {
 	}
 }
 
+func TestFrameRowReturnsOwnedCells(t *testing.T) {
+	f := NewFrame(2, 1)
+	f.Set(0, 0, Cell{Rune: 'A'})
+
+	row := f.Row(0)
+	row[0] = BlankCell()
+
+	if got := f.Cell(0, 0).Rune; got != 'A' {
+		t.Fatalf("mutating Row result changed frame cell to %q", got)
+	}
+}
+
+func TestFrameRowMutationOperationsUseLogicalRows(t *testing.T) {
+	f := NewFrame(5, 2)
+	f.WriteRow(0, 0, []Cell{{Rune: 'A'}, {Rune: 'B'}, {Rune: 'C'}, {Rune: 'D'}, {Rune: 'E'}})
+	f.ScrollDown(0, 1, 1)
+
+	f.CopyRow(1, 2, 0, 3)
+	f.FillRow(1, 0, 2, BlankCell())
+
+	got := f.Row(1)
+	want := []rune{' ', ' ', 'A', 'B', 'C'}
+	for x, r := range want {
+		if got[x].Rune != r {
+			t.Fatalf("cell %d = %q, want %q", x, got[x].Rune, r)
+		}
+	}
+}
+
 func TestCheckInvariantsDetectsBrokenRotation(t *testing.T) {
 	f := NewFrame(4, 3)
 	f.lineOffset[1] = f.lineOffset[0]

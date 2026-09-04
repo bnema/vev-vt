@@ -47,7 +47,7 @@ func captureRecoveryTranscriptSegment(b *buffer) recoveryTranscriptSegment {
 	}
 
 	rowCount := b.frame.Height
-	for rowCount > 0 && recoveryTranscriptRowUntouched(b.frame.Row(rowCount-1), b.bound(rowCount-1)) {
+	for rowCount > 0 && recoveryTranscriptFrameRowUntouched(b.frame, rowCount-1, b.bound(rowCount-1)) {
 		rowCount--
 	}
 	if rowCount == 0 {
@@ -64,19 +64,21 @@ func captureRecoveryTranscriptSegment(b *buffer) recoveryTranscriptSegment {
 		start := y * b.frame.Width
 		end := start + b.frame.Width
 		segment.rows[y] = cells[start:end:end]
-		copy(segment.rows[y], b.frame.Row(y))
+		for x := range b.frame.Width {
+			segment.rows[y][x] = b.frame.At(x, y)
+		}
 	}
 	segment.bounds[rowCount-1].Soft = false
 	return segment
 }
 
-func recoveryTranscriptRowUntouched(row []renderer.Cell, bound LineBound) bool {
+func recoveryTranscriptFrameRowUntouched(frame renderer.Frame, y int, bound LineBound) bool {
 	if bound.End != 0 || bound.Soft {
 		return false
 	}
 	blank := renderer.BlankCell()
-	for _, cell := range row {
-		if !cell.Equal(blank) {
+	for x := range frame.Width {
+		if !frame.At(x, y).Equal(blank) {
 			return false
 		}
 	}

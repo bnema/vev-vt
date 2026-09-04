@@ -146,7 +146,7 @@ func TestPrepareNoOpDoesNotCloneFrame(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if prepared.candidate.frame.Width != 0 || prepared.candidate.frame.Height != 0 || prepared.candidate.frame.Cells != nil {
+	if prepared.candidate.frame.Width != 0 || prepared.candidate.frame.Height != 0 {
 		t.Fatal("no-op prepared draw owns frame storage")
 	}
 	prepared.Commit()
@@ -193,10 +193,8 @@ func TestStyleResetDiscipline(t *testing.T) {
 
 				// Cause a scroll-up via VT model simulation: shift cells and emit scroll damage.
 				frame2 := NewFrame(4, 3)
-				copy(frame2.Cells[4:], frame.Cells[:8]) // row 0←row 1, row 1←row 2
-				for i := 8; i < 12; i++ {
-					frame2.Cells[i] = BlankCell() // bottom row blank
-				}
+				frame2.WriteRow(0, 0, frame.Row(1))
+				frame2.WriteRow(1, 0, frame.Row(2))
 				frame2.Set(0, 2, Cell{Rune: 'N', Style: DefaultStyle()}) // new char on bottom row
 
 				damage := []Damage{
@@ -353,9 +351,8 @@ func TestScrollFastPath(t *testing.T) {
 
 			// Build a new frame that has been scrolled up by 1 (like the VT model does).
 			scrolled := NewFrame(5, 4)
-			copy(scrolled.Cells[0:15], frame.Cells[5:20]) // rows 0,1,2 ← rows 1,2,3
-			for i := 15; i < 20; i++ {
-				scrolled.Cells[i] = BlankCell() // row 3 blanked
+			for y := 0; y < 3; y++ {
+				scrolled.WriteRow(y, 0, frame.Row(y+1))
 			}
 			scrolled.Set(0, 3, Cell{Rune: 'N', Style: DefaultStyle()})
 			scrolled.Set(1, 3, Cell{Rune: 'e', Style: DefaultStyle()})
@@ -567,8 +564,8 @@ func TestReset(t *testing.T) {
 
 			r.Reset()
 
-			if r.width != 0 || r.height != 0 || r.shadow != nil {
-				t.Fatal("Reset should clear width/height/shadow")
+			if r.width != 0 || r.height != 0 || r.hasCommitted {
+				t.Fatal("Reset should clear committed state")
 			}
 
 			// After reset, the next draw should be a full draw.
@@ -692,10 +689,8 @@ func TestScrollOnlyDamage(t *testing.T) {
 
 			// Scroll up 1 but the VT model would also emit DamageText for the new bottom row.
 			scrolled := NewFrame(4, 3)
-			copy(scrolled.Cells[0:8], frame.Cells[4:12])
-			for i := 8; i < 12; i++ {
-				scrolled.Cells[i] = BlankCell()
-			}
+			scrolled.WriteRow(0, 0, frame.Row(1))
+			scrolled.WriteRow(1, 0, frame.Row(2))
 			scrolled.Set(0, 2, Cell{Rune: 'X', Style: DefaultStyle()})
 
 			damage := []Damage{
@@ -838,7 +833,7 @@ func TestFrameValidate(t *testing.T) {
 	}{
 		{name: "valid frame", frame: NewFrame(5, 3), wantErr: false},
 		{name: "invalid dimensions (zero width)", frame: Frame{Width: 0, Height: 5}, wantErr: true},
-		{name: "wrong cell count", frame: Frame{Width: 2, Height: 2, Cells: make([]Cell, 3)}, wantErr: true},
+		{name: "missing storage", frame: Frame{Width: 2, Height: 2}, wantErr: true},
 	}
 
 	for _, tt := range tests {
@@ -995,9 +990,11 @@ func TestDrawFallbackAndClampingEdgeCases(t *testing.T) {
 				if rows := strings.Count(string(out), "H"); rows < changed.Height {
 					t.Fatalf("expected full redraw after unsafe scroll fallback, output %q", string(out))
 				}
-				for i := range changed.Cells {
-					if !r.shadow[i].Equal(changed.Cells[i]) {
-						t.Fatalf("shadow[%d] = %+v, want %+v", i, r.shadow[i], changed.Cells[i])
+				for y := range changed.Height {
+					for x := range changed.Width {
+						if !r.committed.Cell(x, y).Equal(changed.Cell(x, y)) {
+							t.Fatalf("committed cell (%d,%d) = %+v, want %+v", x, y, r.committed.Cell(x, y), changed.Cell(x, y))
+						}
 					}
 				}
 			},
@@ -1400,7 +1397,7 @@ func TestRendererPrepare(t *testing.T) {
 
 func TestPlanDeltaRejectsInvalidCommittedFrame(t *testing.T) {
 	frame := NewFrame(2, 1)
-	committed := Frame{Width: 2, Height: 1, Cells: make([]Cell, 2)}
+	committed := Frame{Width: 2, Height: 1}
 
 	if _, err := PlanDelta(frame, nil, committed, false); err == nil {
 		t.Fatal("PlanDelta accepted an invalid committed frame")

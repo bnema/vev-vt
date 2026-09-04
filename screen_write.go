@@ -14,8 +14,8 @@ func (s *Screen) putRune(r rune) {
 	case '\r':
 		s.Col = 0
 	case '\n', '\v', '\f':
-		if s.Frame.Width > 0 && s.Col >= s.Frame.Width {
-			s.Col = s.Frame.Width - 1
+		if s.frame.Width > 0 && s.Col >= s.frame.Width {
+			s.Col = s.frame.Width - 1
 		}
 		s.buffer.hard(s.Row)
 		s.index()
@@ -26,8 +26,8 @@ func (s *Screen) putRune(r rune) {
 	case '\t':
 		// HT moves to the next tab stop without modifying the frame. Clamp at
 		// the right edge rather than triggering deferred wrap or a scroll.
-		if s.Frame.Width > 0 {
-			s.Col = min(s.Col+8-s.Col%8, s.Frame.Width-1)
+		if s.frame.Width > 0 {
+			s.Col = min(s.Col+8-s.Col%8, s.frame.Width-1)
 		}
 	default:
 		// Drop C1 control characters (U+0080-U+009F).
@@ -58,23 +58,23 @@ func (s *Screen) putPrintable(r rune) {
 	if w == 0 {
 		return
 	}
-	if s.Frame.Width == 0 || s.Frame.Height == 0 {
+	if s.frame.Width == 0 || s.frame.Height == 0 {
 		return
 	}
 	// Deferred wrap: cursor sits past the last column.
-	if s.Col >= s.Frame.Width {
+	if s.Col >= s.frame.Width {
 		s.buffer.soft(s.Row)
 		s.Col = 0
 		s.relinkWrap(s.index())
 	}
-	if s.Row >= s.Frame.Height {
-		s.Row = s.Frame.Height - 1
+	if s.Row >= s.frame.Height {
+		s.Row = s.frame.Height - 1
 	}
 
 	// A wide rune must never straddle the right edge. If it does not fit on the
 	// current line, clear the abandoned last cell and wrap to the next line.
-	if w == 2 && s.Col+1 >= s.Frame.Width {
-		if s.Frame.Width < 2 {
+	if w == 2 && s.Col+1 >= s.frame.Width {
+		if s.frame.Width < 2 {
 			// The screen is too narrow to ever hold a wide rune; store a narrow
 			// replacement so the cell's renderer width matches its layout.
 			r = '\uFFFD'
@@ -83,18 +83,18 @@ func (s *Screen) putPrintable(r rune) {
 			// The abandoned cell may itself be the continuation of a pair whose
 			// left half sits one column back; report damage over the full span.
 			cx := s.Col
-			if s.Col > 0 && s.Frame.At(s.Col, s.Row).Continuation {
+			if s.Col > 0 && s.frame.At(s.Col, s.Row).Continuation {
 				cx = s.Col - 1
 			}
 			s.clearWidePairAt(s.Col, s.Row)
-			s.Frame.Set(s.Col, s.Row, renderer.BlankCell())
+			s.frame.Set(s.Col, s.Row, renderer.BlankCell())
 			s.buffer.truncate(s.Row, cx)
 			s.buffer.continueRow(s.Row)
 			s.record(renderer.Damage{Kind: renderer.DamageText, X: cx, Y: s.Row, Width: s.Col - cx + 1, Height: 1, Count: 1})
 			s.Col = 0
 			s.relinkWrap(s.index())
-			if s.Row >= s.Frame.Height {
-				s.Row = s.Frame.Height - 1
+			if s.Row >= s.frame.Height {
+				s.Row = s.frame.Height - 1
 			}
 		}
 	}
@@ -102,38 +102,33 @@ func (s *Screen) putPrintable(r rune) {
 	insertDamageX := s.Col
 	insertDamageWidth := 0
 	if s.insertMode {
-		row := s.Frame.Row(s.Row)
-		leftSplit := s.Col > 0 && row[s.Col].Continuation
-		for x := s.Frame.Width - 1; x >= s.Col+w; x-- {
-			row[x] = row[x-w]
-		}
-		for x := s.Col; x < s.Col+w; x++ {
-			row[x] = renderer.BlankCell()
-		}
+		leftSplit := s.Col > 0 && s.frame.At(s.Col, s.Row).Continuation
+		s.frame.CopyRow(s.Row, s.Col+w, s.Col, s.frame.Width-s.Col-w)
+		s.frame.FillRow(s.Row, s.Col, s.Col+w, renderer.BlankCell())
 		s.repairRow(s.Row)
 		s.buffer.insert(s.Row, s.Col, w)
 		if leftSplit {
 			insertDamageX = s.Col - 1
 		}
-		insertDamageWidth = s.Frame.Width - insertDamageX
+		insertDamageWidth = s.frame.Width - insertDamageX
 	}
 
 	// Determine the range of cells actually modified, extending over any wide
 	// pair the write lands on so no orphaned half is left behind.
 	lo, hi := s.Col, s.Col+w-1
-	if s.Frame.At(s.Col, s.Row).Continuation {
+	if s.frame.At(s.Col, s.Row).Continuation {
 		lo = s.Col - 1
 	}
-	if right := s.Col + w; right < s.Frame.Width && s.Frame.At(right, s.Row).Continuation {
+	if right := s.Col + w; right < s.frame.Width && s.frame.At(right, s.Row).Continuation {
 		hi = right
 	}
 	for x := lo; x <= hi; x++ {
-		s.Frame.Set(x, s.Row, renderer.BlankCell())
+		s.frame.Set(x, s.Row, renderer.BlankCell())
 	}
-	s.Frame.Set(s.Col, s.Row, renderer.Cell{Rune: r, Style: s.Style})
+	s.frame.Set(s.Col, s.Row, renderer.Cell{Rune: r, Style: s.Style})
 	s.buffer.content(s.Row, s.Col+w)
 	if w == 2 {
-		s.Frame.Set(s.Col+1, s.Row, renderer.Cell{Continuation: true, Style: s.Style})
+		s.frame.Set(s.Col+1, s.Row, renderer.Cell{Continuation: true, Style: s.Style})
 	}
 	if insertDamageWidth > 0 {
 		lo = min(lo, insertDamageX)
@@ -149,19 +144,19 @@ func (s *Screen) putPrintable(r rune) {
 // left half) holds — which the writer maintains.
 
 func (s *Screen) clearWidePairAt(x, y int) {
-	if x < 0 || x >= s.Frame.Width || y < 0 || y >= s.Frame.Height {
+	if x < 0 || x >= s.frame.Width || y < 0 || y >= s.frame.Height {
 		return
 	}
-	if s.Frame.At(x, y).Continuation {
+	if s.frame.At(x, y).Continuation {
 		if x-1 >= 0 {
-			s.Frame.Set(x-1, y, renderer.BlankCell())
+			s.frame.Set(x-1, y, renderer.BlankCell())
 		}
-		s.Frame.Set(x, y, renderer.BlankCell())
+		s.frame.Set(x, y, renderer.BlankCell())
 		return
 	}
-	if x+1 < s.Frame.Width && s.Frame.At(x+1, y).Continuation {
-		s.Frame.Set(x, y, renderer.BlankCell())
-		s.Frame.Set(x+1, y, renderer.BlankCell())
+	if x+1 < s.frame.Width && s.frame.At(x+1, y).Continuation {
+		s.frame.Set(x, y, renderer.BlankCell())
+		s.frame.Set(x+1, y, renderer.BlankCell())
 	}
 }
 
@@ -181,32 +176,30 @@ func (s *Screen) eraseCell() renderer.Cell {
 // returns the actual modified span [start, start+width).
 
 func (s *Screen) clearRow(y, x0, x1 int) (start, width int) {
-	if y < 0 || y >= s.Frame.Height {
+	if y < 0 || y >= s.frame.Height {
 		return x0, 0
 	}
 	if x0 < 0 {
 		x0 = 0
 	}
-	if x1 > s.Frame.Width {
-		x1 = s.Frame.Width
+	if x1 > s.frame.Width {
+		x1 = s.frame.Width
 	}
 	if x0 >= x1 {
 		return x0, 0
 	}
 	// Left boundary: a continuation at x0 means its wide left half sits at x0-1.
-	if x0 > 0 && s.Frame.At(x0, y).Continuation {
+	if x0 > 0 && s.frame.At(x0, y).Continuation {
 		x0--
 	}
 	// Right boundary: a continuation at x1 means its wide left half (at x1-1) is
 	// inside the range and will be blanked, so swallow the continuation too.
-	if x1 < s.Frame.Width && s.Frame.At(x1, y).Continuation {
+	if x1 < s.frame.Width && s.frame.At(x1, y).Continuation {
 		x1++
 	}
-	fullRow := x0 <= 0 && x1 >= s.Frame.Width
+	fullRow := x0 <= 0 && x1 >= s.frame.Width
 	blank := s.eraseCell()
-	for x := x0; x < x1; x++ {
-		s.Frame.Set(x, y, blank)
-	}
+	s.frame.FillRow(y, x0, x1, blank)
 	s.buffer.clear(y, x0, x1)
 	if fullRow {
 		s.buffer.rowIDs[y] = s.nextRowIDValue()
@@ -220,7 +213,7 @@ func (s *Screen) clearRow(y, x0, x1 int) (start, width int) {
 // at a boundary or by shifting cells.
 
 func (s *Screen) repairRow(y int) {
-	repairFrameRow(s.Frame, y)
+	repairFrameRow(s.frame, y)
 }
 
 func repairFrameRow(frame renderer.Frame, y int) {

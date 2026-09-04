@@ -14,7 +14,8 @@ The `ansi` package turns core frames and damage into transactional ANSI output.
   damage, and width implementation. It has no terminal, renderer, transport,
   or application dependencies.
 - `github.com/bnema/vev-vt/ansi` is the concrete ANSI output package. It consumes
-  core frames and damage; it does not define a renderer-backend interface.
+  read-only core cell sources and damage; it does not define a renderer-backend
+  interface.
 - `github.com/bnema/vev-vt/graphics` owns bounded renderer-neutral raster assets,
   sparse placements, clipping fragments, and immutable scene snapshots. It has no
   Kitty, ANSI, VT-policy, or transport dependency.
@@ -28,10 +29,11 @@ screen writes, resizes, snapshots, and history mutations in one owner. Parsing
 and callbacks are synchronous: callbacks run before `Write` returns and follow
 parser event order. Consume or copy response bytes during the callback.
 
-`Snapshot`, `HistorySnapshotView`, and `Row` methods provide owned captures or
-copies. `BorrowedRow`, `Frame.Row`, and `HistoryView.Range` expose borrowed
-storage with the lifetimes documented by their APIs; borrowed storage must not
-be mutated or retained beyond its documented lifetime. Sealed `HistoryChunk`
+`Screen`, `ScreenSnapshot`, and `Frame` provide storage-independent semantic
+cell reads through `core.CellSource`. Their row extraction methods return owned
+copies. `HistoryView.BorrowedRow` and `HistoryView.Range` expose borrowed storage
+with the lifetimes documented by their APIs; borrowed storage must not be
+mutated or retained beyond its documented lifetime. Sealed `HistoryChunk`
 identity is stable for the lifetime of a view.
 
 ## Alpha stability

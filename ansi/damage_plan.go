@@ -10,7 +10,7 @@ const maxPlannedDamageSpans = 4096
 // buildDamagePlan creates the bounded, canonical view of text and clear damage
 // used for terminal emission. The source damage remains untouched because the
 // scroll and shadow paths need its original structural information.
-func buildDamagePlan(frame Frame, damage []Damage, skip *Damage) ([]Span, bool) {
+func buildDamagePlan(frame CellSource, damage []Damage, skip *Damage) ([]Span, bool) {
 	if len(damage) == 1 {
 		d := damage[0]
 		if skip != nil && sameDamage(d, *skip) {
@@ -52,7 +52,7 @@ func buildDamagePlan(frame Frame, damage []Damage, skip *Damage) ([]Span, bool) 
 	return mergeDamageSpans(spans), false
 }
 
-func buildSingleDamageSpans(frame Frame, d Damage) ([]Span, bool) {
+func buildSingleDamageSpans(frame CellSource, d Damage) ([]Span, bool) {
 	x, y, width, height, ok := clampRect(frame, d.X, d.Y, d.Width, d.Height)
 	if !ok {
 		return nil, false

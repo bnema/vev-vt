@@ -196,6 +196,6 @@ func NewScreenWithRecoveryTranscript(width, height int, config HistoryConfig, se
 	for i := range screen.buffer.rowIDs {
 		screen.buffer.rowIDs[i] = screen.nextRowIDValue()
 	}
-	screen.Frame = screen.buffer.frame
+	screen.frame = screen.buffer.frame
 	return screen, nil
 }

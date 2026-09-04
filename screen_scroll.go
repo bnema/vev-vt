@@ -16,17 +16,17 @@ import (
 // buffer.scrollUp severs that link on the way. Callers that merely advance,
 // such as LF and ESC D, ignore the result.
 func (s *Screen) index() (movedUp bool) {
-	if s.Frame.Height == 0 {
+	if s.frame.Height == 0 {
 		return false
 	}
 	if s.Row == s.scrollBottom && s.Row >= s.scrollTop {
 		return s.scrollUpRegion(s.scrollTop, s.scrollBottom, 1)
 	}
-	if s.Row+1 < s.Frame.Height {
+	if s.Row+1 < s.frame.Height {
 		s.Row++
 		return false
 	}
-	s.Row = s.Frame.Height - 1
+	s.Row = s.frame.Height - 1
 	return false
 }
 
@@ -37,7 +37,7 @@ func (s *Screen) nextLine() {
 }
 
 func (s *Screen) reverseIndex() {
-	if s.Frame.Height == 0 {
+	if s.frame.Height == 0 {
 		return
 	}
 	if s.Row == s.scrollTop && s.Row <= s.scrollBottom {
@@ -71,14 +71,14 @@ func (s *Screen) scrollDownBy(n int) {
 // what the scroll observed keeps callers from re-deriving a predicate that this
 // function may have declined to act on at all.
 func (s *Screen) scrollUpRegion(top, bottom, n int) (shifted bool) {
-	if s.Frame.Width == 0 || s.Frame.Height == 0 || n <= 0 {
+	if s.frame.Width == 0 || s.frame.Height == 0 || n <= 0 {
 		return false
 	}
 	top, bottom, ok := s.normalizedRegion(top, bottom)
 	if !ok {
 		return false
 	}
-	w := s.Frame.Width
+	w := s.frame.Width
 	height := bottom - top + 1
 	graphicsRows := n
 	if n > height {
@@ -89,7 +89,7 @@ func (s *Screen) scrollUpRegion(top, bottom, n int) (shifted bool) {
 	// frame's line offsets (recycling and blanking the evicted rows in place)
 	// instead of copying cells. See renderer.Frame.ScrollUp.
 	s.emitLineEvicted(top, n)
-	s.Frame.ScrollUp(top, bottom, n)
+	s.frame.ScrollUp(top, bottom, n)
 	s.buffer.scrollUp(top, bottom, n)
 	s.fillMissingRowIDs(s.buffer)
 	s.record(renderer.Damage{Kind: renderer.DamageScrollUp, X: 0, Y: top, Width: w, Height: height, Count: n})
@@ -106,7 +106,7 @@ func (s *Screen) emitLineEvicted(top, n int) {
 	// Read boundaries and IDs before the caller rotates the frame: a soft link
 	// belongs to the row it follows, and rotation reassigns row indices.
 	for y := top; y < top+n; y++ {
-		s.recordEvicted(s.Frame.Row(y), s.buffer.bound(y), s.buffer.rowIDs[y])
+		s.recordEvicted(s.frame.Row(y), s.buffer.bound(y), s.buffer.rowIDs[y])
 	}
 }
 
@@ -125,14 +125,14 @@ func (s *Screen) recordEvicted(row []renderer.Cell, bound LineBound, id RowID) {
 }
 
 func (s *Screen) scrollDownRegion(top, bottom, n int) {
-	if s.Frame.Width == 0 || s.Frame.Height == 0 || n <= 0 {
+	if s.frame.Width == 0 || s.frame.Height == 0 || n <= 0 {
 		return
 	}
 	top, bottom, ok := s.normalizedRegion(top, bottom)
 	if !ok {
 		return
 	}
-	w := s.Frame.Width
+	w := s.frame.Width
 	height := bottom - top + 1
 	graphicsRows := n
 	if n > height {
@@ -140,7 +140,7 @@ func (s *Screen) scrollDownRegion(top, bottom, n int) {
 	}
 	s.scrollGraphicsRegion(top, bottom, graphicsRows)
 	// Full-width region: rotate line offsets instead of copying cells.
-	s.Frame.ScrollDown(top, bottom, n)
+	s.frame.ScrollDown(top, bottom, n)
 	s.buffer.scrollDown(top, bottom, n)
 	s.fillMissingRowIDs(s.buffer)
 	s.record(renderer.Damage{Kind: renderer.DamageText, X: 0, Y: top, Width: w, Height: height, Count: 1})
@@ -155,7 +155,7 @@ func (s *Screen) scrollGraphicsRegion(top, bottom, rows int) {
 		return
 	}
 	delta := int64(rows) * int64(cellHeight)
-	fullScreen := top == 0 && bottom == s.Frame.Height-1
+	fullScreen := top == 0 && bottom == s.frame.Height-1
 	snapshot := s.graphics.scene.Snapshot()
 	placements := snapshot.Placements()
 	operations := make([]graphics.Operation, 0, len(placements))
@@ -191,10 +191,10 @@ func (s *Screen) scrollGraphicsRegion(top, bottom, rows int) {
 }
 
 func (s *Screen) normalizedRegion(top, bottom int) (int, int, bool) {
-	if s.Frame.Height == 0 || top > bottom {
+	if s.frame.Height == 0 || top > bottom {
 		return 0, 0, false
 	}
-	top = clamp(top, 0, s.Frame.Height-1)
-	bottom = clamp(bottom, 0, s.Frame.Height-1)
+	top = clamp(top, 0, s.frame.Height-1)
+	bottom = clamp(bottom, 0, s.frame.Height-1)
 	return top, bottom, top <= bottom
 }

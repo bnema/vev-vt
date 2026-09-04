@@ -122,9 +122,9 @@ func (s *Screen) applyCSI(params string, cmd byte) {
 	case 'B':
 		s.Row = clamp(s.Row+firstPositive(parts, 1), s.cursorMinRow(), s.cursorMaxRow())
 	case 'C':
-		s.Col = clamp(s.Col+firstPositive(parts, 1), 0, s.Frame.Width-1)
+		s.Col = clamp(s.Col+firstPositive(parts, 1), 0, s.frame.Width-1)
 	case 'D':
-		s.Col = clamp(s.Col-firstPositive(parts, 1), 0, s.Frame.Width-1)
+		s.Col = clamp(s.Col-firstPositive(parts, 1), 0, s.frame.Width-1)
 	case 'E':
 		s.Row = clamp(s.Row+firstPositive(parts, 1), s.cursorMinRow(), s.cursorMaxRow())
 		s.Col = 0
@@ -133,7 +133,7 @@ func (s *Screen) applyCSI(params string, cmd byte) {
 		s.Col = 0
 	case 'G':
 		col := firstPositive(parts, 1)
-		s.Col = clamp(col-1, 0, s.Frame.Width-1)
+		s.Col = clamp(col-1, 0, s.frame.Width-1)
 	case 'd':
 		row := firstPositive(parts, 1)
 		s.Row = s.addressedRow(row)
@@ -335,23 +335,18 @@ func sgrUnderlineStyle(param int) renderer.UnderlineStyle {
 }
 
 func (s *Screen) insertChars(n int) {
-	if s.Row < 0 || s.Row >= s.Frame.Height || s.Col >= s.Frame.Width || n <= 0 {
+	if s.Row < 0 || s.Row >= s.frame.Height || s.Col >= s.frame.Width || n <= 0 {
 		return
 	}
-	w := s.Frame.Width
+	w := s.frame.Width
 	if n > w-s.Col {
 		n = w - s.Col
 	}
-	row := s.Frame.Row(s.Row)
 	// A wide left half at Col-1 whose continuation sits at Col will be orphaned
 	// by the shift; its repair falls outside the default damage rect.
-	leftSplit := s.Col > 0 && row[s.Col].Continuation
-	for x := w - 1; x >= s.Col+n; x-- {
-		row[x] = row[x-n]
-	}
-	for x := s.Col; x < s.Col+n; x++ {
-		row[x] = renderer.BlankCell()
-	}
+	leftSplit := s.Col > 0 && s.frame.At(s.Col, s.Row).Continuation
+	s.frame.CopyRow(s.Row, s.Col+n, s.Col, w-s.Col-n)
+	s.frame.FillRow(s.Row, s.Col, s.Col+n, renderer.BlankCell())
 	s.repairRow(s.Row)
 	dmgX := s.Col
 	if leftSplit {
@@ -361,23 +356,18 @@ func (s *Screen) insertChars(n int) {
 }
 
 func (s *Screen) deleteChars(n int) {
-	if s.Row < 0 || s.Row >= s.Frame.Height || s.Col >= s.Frame.Width || n <= 0 {
+	if s.Row < 0 || s.Row >= s.frame.Height || s.Col >= s.frame.Width || n <= 0 {
 		return
 	}
-	w := s.Frame.Width
+	w := s.frame.Width
 	if n > w-s.Col {
 		n = w - s.Col
 	}
-	row := s.Frame.Row(s.Row)
 	// A wide left half at Col-1 whose continuation sits at Col will be orphaned
 	// by the shift; its repair falls outside the default damage rect.
-	leftSplit := s.Col > 0 && row[s.Col].Continuation
-	for x := s.Col; x < w-n; x++ {
-		row[x] = row[x+n]
-	}
-	for x := w - n; x < w; x++ {
-		row[x] = renderer.BlankCell()
-	}
+	leftSplit := s.Col > 0 && s.frame.At(s.Col, s.Row).Continuation
+	s.frame.CopyRow(s.Row, s.Col, s.Col+n, w-s.Col-n)
+	s.frame.FillRow(s.Row, w-n, w, renderer.BlankCell())
 	s.repairRow(s.Row)
 	dmgX := s.Col
 	if leftSplit {
@@ -404,34 +394,34 @@ func (s *Screen) clearScreenMode(mode int) {
 	s.clampCursor()
 	switch mode {
 	case 1:
-		for y := range min(s.Row+1, s.Frame.Height) {
-			end := s.Frame.Width
+		for y := range min(s.Row+1, s.frame.Height) {
+			end := s.frame.Width
 			if y == s.Row {
-				end = min(s.Col+1, s.Frame.Width)
+				end = min(s.Col+1, s.frame.Width)
 			}
 			s.clearRow(y, 0, end)
 		}
-		s.record(renderer.Damage{Kind: renderer.DamageClear, X: 0, Y: 0, Width: s.Frame.Width, Height: min(s.Row+1, s.Frame.Height), Count: 1})
+		s.record(renderer.Damage{Kind: renderer.DamageClear, X: 0, Y: 0, Width: s.frame.Width, Height: min(s.Row+1, s.frame.Height), Count: 1})
 	case 2, 3:
 		blank := s.eraseCell()
-		for i := range s.Frame.Cells {
-			s.Frame.Cells[i] = blank
+		for y := range s.frame.Height {
+			s.frame.FillRow(y, 0, s.frame.Width, blank)
 		}
 		for y := range s.buffer.boundaries {
 			s.buffer.boundaries[y] = LineBound{Soft: s.buffer.boundaries[y].Soft}
 			s.buffer.rowIDs[y] = s.nextRowIDValue()
 		}
 		s.graphicsClearPlacements()
-		s.record(renderer.Damage{Kind: renderer.DamageClear, X: 0, Y: 0, Width: s.Frame.Width, Height: s.Frame.Height, Count: 1})
+		s.record(renderer.Damage{Kind: renderer.DamageClear, X: 0, Y: 0, Width: s.frame.Width, Height: s.frame.Height, Count: 1})
 	default:
-		for y := s.Row; y < s.Frame.Height; y++ {
+		for y := s.Row; y < s.frame.Height; y++ {
 			start := 0
 			if y == s.Row {
 				start = s.Col
 			}
-			s.clearRow(y, start, s.Frame.Width)
+			s.clearRow(y, start, s.frame.Width)
 		}
-		s.record(renderer.Damage{Kind: renderer.DamageClear, X: 0, Y: s.Row, Width: s.Frame.Width, Height: s.Frame.Height - s.Row, Count: 1})
+		s.record(renderer.Damage{Kind: renderer.DamageClear, X: 0, Y: s.Row, Width: s.frame.Width, Height: s.frame.Height - s.Row, Count: 1})
 	}
 }
 
@@ -439,13 +429,13 @@ func (s *Screen) clearLineMode(mode int) {
 	s.clampCursor()
 	switch mode {
 	case 1:
-		start, width := s.clearRow(s.Row, 0, min(s.Col+1, s.Frame.Width))
+		start, width := s.clearRow(s.Row, 0, min(s.Col+1, s.frame.Width))
 		s.record(renderer.Damage{Kind: renderer.DamageClear, X: start, Y: s.Row, Width: width, Height: 1, Count: 1})
 	case 2:
-		start, width := s.clearRow(s.Row, 0, s.Frame.Width)
+		start, width := s.clearRow(s.Row, 0, s.frame.Width)
 		s.record(renderer.Damage{Kind: renderer.DamageClear, X: start, Y: s.Row, Width: width, Height: 1, Count: 1})
 	default:
-		start, width := s.clearRow(s.Row, s.Col, s.Frame.Width)
+		start, width := s.clearRow(s.Row, s.Col, s.frame.Width)
 		s.record(renderer.Damage{Kind: renderer.DamageClear, X: start, Y: s.Row, Width: width, Height: 1, Count: 1})
 	}
 }
@@ -455,7 +445,7 @@ func (s *Screen) eraseChars(n int) {
 		return
 	}
 	s.clampCursor()
-	if remaining := s.Frame.Width - s.Col; n > remaining {
+	if remaining := s.frame.Width - s.Col; n > remaining {
 		n = remaining
 	}
 	end := s.Col + n
@@ -466,8 +456,8 @@ func (s *Screen) eraseChars(n int) {
 }
 
 func (s *Screen) clampCursor() {
-	s.Row = clamp(s.Row, 0, s.Frame.Height-1)
-	s.Col = clamp(s.Col, 0, s.Frame.Width-1)
+	s.Row = clamp(s.Row, 0, s.frame.Height-1)
+	s.Col = clamp(s.Col, 0, s.frame.Width-1)
 }
 
 func (s *Screen) parseCSIInts(params string) []int {

@@ -25,7 +25,6 @@ func TestScreenSnapshotGeometryAndMetadata(t *testing.T) {
 			wantModes:  ModeSnapshot{},
 			checkRows: func(t *testing.T, snapshot ScreenSnapshot) {
 				require.Nil(t, snapshot.Row(0))
-				require.Nil(t, snapshot.BorrowedRow(0))
 				require.Equal(t, LineBound{}, snapshot.Bound(0))
 			},
 		},
@@ -48,7 +47,7 @@ func TestScreenSnapshotGeometryAndMetadata(t *testing.T) {
 				MouseSGR:           true,
 			},
 			checkRows: func(t *testing.T, snapshot ScreenSnapshot) {
-				require.Len(t, snapshot.BorrowedRow(0), 6)
+				require.Len(t, snapshot.Row(0), 6)
 				require.Equal(t, LineBound{}, snapshot.Bound(0))
 			},
 		},
@@ -80,9 +79,8 @@ func TestScreenSnapshotGeometryAndMetadata(t *testing.T) {
 			wantTitle:  "zero-columns",
 			wantCursor: CursorSnapshot{Visible: true},
 			checkRows: func(t *testing.T, snapshot ScreenSnapshot) {
-				require.NotNil(t, snapshot.BorrowedRow(0))
-				require.Empty(t, snapshot.BorrowedRow(0))
-				require.Nil(t, snapshot.Row(0))
+				require.NotNil(t, snapshot.Row(0))
+				require.Empty(t, snapshot.Row(0))
 				require.Empty(t, snapshot.Row(1))
 				require.Equal(t, LineBound{}, snapshot.Bound(1))
 				require.Nil(t, snapshot.Row(2))
@@ -100,7 +98,7 @@ func TestScreenSnapshotGeometryAndMetadata(t *testing.T) {
 			wantTitle:   "zero-rows",
 			wantCursor:  CursorSnapshot{Visible: true},
 			checkRows: func(t *testing.T, snapshot ScreenSnapshot) {
-				require.Nil(t, snapshot.BorrowedRow(0))
+				require.Nil(t, snapshot.Row(0))
 				require.Equal(t, LineBound{}, snapshot.Bound(0))
 			},
 		},
@@ -193,7 +191,7 @@ func TestScreenSnapshotFidelity(t *testing.T) {
 					{Rune: 'x', Style: renderer.DefaultStyle()},
 					renderer.BlankCell(),
 				}
-				copy(screen.Frame.Row(0), cells)
+				screen.frame.WriteRow(0, 0, cells)
 				screen.buffer.boundaries[0] = LineBound{End: 3, Soft: true}
 				return screen, cells, []LineBound{{End: 3, Soft: true}, {}}
 			},
@@ -203,7 +201,7 @@ func TestScreenSnapshotFidelity(t *testing.T) {
 			make: func() (*Screen, []renderer.Cell, []LineBound) {
 				screen := NewScreen(3, 1)
 				screen.Write([]byte("primary\x1b[?1049halt"))
-				cells := append([]renderer.Cell(nil), screen.Frame.Row(0)...)
+				cells := append([]renderer.Cell(nil), screen.frame.Row(0)...)
 				return screen, cells, screen.LineBounds()
 			},
 			wantModes: ModeSnapshot{AlternateScreen: true},
@@ -214,8 +212,8 @@ func TestScreenSnapshotFidelity(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			screen, wantCells, wantBounds := test.make()
 			snapshot := screen.Snapshot()
-			require.Equal(t, screen.Frame.Width, snapshot.Columns())
-			require.Equal(t, screen.Frame.Height, snapshot.Rows())
+			require.Equal(t, screen.frame.Width, snapshot.Columns())
+			require.Equal(t, screen.frame.Height, snapshot.Rows())
 			require.Equal(t, wantCells, snapshot.Row(0))
 			require.Equal(t, test.wantModes, snapshot.Modes())
 			for row, want := range wantBounds {
@@ -234,7 +232,7 @@ func TestScreenSnapshotPreservesLogicalRowsAfterScroll(t *testing.T) {
 	snapshot := screen.Snapshot()
 	for y, want := range []string{"DEF", "G  "} {
 		require.Equal(t, want, rowText(snapshot.Row(y)))
-		require.Equal(t, screen.Frame.Row(y), snapshot.Row(y))
+		require.Equal(t, screen.frame.Row(y), snapshot.Row(y))
 		require.Equal(t, screen.LineBounds()[y], snapshot.Bound(y))
 	}
 }
@@ -267,15 +265,15 @@ func TestScreenSnapshotOwnership(t *testing.T) {
 			require.Equal(t, wantBounds[0], snapshot.Bound(0))
 			require.Equal(t, wantBounds[1], snapshot.Bound(1))
 
-			liveBeforeCallerMutation := append([]renderer.Cell(nil), screen.Frame.Row(0)...)
+			liveBeforeCallerMutation := append([]renderer.Cell(nil), screen.frame.Row(0)...)
 			secondSnapshot := screen.Snapshot()
 			secondSnapshotBefore := secondSnapshot.Row(0)
 
 			callerCopy := snapshot.Row(0)
 			callerCopy[0] = renderer.Cell{Rune: 'z'}
 
-			require.Equal(t, wantRows[0], snapshot.BorrowedRow(0))
-			require.Equal(t, liveBeforeCallerMutation, screen.Frame.Row(0), "mutating Row copy must not change live Screen")
+			require.Equal(t, wantRows[0], snapshot.Row(0))
+			require.Equal(t, liveBeforeCallerMutation, screen.frame.Row(0), "mutating Row copy must not change live Screen")
 			require.Equal(t, secondSnapshotBefore, secondSnapshot.Row(0), "mutating Row copy must not change another snapshot")
 		})
 	}

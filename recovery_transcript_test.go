@@ -17,7 +17,7 @@ func TestRecoveryTranscriptSnapshotOwnsPrimaryCellsAndBounds(t *testing.T) {
 	s.Write([]byte("keep"))
 
 	snapshot := s.RecoveryTranscriptSnapshot()
-	s.Frame.Set(0, 0, renderer.BlankCell())
+	s.frame.Set(0, 0, renderer.BlankCell())
 	s.buffer.boundaries[0] = LineBound{}
 
 	view := decodeRecoveryTranscript(t, snapshot)
@@ -44,7 +44,7 @@ func TestRecoveryTranscriptSnapshotAllocationsDoNotScaleWithRetainedRows(t *test
 	newRetainedScreen := func(height int) *Screen {
 		screen := NewScreen(4, height)
 		for y := range height {
-			screen.Frame.Set(0, y, renderer.Cell{Rune: 'x', Style: renderer.DefaultStyle()})
+			screen.frame.Set(0, y, renderer.Cell{Rune: 'x', Style: renderer.DefaultStyle()})
 			screen.buffer.boundaries[y] = LineBound{End: 1}
 		}
 		return screen
@@ -73,7 +73,7 @@ func TestRecoveryTranscriptSnapshotOrdersPrimaryThenActiveAlternateAndHardensSea
 	s.buffer.boundaries[0].Soft = true
 
 	snapshot := s.RecoveryTranscriptSnapshot()
-	s.Frame.Set(0, 0, renderer.BlankCell())
+	s.frame.Set(0, 0, renderer.BlankCell())
 	s.buffer.boundaries[0] = LineBound{}
 	s.alternate.buffer.frame.Set(0, 0, renderer.BlankCell())
 	s.alternate.buffer.boundaries[0] = LineBound{}
@@ -147,9 +147,9 @@ func TestRecoveryTranscriptSnapshotTrimsOnlyTrailingUntouchedRows(t *testing.T) 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			s := NewScreen(3, 3)
-			s.Frame.Set(0, 0, renderer.Cell{Rune: 'x', Style: renderer.DefaultStyle()})
+			s.frame.Set(0, 0, renderer.Cell{Rune: 'x', Style: renderer.DefaultStyle()})
 			s.buffer.boundaries[0] = LineBound{End: 1}
-			s.Frame.Set(0, 1, tt.candidateCell)
+			s.frame.Set(0, 1, tt.candidateCell)
 			s.buffer.boundaries[1] = tt.candidateBound
 
 			view := decodeRecoveryTranscript(t, s.RecoveryTranscriptSnapshot())
@@ -165,7 +165,7 @@ func TestRecoveryTranscriptSnapshotTrimsOnlyTrailingUntouchedRows(t *testing.T) 
 
 func TestRecoveryTranscriptSnapshotPreservesLeadingAndInternalBlankRows(t *testing.T) {
 	s := NewScreen(3, 4)
-	s.Frame.Set(0, 2, renderer.Cell{Rune: 'x', Style: renderer.DefaultStyle()})
+	s.frame.Set(0, 2, renderer.Cell{Rune: 'x', Style: renderer.DefaultStyle()})
 	s.buffer.boundaries[2] = LineBound{End: 1}
 
 	view := decodeRecoveryTranscript(t, s.RecoveryTranscriptSnapshot())
@@ -200,8 +200,8 @@ func TestRecoveryTranscriptSnapshotMarshalsCanonicalEmptyHistory(t *testing.T) {
 
 func TestRecoveryTranscriptSnapshotChunksMoreThan256RowsCanonically(t *testing.T) {
 	s := NewScreen(1, 257)
-	for y := range s.Frame.Height {
-		s.Frame.Set(0, y, renderer.Cell{Rune: 'x', Style: renderer.DefaultStyle()})
+	for y := range s.frame.Height {
+		s.frame.Set(0, y, renderer.Cell{Rune: 'x', Style: renderer.DefaultStyle()})
 		s.buffer.boundaries[y] = LineBound{End: 1, Soft: true}
 	}
 
@@ -218,11 +218,11 @@ func TestRecoveryTranscriptSnapshotChunksMoreThan256RowsCanonically(t *testing.T
 func TestRecoveryTranscriptSnapshotPreservesWideCells(t *testing.T) {
 	s := NewScreen(4, 2)
 	s.Write([]byte("界"))
-	want := append([]renderer.Cell(nil), s.Frame.Row(0)...)
+	want := append([]renderer.Cell(nil), s.frame.Row(0)...)
 
 	snapshot := s.RecoveryTranscriptSnapshot()
-	for x := range s.Frame.Width {
-		s.Frame.Set(x, 0, renderer.BlankCell())
+	for x := range s.frame.Width {
+		s.frame.Set(x, 0, renderer.BlankCell())
 	}
 
 	view := decodeRecoveryTranscript(t, snapshot)
@@ -245,9 +245,9 @@ func TestNewScreenWithRecoveryTranscriptRestoresHistoryThenTranscriptAndStartsBl
 	require.Equal(t, []string{"sealed-a", "sealed-b", "tail", "primary", "alternate"}, historyViewTexts(view))
 	require.Equal(t, LineBound{End: 7, Soft: true}, view.Bound(3))
 	require.Equal(t, LineBound{End: 9}, view.Bound(4), "the restored transcript must end at a hard seam")
-	for y := range screen.Frame.Height {
-		for x := range screen.Frame.Width {
-			require.True(t, screen.Frame.At(x, y).Equal(renderer.BlankCell()), "cell (%d,%d) must start blank", x, y)
+	for y := range screen.frame.Height {
+		for x := range screen.frame.Width {
+			require.True(t, screen.frame.At(x, y).Equal(renderer.BlankCell()), "cell (%d,%d) must start blank", x, y)
 		}
 	}
 	require.Equal(t, []LineBound{{}, {}}, screen.LineBounds())
@@ -331,11 +331,11 @@ func BenchmarkRecoveryTranscriptSnapshot(b *testing.B) {
 }
 
 func fillRecoveryTranscriptBenchmarkFrame(screen *Screen) {
-	for y := range screen.Frame.Height {
-		for x := range screen.Frame.Width {
-			screen.Frame.Set(x, y, renderer.Cell{Rune: rune('a' + (x+y)%26), Style: renderer.DefaultStyle()})
+	for y := range screen.frame.Height {
+		for x := range screen.frame.Width {
+			screen.frame.Set(x, y, renderer.Cell{Rune: rune('a' + (x+y)%26), Style: renderer.DefaultStyle()})
 		}
-		screen.buffer.boundaries[y] = LineBound{End: screen.Frame.Width}
+		screen.buffer.boundaries[y] = LineBound{End: screen.frame.Width}
 	}
 }
 
@@ -343,7 +343,7 @@ func BenchmarkNewScreenWithRecoveryTranscriptManyChunks(b *testing.B) {
 	const rows = maxHistoryRows
 	source := NewScreen(1, rows)
 	for y := range rows {
-		source.Frame.Set(0, y, renderer.Cell{Rune: 'x', Style: renderer.DefaultStyle()})
+		source.frame.Set(0, y, renderer.Cell{Rune: 'x', Style: renderer.DefaultStyle()})
 		source.buffer.boundaries[y] = LineBound{End: 1}
 	}
 	transcript, err := source.RecoveryTranscriptSnapshot().Marshal()

@@ -169,7 +169,7 @@ func TestNoOpDeltaCandidateDoesNotCloneFrame(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PlanDelta() error = %v", err)
 	}
-	if candidate.frame.Width != 0 || candidate.frame.Height != 0 || candidate.frame.Cells != nil {
+	if candidate.frame.Width != 0 || candidate.frame.Height != 0 {
 		t.Fatal("no-op candidate owns frame storage")
 	}
 
@@ -202,12 +202,11 @@ func TestPlanDeltaDoesNotMutateCommitted(t *testing.T) {
 	}
 }
 
-func TestDeltaCandidateCommitCopiesLogicalRowsAndReusesCapacity(t *testing.T) {
+func TestDeltaCandidateCommitCopiesLogicalRows(t *testing.T) {
 	frame := testFrame("aaaa", "bbbb", "cccc", "dddd")
 	frame.ScrollUp(0, 3, 1)
 	fillFrameRow(frame, 3, "new!")
 	committed := NewFrame(4, 4)
-	cellsBase := &committed.Cells[0]
 
 	candidate, err := PlanDelta(frame, nil, committed, true)
 	if err != nil {
@@ -215,9 +214,6 @@ func TestDeltaCandidateCommitCopiesLogicalRowsAndReusesCapacity(t *testing.T) {
 	}
 	candidate.Commit(&committed)
 
-	if &committed.Cells[0] != cellsBase {
-		t.Fatal("Commit replaced same-sized cell storage")
-	}
 	for y := range frame.Height {
 		if !reflect.DeepEqual(committed.Row(y), frame.Row(y)) {
 			t.Fatalf("committed row %d = %#v, want %#v", y, committed.Row(y), frame.Row(y))
@@ -229,8 +225,7 @@ func TestDeltaCandidateCommitCopiesLogicalRowsAndReusesCapacity(t *testing.T) {
 }
 
 func TestPlanDeltaRejectsInvalidFrame(t *testing.T) {
-	frame := NewFrame(2, 1)
-	frame.Cells = nil
+	frame := Frame{Width: 2, Height: 1}
 	if _, err := PlanDelta(frame, nil, Frame{}, false); err == nil {
 		t.Fatal("PlanDelta accepted an invalid frame")
 	}

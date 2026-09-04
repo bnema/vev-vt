@@ -24,9 +24,8 @@ type ModeSnapshot struct {
 	MouseSGR           bool
 }
 
-// ScreenSnapshot is an owned immutable-by-convention capture of the active
-// terminal viewport. Row returns caller-owned storage; BorrowedRow must not be
-// mutated and remains valid while the snapshot is retained.
+// ScreenSnapshot is an owned immutable capture of the active terminal
+// viewport. It implements core.CellSource, and Row returns caller-owned storage.
 type ScreenSnapshot struct {
 	frame     renderer.Frame
 	bounds    []LineBound
@@ -52,7 +51,7 @@ func (s *Screen) Snapshot() ScreenSnapshot {
 		nextRowID++
 	}
 	return ScreenSnapshot{
-		frame:     s.Frame.Clone(),
+		frame:     s.frame.Clone(),
 		bounds:    s.LineBounds(),
 		rowIDs:    s.RowIDs(),
 		nextRowID: nextRowID,
@@ -79,11 +78,11 @@ func (s *Screen) Snapshot() ScreenSnapshot {
 func (s ScreenSnapshot) Columns() int { return s.frame.Width }
 func (s ScreenSnapshot) Rows() int    { return s.frame.Height }
 
-func (s ScreenSnapshot) Row(y int) []renderer.Cell {
-	return append([]renderer.Cell(nil), s.BorrowedRow(y)...)
-}
+// Cell returns the semantic cell at x, y.
+func (s ScreenSnapshot) Cell(x, y int) renderer.Cell { return s.frame.Cell(x, y) }
 
-func (s ScreenSnapshot) BorrowedRow(y int) []renderer.Cell {
+// Row returns an owned copy of row y, or nil when y is out of range.
+func (s ScreenSnapshot) Row(y int) []renderer.Cell {
 	if y < 0 || y >= s.frame.Height {
 		return nil
 	}

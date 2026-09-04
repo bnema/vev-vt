@@ -98,9 +98,9 @@ func TestScreenRowIDsRefreshOnClearResetAndAlternateClone(t *testing.T) {
 
 func TestResizeReflowCarriesSourceRowIDsIntoHistoryAndViewport(t *testing.T) {
 	b := newBuffer(8, 3)
-	copy(b.frame.Row(0), historyRow("abcdefgh"))
-	copy(b.frame.Row(1), historyRow("ijkl"))
-	copy(b.frame.Row(2), historyRow("mnop"))
+	b.frame.WriteRow(0, 0, historyRow("abcdefgh"))
+	b.frame.WriteRow(1, 0, historyRow("ijkl"))
+	b.frame.WriteRow(2, 0, historyRow("mnop"))
 	b.boundaries[0] = LineBound{End: 8, Soft: true}
 	b.boundaries[1] = LineBound{End: 4}
 	b.boundaries[2] = LineBound{End: 4}

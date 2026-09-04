@@ -194,12 +194,12 @@ func TestCursorControlChars(t *testing.T) {
 			name: "tab moves cursor without changing cells or damage",
 			run: func(t *testing.T) {
 				s := NewScreen(10, 2)
-				for y := range s.Frame.Height {
-					for x := range s.Frame.Width {
-						s.Frame.Set(x, y, renderer.Cell{Rune: rune('a' + y*s.Frame.Width + x)})
+				for y := range s.frame.Height {
+					for x := range s.frame.Width {
+						s.frame.Set(x, y, renderer.Cell{Rune: rune('a' + y*s.frame.Width + x)})
 					}
 				}
-				before := s.Frame.Clone()
+				before := s.frame.Clone()
 				s.Row, s.Col = 1, 6
 				s.ClearDamage()
 
@@ -207,7 +207,7 @@ func TestCursorControlChars(t *testing.T) {
 				if s.Row != 1 || s.Col != 8 {
 					t.Errorf("cursor after tab = row=%d col=%d, want row=1 col=8", s.Row, s.Col)
 				}
-				assertFramesEqual(t, s.Frame, before)
+				assertFramesEqual(t, s.frame, before)
 				if got := s.Damage(); len(got) != 0 {
 					t.Errorf("tab damage = %+v, want none", got)
 				}
@@ -218,7 +218,7 @@ func TestCursorControlChars(t *testing.T) {
 				if s.Row != 1 || s.Col != 9 {
 					t.Errorf("cursor after clamped tab = row=%d col=%d, want row=1 col=9", s.Row, s.Col)
 				}
-				assertFramesEqual(t, s.Frame, before)
+				assertFramesEqual(t, s.frame, before)
 				if got := s.Damage(); len(got) != 0 {
 					t.Errorf("clamped tab damage = %+v, want none", got)
 				}

@@ -183,8 +183,8 @@ func TestHistoryRecordsOnlyTopEdgeScrollEvictions(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			s := NewScreenWithHistory(4, 4, HistoryConfig{MaxRows: 8, ChunkRows: 2})
-			for y := range s.Frame.Height {
-				copy(s.Frame.Row(y), historyRow(string([]byte{byte('A' + y), byte('A' + y), byte('A' + y), byte('A' + y)})))
+			for y := range s.frame.Height {
+				s.frame.WriteRow(y, 0, historyRow(string([]byte{byte('A' + y), byte('A' + y), byte('A' + y), byte('A' + y)})))
 			}
 			events := 0
 			s.OnLineEvicted = func([]renderer.Cell) { events++ }
@@ -271,8 +271,8 @@ func TestScreenDropsOversizedHistoryRowsWithoutInterruptingScroll(t *testing.T) 
 	screen := NewScreenWithHistory(4, 2, HistoryConfig{MaxRows: 2, MaxCells: 3})
 	var events []string
 	screen.OnLineEvicted = func(row []renderer.Cell) { events = append(events, rowText(row)) }
-	copy(screen.Frame.Row(0), historyRow("AAAA"))
-	copy(screen.Frame.Row(1), historyRow("BBBB"))
+	screen.frame.WriteRow(0, 0, historyRow("AAAA"))
+	screen.frame.WriteRow(1, 0, historyRow("BBBB"))
 	screen.scrollUpRegion(0, 1, 1)
 
 	if got := screen.History().Len(); got != 0 {
