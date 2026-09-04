@@ -492,7 +492,7 @@ func (h *History) reserveTailRow(width int) (start, end int) {
 		}
 		if len(h.tailCells) == 0 {
 			prealloc := uint64(maxTailPreallocCells)
-			prealloc = min(prealloc, h.maxBytes/renderer.StoredCellLogicalBytes)
+			prealloc = min(prealloc, h.maxBytes/renderer.StoredCellLogicalBytes, uint64(width)*uint64(h.chunkRows))
 			capacity = max(capacity, max(width, int(prealloc)))
 		}
 		cells := make([]renderer.Cell, len(h.tailCells), capacity)

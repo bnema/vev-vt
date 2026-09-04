@@ -113,7 +113,7 @@ corrupted: they never silently replace lost text with blanks. External history
 bytes still go through the strict public decoder before installation.
 
 On the synthetic 10,000×120 plain-ASCII benchmark, 38 cold pages retain about
-4.6 MB including the hot tail and page, versus 23.0 MB before compression.
+4.34 MB including the hot tail and page, versus 22.8 MB before compression.
 This is a repeatable fixture result, not a promise about real-world RSS:
 
 ```sh
@@ -171,9 +171,10 @@ go test . -run '^$' \
 
 It reports construction allocations and retained heap bytes for plain ASCII,
 repeated indexed and RGB styles, high-cardinality RGB churn, wide Unicode, and
-styled blanks. History with 16-byte cells retains about 23.0 MB for the plain-ASCII
+styled blanks. History with 16-byte cells retains about 22.8 MB for the plain-ASCII
 case, more than 4× below the original 95.3 MB baseline while keeping a bounded
-mutable tail.
+mutable tail. See the [optimization evaluation](docs/storage-optimization.md)
+for profiles, chunk-size experiments and rejected low-level techniques.
 
 The compact page primitive can be measured with
 `go test ./core -run '^$' -bench '^BenchmarkCompactFrameBuild10Kx120$' -benchmem -benchtime=1x`;
