@@ -63,7 +63,13 @@ func (p *PreparedDraw) Commit() {
 	}
 	p.commitOnce.Do(func() {
 		committed := p.renderer.committedFrame()
-		p.candidate.Commit(&committed)
+		if p.candidate.Plan.Snapshot {
+			// PreparedDraw privately owns this snapshot. Its shared Once makes
+			// transfer safe even when the caller retains copies of the draw.
+			committed = p.candidate.frame
+		} else {
+			p.candidate.Commit(&committed)
+		}
 		p.renderer.setCommittedFrame(committed)
 	})
 }
