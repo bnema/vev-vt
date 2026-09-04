@@ -175,9 +175,7 @@ type HistoryView struct {
 // view and can be serialized without rotating the live tail into a chunk.
 type HistorySnapshotView struct {
 	chunks       []*HistoryChunk
-	tail         [][]renderer.Cell
-	tailBounds   []LineBound
-	tailIDs      []RowID
+	tail         HistoryView
 	rows         int
 	cells        int
 	logicalBytes uint64
@@ -224,28 +222,6 @@ func addLogicalBytes(total, value uint64) uint64 {
 		return math.MaxUint64
 	}
 	return total + value
-}
-
-func historyRowsLogicalBytes(rows [][]renderer.Cell) uint64 {
-	var total uint64
-	for start := 0; start < len(rows); {
-		width := len(rows[start])
-		limit := start + min(len(rows)-start, maxHistorySlabRows(width))
-		end := start + 1
-		for end < limit && len(rows[end]) == width {
-			end++
-		}
-		styles := map[renderer.Style]struct{}{renderer.DefaultStyle(): {}}
-		for _, row := range rows[start:end] {
-			for _, cell := range row {
-				styles[cell.Style.Canonical()] = struct{}{}
-			}
-		}
-		pageBytes := uint64(end-start)*historyRowBaseLogicalBytes(width) + uint64(len(styles))*renderer.StyleRecordLogicalBytes
-		total = addLogicalBytes(total, pageBytes)
-		start = end
-	}
-	return total
 }
 
 func historyChunkLogicalBytes(chunk *HistoryChunk) uint64 {
@@ -465,12 +441,6 @@ func growRowIDs(ids []RowID, rows int) []RowID {
 	return out
 }
 
-func cloneRowIDs(ids []RowID, rows int) []RowID {
-	out := make([]RowID, rows)
-	copy(out, ids)
-	return out
-}
-
 func (h *History) reserveTailRow(width int) (start, end int) {
 	start = len(h.tailCells)
 	end = start + width
@@ -622,32 +592,21 @@ func (h *History) SnapshotView() HistorySnapshotView {
 	if h.rows == 0 {
 		return HistorySnapshotView{nextRowID: h.nextRowID}
 	}
+	tailChunks := newHistoryChunks(h.tail, h.tailBounds, h.tailIDs)
 	return HistorySnapshotView{
-		chunks:       append([]*HistoryChunk(nil), h.chunks...),
-		tail:         cloneHistoryRows(h.tail),
-		tailBounds:   append([]LineBound(nil), growBounds(h.tailBounds, len(h.tail))...),
-		tailIDs:      cloneRowIDs(h.tailIDs, len(h.tail)),
+		chunks: append([]*HistoryChunk(nil), h.chunks...),
+		tail: HistoryView{
+			chunks:       tailChunks,
+			rows:         len(h.tail),
+			cells:        historyRowsCells(h.tail),
+			logicalBytes: historyChunksLogicalBytes(tailChunks),
+			nextRowID:    h.nextRowID,
+		},
 		rows:         h.rows,
 		cells:        h.cells,
 		logicalBytes: h.logicalBytes,
 		nextRowID:    h.nextRowID,
 	}
-}
-
-func cloneHistoryRows(rows [][]renderer.Cell) [][]renderer.Cell {
-	if len(rows) == 0 {
-		return nil
-	}
-	cells := make([]renderer.Cell, historyRowsCells(rows))
-	copyRows := make([][]renderer.Cell, len(rows))
-	offset := 0
-	for i, row := range rows {
-		end := offset + len(row)
-		copy(cells[offset:end], row)
-		copyRows[i] = cells[offset:end:end]
-		offset = end
-	}
-	return copyRows
 }
 
 // Len returns the currently retained history row count.
@@ -742,16 +701,11 @@ func (v HistoryView) Range(yield func([]renderer.Cell) bool) {
 
 // Row returns a decoded owned copy of the row at i, or nil when out of range.
 func (v HistoryView) Row(i int) []renderer.Cell {
-	if i < 0 {
+	chunk, row := v.locateRow(i)
+	if chunk == nil {
 		return nil
 	}
-	for _, chunk := range v.chunks {
-		if i < chunk.len() {
-			return chunk.row(i)
-		}
-		i -= chunk.len()
-	}
-	return nil
+	return chunk.row(row)
 }
 
 // RowID returns the identity of the row at i, or zero when i is out of range.
@@ -820,7 +774,7 @@ func (v HistorySnapshotView) LogicalBytes() uint64 {
 	if v.logicalBytes != 0 || v.rows == 0 {
 		return v.logicalBytes
 	}
-	return addLogicalBytes(historyChunksLogicalBytes(v.chunks), historyRowsLogicalBytes(v.tail))
+	return addLogicalBytes(historyChunksLogicalBytes(v.chunks), v.tail.LogicalBytes())
 }
 func (v HistorySnapshotView) ChunkCount() int { return len(v.chunks) }
 
@@ -842,16 +796,9 @@ func (v HistorySnapshotView) Chunk(i int) *HistoryChunk {
 
 // Tail returns an immutable view of the copied mutable tail.
 func (v HistorySnapshotView) Tail() HistoryView {
-	if len(v.tail) == 0 {
-		return HistoryView{nextRowID: v.nextRowID}
-	}
-	return HistoryView{
-		chunks:       newHistoryChunks(v.tail, v.tailBounds, v.tailIDs),
-		rows:         len(v.tail),
-		cells:        historyRowsCells(v.tail),
-		logicalBytes: historyRowsLogicalBytes(v.tail),
-		nextRowID:    v.nextRowID,
-	}
+	tail := v.tail
+	tail.nextRowID = v.nextRowID
+	return tail
 }
 
 func historyRowsCells(rows [][]renderer.Cell) int {

@@ -32,8 +32,12 @@ parser event order. Consume or copy response bytes during the callback.
 `Screen`, `ScreenSnapshot`, and `Frame` provide storage-independent semantic
 cell reads through `core.CellSource`. Their row extraction methods return owned
 copies. `HistoryView.Row` and `HistoryView.Range` decode caller-owned semantic
-rows from compact sealed slabs. Sealed `HistoryChunk` identity is stable for the
-lifetime of a view.
+rows from compact sealed slabs. `HistoryView.Cell`, `RowWidth`, and `CopyRow`
+support allocation-free navigation and caller-owned scratch buffers. Sealed
+`HistoryChunk` identity is stable for the lifetime of a view. Live primary and
+alternate grids, screen snapshots, recovery transcript captures, and copied
+history snapshot tails all retain compact cells rather than semantic row arrays.
+Repeated `HistorySnapshotView.Tail()` calls reuse the same immutable capture.
 
 ## Alpha stability
 
