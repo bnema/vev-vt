@@ -15,10 +15,17 @@ type CellSource interface {
 }
 
 const (
-	storedCellLogicalBytes    = 12
-	rowDescriptorLogicalBytes = 4
-	styleRecordLogicalBytes   = 32
-	continuationFlag          = uint8(1)
+	// StoredCellLogicalBytes is the deterministic uncompressed size of one
+	// compact cell, independent of the Go allocator and host architecture.
+	StoredCellLogicalBytes uint64 = 12
+	// RowDescriptorLogicalBytes is the deterministic size of one compact row
+	// descriptor.
+	RowDescriptorLogicalBytes uint64 = 4
+	// StyleRecordLogicalBytes is the deterministic size of one canonical
+	// page-local style record.
+	StyleRecordLogicalBytes uint64 = 32
+
+	continuationFlag = uint8(1)
 )
 
 type storedCell struct {
@@ -221,7 +228,7 @@ func (f Frame) LogicalBytes() uint64 {
 	if f.page == nil {
 		return 0
 	}
-	return uint64(len(f.page.cells))*storedCellLogicalBytes + uint64(len(f.page.rows))*rowDescriptorLogicalBytes + uint64(f.page.styleCount)*styleRecordLogicalBytes
+	return uint64(len(f.page.cells))*StoredCellLogicalBytes + uint64(len(f.page.rows))*RowDescriptorLogicalBytes + uint64(f.page.styleCount)*StyleRecordLogicalBytes
 }
 
 // StyleCount returns the number of live page-local styles, including default ID zero.

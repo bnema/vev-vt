@@ -341,7 +341,13 @@ func parseHistory(data []byte, populate bool) (HistoryView, historyDecodeStats, 
 	if len(p.data) != 0 || RowID(nextRowID) <= maxID {
 		return HistoryView{}, historyDecodeStats{}, false
 	}
-	return HistoryView{chunks: chunks, rows: int(stats.rows), cells: int(stats.cells), nextRowID: RowID(nextRowID)}, stats, true
+	return HistoryView{
+		chunks:       chunks,
+		rows:         int(stats.rows),
+		cells:        int(stats.cells),
+		logicalBytes: historyChunksLogicalBytes(chunks),
+		nextRowID:    RowID(nextRowID),
+	}, stats, true
 }
 
 func historyCellByteCount(cellCount uint64) (uint64, bool) {

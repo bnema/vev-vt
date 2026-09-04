@@ -11,7 +11,7 @@ import (
 )
 
 func TestHistoryCodecV3Bytes(t *testing.T) {
-	h := NewHistory(HistoryConfig{MaxRows: 8, MaxCells: 1024, ChunkRows: 2})
+	h := NewHistory(HistoryConfig{MaxRows: 8, MaxBytes: 1 << 20, ChunkRows: 2})
 	if err := h.Append([]renderer.Cell{{Rune: 'a'}}, LineBound{End: 1, Soft: true}); err != nil {
 		t.Fatalf("append: %v", err)
 	}
@@ -45,7 +45,7 @@ func TestHistoryCodecV3Bytes(t *testing.T) {
 }
 
 func TestHistoryCodecRoundTripsBounds(t *testing.T) {
-	h := NewHistory(HistoryConfig{MaxRows: 8, MaxCells: 1024, ChunkRows: 2})
+	h := NewHistory(HistoryConfig{MaxRows: 8, MaxBytes: 1 << 20, ChunkRows: 2})
 	bounds := []LineBound{{End: 2, Soft: true}, {End: 1}, {End: 2, Soft: true}}
 	for _, b := range bounds {
 		if err := h.Append([]renderer.Cell{{Rune: 'a'}, {Rune: 'b'}}, b); err != nil {

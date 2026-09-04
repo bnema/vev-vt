@@ -126,7 +126,7 @@ func TestEvictedLinesCarryTheirBound(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			s := NewScreenWithHistory(4, 2, HistoryConfig{MaxRows: 16, MaxCells: 1024})
+			s := NewScreenWithHistory(4, 2, HistoryConfig{MaxRows: 16, MaxBytes: 1 << 20})
 			tc.evict(s)
 			view := s.History().SealAndView()
 			if view.Len() == 0 {
@@ -140,7 +140,7 @@ func TestEvictedLinesCarryTheirBound(t *testing.T) {
 }
 
 func TestReflowEvictedLinesCarryTheirBound(t *testing.T) {
-	s := NewScreenWithHistory(8, 3, HistoryConfig{MaxRows: 16, MaxCells: 1024})
+	s := NewScreenWithHistory(8, 3, HistoryConfig{MaxRows: 16, MaxBytes: 1 << 20})
 	// Fill the grid with wrapped content, then shrink so rows are evicted by
 	// the reflow path in buffer.resize rather than by scrolling.
 	s.Write([]byte("aaaaaaaabbbbbbbbcccccccc"))

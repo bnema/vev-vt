@@ -107,3 +107,13 @@ mutable tail.
 The compact page primitive can be measured with
 `go test ./core -run '^$' -bench '^BenchmarkCompactFrameBuild10Kx120$' -benchmem -benchtime=1x`;
 its logical-byte result is deterministic and excludes Go allocator/map overhead.
+
+Scrollback retention uses the same uncompressed logical model: 12 bytes per
+stored cell, 4 bytes per row descriptor, and 32 bytes per distinct canonical
+style in each compact slab (including its default style). Configure independent
+byte and row ceilings with `HistoryConfig.MaxBytes` and `HistoryConfig.MaxRows`.
+`History.LogicalBytes`, `HistoryView.LogicalBytes`, and
+`HistorySnapshotView.LogicalBytes` expose current usage. This accounting covers
+retained scrollback only—not the live primary or alternate screen—and has no
+page-granularity allowance. It remains unchanged if sealed history is later
+compressed.

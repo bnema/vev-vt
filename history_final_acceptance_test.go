@@ -8,7 +8,7 @@ import (
 )
 
 func TestHistoryAcceptanceKeepsBookmarksAcrossLiveScrollEvictionAndRestore(t *testing.T) {
-	history := NewHistory(HistoryConfig{MaxRows: 3, MaxCells: 32, ChunkRows: 2})
+	history := NewHistory(HistoryConfig{MaxRows: 3, MaxBytes: 1 << 20, ChunkRows: 2})
 	for _, text := range []string{"live-1", "live-2", "live-3"} {
 		require.NoError(t, history.Append(historyAcceptanceRow(text), LineBound{End: len(text)}))
 	}
@@ -28,7 +28,7 @@ func TestHistoryAcceptanceKeepsBookmarksAcrossLiveScrollEvictionAndRestore(t *te
 
 	sealed, tail, err := MarshalSealedHistory(history.SealAndView())
 	require.NoError(t, err)
-	restored, err := HistoryFromBlobs(HistoryConfig{MaxRows: 3, MaxCells: 32, ChunkRows: 2}, sealed, tail)
+	restored, err := HistoryFromBlobs(HistoryConfig{MaxRows: 3, MaxBytes: 1 << 20, ChunkRows: 2}, sealed, tail)
 	require.NoError(t, err)
 	restoredView := restored.View()
 	require.Equal(t, afterScroll.Len(), restoredView.Len())

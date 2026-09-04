@@ -330,7 +330,7 @@ func TestScreenSnapshotDoesNotMutateHistoryOrDamage(t *testing.T) {
 		{
 			name: "screen with sealed chunks and mutable tail",
 			make: func() *Screen {
-				screen := NewScreenWithHistory(4, 2, HistoryConfig{MaxRows: 16, MaxCells: 64, ChunkRows: 2})
+				screen := NewScreenWithHistory(4, 2, HistoryConfig{MaxRows: 16, MaxBytes: 1 << 20, ChunkRows: 2})
 				screen.Write([]byte("111122223333444455"))
 				return screen
 			},
@@ -344,7 +344,8 @@ func TestScreenSnapshotDoesNotMutateHistoryOrDamage(t *testing.T) {
 			var beforeHistory HistorySnapshotView
 			var beforeRows [][]renderer.Cell
 			var beforeBounds []LineBound
-			beforeCap, beforeCellCap := 0, 0
+			beforeCap := 0
+			var beforeByteCap uint64
 			if screen.History() != nil {
 				beforeHistory = screen.History().SnapshotView()
 				beforeView := screen.History().View()
@@ -355,7 +356,7 @@ func TestScreenSnapshotDoesNotMutateHistoryOrDamage(t *testing.T) {
 					beforeBounds[i] = beforeView.Bound(i)
 				}
 				beforeCap = screen.History().Cap()
-				beforeCellCap = screen.History().CellCap()
+				beforeByteCap = screen.History().ByteCap()
 			}
 
 			_ = screen.Snapshot()
@@ -378,7 +379,7 @@ func TestScreenSnapshotDoesNotMutateHistoryOrDamage(t *testing.T) {
 				require.Equal(t, beforeRows, afterRows)
 				require.Equal(t, beforeBounds, afterBounds)
 				require.Equal(t, beforeCap, screen.History().Cap())
-				require.Equal(t, beforeCellCap, screen.History().CellCap())
+				require.Equal(t, beforeByteCap, screen.History().ByteCap())
 			}
 		})
 	}

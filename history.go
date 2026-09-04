@@ -9,9 +9,9 @@ import (
 	renderer "github.com/bnema/vev-vt/core"
 )
 
-// ErrHistoryRowTooWide is returned when a row cannot fit within the configured
-// cell budget. The history is not modified when this error is returned.
-var ErrHistoryRowTooWide = errors.New("history row exceeds cell capacity")
+// ErrHistoryRowTooLarge is returned when one row cannot fit within the
+// configured logical-byte budget or compact page bounds. History is unchanged.
+var ErrHistoryRowTooLarge = errors.New("history row exceeds logical byte capacity")
 
 var errInvalidHistoryRowID = errors.New("invalid history row ID")
 
@@ -20,7 +20,7 @@ const maxTailPreallocCells = 32 * 1024
 // HistoryConfig controls the bounded terminal history retained by a Screen.
 type HistoryConfig struct {
 	MaxRows   int
-	MaxCells  int
+	MaxBytes  uint64
 	ChunkRows int
 }
 
@@ -28,28 +28,36 @@ type HistoryConfig struct {
 // mutated by the owner of a Screen; views are safe to retain after later
 // appends.
 type History struct {
-	maxRows    int
-	maxCells   int
-	chunkRows  int
-	chunks     []*HistoryChunk
-	tail       [][]renderer.Cell
-	tailCells  []renderer.Cell
-	tailBounds []LineBound
-	tailIDs    []RowID
-	rows       int
-	cells      int
-	nextRowID  RowID
+	maxRows        int
+	maxBytes       uint64
+	chunkRows      int
+	chunks         []*HistoryChunk
+	tail           [][]renderer.Cell
+	tailCells      []renderer.Cell
+	tailBounds     []LineBound
+	tailIDs        []RowID
+	tailBytes      uint64
+	tailPageWidth  int
+	tailPageRows   int
+	tailPageStyles map[renderer.Style]struct{}
+	styleScratch   map[renderer.Style]struct{}
+	rows           int
+	cells          int
+	logicalBytes   uint64
+	nextRowID      RowID
 }
 
 // HistoryChunk is an immutable compact slab of equal-width history rows. Its
 // identity is stable and can be used by consumers to reuse unchanged chunks.
 type HistoryChunk struct {
-	frame  renderer.Frame
-	start  int
-	count  int
-	width  int
-	bounds []LineBound
-	rowIDs []RowID
+	frame      renderer.Frame
+	start      int
+	count      int
+	width      int
+	bounds     []LineBound
+	rowIDs     []RowID
+	styleDrops []uint64
+	styleCount uint64
 }
 
 func newHistoryChunks(rows [][]renderer.Cell, bounds []LineBound, rowIDs []RowID) []*HistoryChunk {
@@ -64,15 +72,28 @@ func newHistoryChunks(rows [][]renderer.Cell, bounds []LineBound, rowIDs []RowID
 			end++
 		}
 		frame := renderer.NewFrame(width, end-start)
+		lastStyleRow := make(map[renderer.Style]int)
 		for i := start; i < end; i++ {
 			frame.WriteRow(i-start, 0, rows[i])
+			for _, cell := range rows[i] {
+				style := cell.Style.Canonical()
+				if style != renderer.DefaultStyle() {
+					lastStyleRow[style] = i - start
+				}
+			}
+		}
+		styleDrops := make([]uint64, end-start)
+		for _, row := range lastStyleRow {
+			styleDrops[row]++
 		}
 		chunks = append(chunks, &HistoryChunk{
-			frame:  frame,
-			count:  end - start,
-			width:  width,
-			bounds: append([]LineBound(nil), bounds[start:end]...),
-			rowIDs: append([]RowID(nil), rowIDs[start:end]...),
+			frame:      frame,
+			count:      end - start,
+			width:      width,
+			bounds:     append([]LineBound(nil), bounds[start:end]...),
+			rowIDs:     append([]RowID(nil), rowIDs[start:end]...),
+			styleDrops: styleDrops,
+			styleCount: uint64(len(lastStyleRow)) + 1,
 		})
 		start = end
 	}
@@ -115,8 +136,15 @@ func (c *HistoryChunk) CheckInvariants() error {
 	if c.start < 0 || c.count <= 0 || c.width < 0 || c.start > c.frame.Height-c.count {
 		return fmt.Errorf("invalid history chunk range start=%d count=%d", c.start, c.count)
 	}
-	if c.frame.Width != c.width || len(c.bounds) != c.count || len(c.rowIDs) != c.count {
+	if c.frame.Width != c.width || len(c.bounds) != c.count || len(c.rowIDs) != c.count || len(c.styleDrops) != c.frame.Height {
 		return fmt.Errorf("history chunk metadata is not parallel")
+	}
+	styles := uint64(1)
+	for _, dropped := range c.styleDrops[c.start:] {
+		styles += dropped
+	}
+	if c.styleCount != styles {
+		return fmt.Errorf("history chunk style count = %d want %d", c.styleCount, styles)
 	}
 	if err := c.frame.CheckInvariants(); err != nil {
 		return fmt.Errorf("history chunk frame: %w", err)
@@ -135,23 +163,25 @@ func (c *HistoryChunk) CheckInvariants() error {
 // HistoryView is an immutable snapshot of history. Row returns a copy so the
 // storage behind a sealed chunk remains owned by VT.
 type HistoryView struct {
-	chunks    []*HistoryChunk
-	rows      int
-	cells     int
-	nextRowID RowID
+	chunks       []*HistoryChunk
+	rows         int
+	cells        int
+	logicalBytes uint64
+	nextRowID    RowID
 }
 
 // HistorySnapshotView captures sealed history chunks and the mutable tail
 // independently. Sealed chunks are shared by identity; Tail is owned by the
 // view and can be serialized without rotating the live tail into a chunk.
 type HistorySnapshotView struct {
-	chunks     []*HistoryChunk
-	tail       [][]renderer.Cell
-	tailBounds []LineBound
-	tailIDs    []RowID
-	rows       int
-	cells      int
-	nextRowID  RowID
+	chunks       []*HistoryChunk
+	tail         [][]renderer.Cell
+	tailBounds   []LineBound
+	tailIDs      []RowID
+	rows         int
+	cells        int
+	logicalBytes uint64
+	nextRowID    RowID
 }
 
 func NewHistory(config HistoryConfig) *History {
@@ -164,30 +194,173 @@ func NewHistory(config HistoryConfig) *History {
 	}
 	chunkRows = min(chunkRows, 256)
 	chunkRows = min(chunkRows, config.MaxRows)
-	maxCells := config.MaxCells
-	if maxCells <= 0 {
-		maxCells = defaultHistoryMaxCells(config.MaxRows)
+	maxBytes := config.MaxBytes
+	if maxBytes == 0 {
+		maxBytes = defaultHistoryMaxBytes(config.MaxRows, chunkRows)
 	}
-	return &History{maxRows: config.MaxRows, maxCells: maxCells, chunkRows: chunkRows, nextRowID: 1}
+	return &History{maxRows: config.MaxRows, maxBytes: maxBytes, chunkRows: chunkRows, nextRowID: 1}
 }
 
-func defaultHistoryMaxCells(maxRows int) int {
-	if maxRows > math.MaxInt/160 {
-		return math.MaxInt
+func defaultHistoryMaxBytes(maxRows, chunkRows int) uint64 {
+	const defaultRowBytes = 160*renderer.StoredCellLogicalBytes + renderer.RowDescriptorLogicalBytes
+	rows := uint64(maxRows)
+	pages := (rows + uint64(chunkRows) - 1) / uint64(chunkRows)
+	if rows > math.MaxUint64/defaultRowBytes {
+		return math.MaxUint64
 	}
-	return maxRows * 160
+	bytes := rows * defaultRowBytes
+	if pages > (math.MaxUint64-bytes)/renderer.StyleRecordLogicalBytes {
+		return math.MaxUint64
+	}
+	return bytes + pages*renderer.StyleRecordLogicalBytes
+}
+
+func historyRowBaseLogicalBytes(width int) uint64 {
+	return uint64(width)*renderer.StoredCellLogicalBytes + renderer.RowDescriptorLogicalBytes
+}
+
+func addLogicalBytes(total, value uint64) uint64 {
+	if value > math.MaxUint64-total {
+		return math.MaxUint64
+	}
+	return total + value
+}
+
+func historyRowsLogicalBytes(rows [][]renderer.Cell) uint64 {
+	var total uint64
+	for start := 0; start < len(rows); {
+		width := len(rows[start])
+		limit := start + min(len(rows)-start, maxHistorySlabRows(width))
+		end := start + 1
+		for end < limit && len(rows[end]) == width {
+			end++
+		}
+		styles := map[renderer.Style]struct{}{renderer.DefaultStyle(): {}}
+		for _, row := range rows[start:end] {
+			for _, cell := range row {
+				styles[cell.Style.Canonical()] = struct{}{}
+			}
+		}
+		pageBytes := uint64(end-start)*historyRowBaseLogicalBytes(width) + uint64(len(styles))*renderer.StyleRecordLogicalBytes
+		total = addLogicalBytes(total, pageBytes)
+		start = end
+	}
+	return total
+}
+
+func historyChunkLogicalBytes(chunk *HistoryChunk) uint64 {
+	if chunk == nil {
+		return 0
+	}
+	return uint64(chunk.len())*historyRowBaseLogicalBytes(chunk.width) + chunk.styleCount*renderer.StyleRecordLogicalBytes
+}
+
+func historyChunksLogicalBytes(chunks []*HistoryChunk) uint64 {
+	var total uint64
+	for _, chunk := range chunks {
+		total = addLogicalBytes(total, historyChunkLogicalBytes(chunk))
+	}
+	return total
+}
+
+func (h *History) prepareRowStyles(row []renderer.Cell) uint64 {
+	if h.styleScratch == nil {
+		h.styleScratch = make(map[renderer.Style]struct{})
+	} else {
+		clear(h.styleScratch)
+	}
+	if len(row) > 0 {
+		firstRaw := row[0].Style
+		same := true
+		for _, cell := range row[1:] {
+			if cell.Style != firstRaw {
+				same = false
+				break
+			}
+		}
+		if same {
+			first := firstRaw.Canonical()
+			if first != renderer.DefaultStyle() {
+				h.styleScratch[first] = struct{}{}
+			}
+		} else {
+			for _, cell := range row {
+				style := cell.Style.Canonical()
+				if style != renderer.DefaultStyle() {
+					h.styleScratch[style] = struct{}{}
+				}
+			}
+		}
+	}
+	return historyRowBaseLogicalBytes(len(row)) + renderer.StyleRecordLogicalBytes + uint64(len(h.styleScratch))*renderer.StyleRecordLogicalBytes
+}
+
+func (h *History) prepareChunkRowStyles(chunk *HistoryChunk, row int) uint64 {
+	if h.styleScratch == nil {
+		h.styleScratch = make(map[renderer.Style]struct{})
+	} else {
+		clear(h.styleScratch)
+	}
+	for column := range chunk.width {
+		style := chunk.cell(row, column).Style.Canonical()
+		if style != renderer.DefaultStyle() {
+			h.styleScratch[style] = struct{}{}
+		}
+	}
+	return historyRowBaseLogicalBytes(chunk.width) + renderer.StyleRecordLogicalBytes + uint64(len(h.styleScratch))*renderer.StyleRecordLogicalBytes
+}
+
+func (h *History) tailAppendDelta(width int) uint64 {
+	newPage := h.tailPageRows == 0 || h.tailPageWidth != width || h.tailPageRows >= maxHistorySlabRows(width)
+	delta := historyRowBaseLogicalBytes(width)
+	if newPage {
+		return delta + renderer.StyleRecordLogicalBytes + uint64(len(h.styleScratch))*renderer.StyleRecordLogicalBytes
+	}
+	for style := range h.styleScratch {
+		if _, ok := h.tailPageStyles[style]; !ok {
+			delta += renderer.StyleRecordLogicalBytes
+		}
+	}
+	return delta
+}
+
+func (h *History) recordTailRowStyles(width int) {
+	if h.tailPageRows == 0 || h.tailPageWidth != width || h.tailPageRows >= maxHistorySlabRows(width) {
+		h.tailPageWidth = width
+		h.tailPageRows = 0
+		h.tailPageStyles = map[renderer.Style]struct{}{renderer.DefaultStyle(): {}}
+	}
+	for style := range h.styleScratch {
+		h.tailPageStyles[style] = struct{}{}
+	}
+	h.tailPageRows++
+}
+
+func (h *History) rebuildTailAccounting() {
+	old := h.tailBytes
+	h.tailBytes = 0
+	h.tailPageWidth = 0
+	h.tailPageRows = 0
+	h.tailPageStyles = nil
+	for _, row := range h.tail {
+		h.prepareRowStyles(row)
+		delta := h.tailAppendDelta(len(row))
+		h.tailBytes += delta
+		h.recordTailRowStyles(len(row))
+	}
+	h.logicalBytes = h.logicalBytes - old + h.tailBytes
 }
 
 // Append records a copy of row along with its logical extent and an
 // automatically allocated nonzero ID. Once a chunk is full it is sealed
-// forever. Rows wider than the total cell capacity are rejected without
+// forever. Rows larger than the logical-byte capacity are rejected without
 // mutation.
 func (h *History) Append(row []renderer.Cell, bound LineBound) error {
 	if h == nil || h.maxRows == 0 {
 		return nil
 	}
-	if uint64(len(row)) > uint64(math.MaxUint32) || len(row) > h.maxCells {
-		return ErrHistoryRowTooWide
+	if uint64(len(row)) > uint64(math.MaxUint32) || h.prepareRowStyles(row) > h.maxBytes {
+		return ErrHistoryRowTooLarge
 	}
 	id, err := h.allocateRowID()
 	if err != nil {
@@ -205,8 +378,8 @@ func (h *History) AppendWithID(row []renderer.Cell, bound LineBound, id RowID) e
 	if h == nil || h.maxRows == 0 {
 		return nil
 	}
-	if uint64(len(row)) > uint64(math.MaxUint32) || len(row) > h.maxCells {
-		return ErrHistoryRowTooWide
+	if uint64(len(row)) > uint64(math.MaxUint32) || h.prepareRowStyles(row) > h.maxBytes {
+		return ErrHistoryRowTooLarge
 	}
 	if h.hasRowID(id) {
 		return errInvalidHistoryRowID
@@ -218,19 +391,20 @@ func (h *History) appendRow(row []renderer.Cell, bound LineBound, id RowID) erro
 	if h.nextRowID == ^RowID(0) {
 		return errInvalidHistoryRowID
 	}
-	if uint64(len(row)) > uint64(math.MaxUint32) || len(row) > h.maxCells {
-		return ErrHistoryRowTooWide
-	}
 	if id >= ^RowID(0)-1 {
 		return errInvalidHistoryRowID
 	}
 	if id >= h.nextRowID {
 		h.nextRowID = id + 1
 	}
-	// Make room before adding so Cells cannot overflow even when the default
-	// capacity is MaxInt.
-	h.evictFor(len(row))
+	// Make room before adding so accounting cannot overflow even when the
+	// configured capacities use their maximum values.
+	h.evictFor(row)
+	delta := h.tailAppendDelta(len(row))
 	h.appendTailRow(row)
+	h.recordTailRowStyles(len(row))
+	h.tailBytes += delta
+	h.logicalBytes += delta
 	h.tailBounds = append(h.tailBounds, clampBound(bound, len(row)))
 	h.tailIDs = append(h.tailIDs, id)
 	h.rows++
@@ -306,7 +480,9 @@ func (h *History) reserveTailRow(width int) (start, end int) {
 			capacity = max(capacity, cap(h.tailCells)*2)
 		}
 		if len(h.tailCells) == 0 {
-			capacity = max(capacity, min(h.maxCells, max(width, maxTailPreallocCells)))
+			prealloc := uint64(maxTailPreallocCells)
+			prealloc = min(prealloc, h.maxBytes/renderer.StoredCellLogicalBytes)
+			capacity = max(capacity, max(width, int(prealloc)))
 		}
 		cells := make([]renderer.Cell, len(h.tailCells), capacity)
 		copy(cells, h.tailCells)
@@ -340,76 +516,75 @@ func (h *History) sealTail() {
 	if len(h.tail) == 0 {
 		return
 	}
-	h.chunks = append(h.chunks, newHistoryChunks(h.tail, h.tailBounds, h.tailIDs)...)
+	chunks := newHistoryChunks(h.tail, h.tailBounds, h.tailIDs)
+	h.chunks = append(h.chunks, chunks...)
+	h.logicalBytes = h.logicalBytes - h.tailBytes + historyChunksLogicalBytes(chunks)
 	h.tail = nil
 	h.tailCells = nil
 	h.tailBounds = nil
 	h.tailIDs = nil
+	h.tailBytes = 0
+	h.tailPageWidth = 0
+	h.tailPageRows = 0
+	h.tailPageStyles = nil
 }
 
-// normalizeTail seals complete chunks so the mutable tail remains shorter than
-// chunkRows. Restored snapshots may have been written with a different chunk
-// size than the current history configuration.
-func (h *History) normalizeTail() {
-	h.tailIDs = growRowIDs(h.tailIDs, len(h.tail))
-	for h.chunkRows > 0 && len(h.tail) >= h.chunkRows {
-		bounds := growBounds(h.tailBounds, len(h.tail))
-		h.chunks = append(h.chunks, newHistoryChunks(h.tail[:h.chunkRows], bounds[:h.chunkRows], h.tailIDs[:h.chunkRows])...)
-		removedCells := historyRowsCells(h.tail[:h.chunkRows])
-		h.tail = h.tail[h.chunkRows:]
-		h.tailCells = h.tailCells[removedCells:]
-		h.tailBounds = bounds[h.chunkRows:]
-		h.tailIDs = h.tailIDs[h.chunkRows:]
-	}
-}
-
-func (h *History) evict() {
-	h.evictUntil(0, 0)
-}
-
-// evictFor discards oldest rows until another row using cellCount cells can fit.
-func (h *History) evictFor(cellCount int) {
-	h.evictUntil(1, cellCount)
-}
-
-// evictUntil makes room for rowCount rows and cellCount cells without
-// overflowing either accounting total.
-func (h *History) evictUntil(rowCount, cellCount int) {
-	for h.rows > h.maxRows-rowCount || h.cells > h.maxCells-cellCount {
-		if len(h.chunks) > 0 {
-			chunk := h.chunks[0]
-			h.rows--
-			h.cells -= chunk.width
-			if chunk.count == 1 {
-				copy(h.chunks, h.chunks[1:])
-				h.chunks[len(h.chunks)-1] = nil
-				h.chunks = h.chunks[:len(h.chunks)-1]
-			} else {
-				// Preserve cell storage while replacing only the chunk wrapper: a
-				// retained view may still refer to the original immutable chunk.
-				h.chunks[0] = &HistoryChunk{
-					frame:  chunk.frame,
-					start:  chunk.start + 1,
-					count:  chunk.count - 1,
-					width:  chunk.width,
-					bounds: chunk.bounds[1:],
-					rowIDs: chunk.rowIDs[1:],
-				}
-			}
-			continue
-		}
-		if len(h.tail) == 0 {
+// evictFor discards oldest rows until row can fit both retention budgets.
+func (h *History) evictFor(row []renderer.Cell) {
+	for {
+		delta := h.tailAppendDelta(len(row))
+		if h.rows <= h.maxRows-1 && h.logicalBytes <= h.maxBytes-delta {
 			return
 		}
-		row := h.tail[0]
-		h.rows--
-		h.cells -= len(row)
-		h.tail[0] = nil
-		h.tail = h.tail[1:]
-		h.tailCells = h.tailCells[len(row):]
-		h.tailBounds = growBounds(h.tailBounds, len(h.tail)+1)[1:]
-		h.tailIDs = growRowIDs(h.tailIDs, len(h.tail)+1)[1:]
+		h.evictOldest()
+		h.prepareRowStyles(row)
 	}
+}
+
+func (h *History) evictOldest() {
+	if h.rows == 0 {
+		return
+	}
+	if len(h.chunks) > 0 {
+		chunk := h.chunks[0]
+		oldBytes := historyChunkLogicalBytes(chunk)
+		h.rows--
+		h.cells -= chunk.width
+		if chunk.count == 1 {
+			h.logicalBytes -= oldBytes
+			copy(h.chunks, h.chunks[1:])
+			h.chunks[len(h.chunks)-1] = nil
+			h.chunks = h.chunks[:len(h.chunks)-1]
+		} else {
+			// Preserve cell storage while replacing only the chunk wrapper: a
+			// retained view may still refer to the original immutable chunk. The
+			// wrapper tracks only styles still used by its retained suffix.
+			h.chunks[0] = &HistoryChunk{
+				frame:      chunk.frame,
+				start:      chunk.start + 1,
+				count:      chunk.count - 1,
+				width:      chunk.width,
+				bounds:     chunk.bounds[1:],
+				rowIDs:     chunk.rowIDs[1:],
+				styleDrops: chunk.styleDrops,
+				styleCount: chunk.styleCount - chunk.styleDrops[chunk.start],
+			}
+			h.logicalBytes -= oldBytes - historyChunkLogicalBytes(h.chunks[0])
+		}
+		return
+	}
+	if len(h.tail) == 0 {
+		return
+	}
+	row := h.tail[0]
+	h.rows--
+	h.cells -= len(row)
+	h.tail[0] = nil
+	h.tail = h.tail[1:]
+	h.tailCells = h.tailCells[len(row):]
+	h.tailBounds = growBounds(h.tailBounds, len(h.tail)+1)[1:]
+	h.tailIDs = growRowIDs(h.tailIDs, len(h.tail)+1)[1:]
+	h.rebuildTailAccounting()
 }
 
 // SealAndView rotates the mutable tail into an immutable chunk, then captures
@@ -435,7 +610,7 @@ func (h *History) View() HistoryView {
 	if len(h.tail) > 0 {
 		chunks = append(chunks, newHistoryChunks(h.tail, h.tailBounds, h.tailIDs)...)
 	}
-	return HistoryView{chunks: chunks, rows: h.rows, cells: h.cells, nextRowID: h.nextRowID}
+	return HistoryView{chunks: chunks, rows: h.rows, cells: h.cells, logicalBytes: h.logicalBytes, nextRowID: h.nextRowID}
 }
 
 // SnapshotView captures history for persistence without sealing the mutable
@@ -448,13 +623,14 @@ func (h *History) SnapshotView() HistorySnapshotView {
 		return HistorySnapshotView{nextRowID: h.nextRowID}
 	}
 	return HistorySnapshotView{
-		chunks:     append([]*HistoryChunk(nil), h.chunks...),
-		tail:       cloneHistoryRows(h.tail),
-		tailBounds: append([]LineBound(nil), growBounds(h.tailBounds, len(h.tail))...),
-		tailIDs:    cloneRowIDs(h.tailIDs, len(h.tail)),
-		rows:       h.rows,
-		cells:      h.cells,
-		nextRowID:  h.nextRowID,
+		chunks:       append([]*HistoryChunk(nil), h.chunks...),
+		tail:         cloneHistoryRows(h.tail),
+		tailBounds:   append([]LineBound(nil), growBounds(h.tailBounds, len(h.tail))...),
+		tailIDs:      cloneRowIDs(h.tailIDs, len(h.tail)),
+		rows:         h.rows,
+		cells:        h.cells,
+		logicalBytes: h.logicalBytes,
+		nextRowID:    h.nextRowID,
 	}
 }
 
@@ -490,6 +666,15 @@ func (h *History) Cells() int {
 	return h.cells
 }
 
+// LogicalBytes returns deterministic uncompressed bytes retained by history.
+// It excludes the live primary and alternate screens and has no page allowance.
+func (h *History) LogicalBytes() uint64 {
+	if h == nil {
+		return 0
+	}
+	return h.logicalBytes
+}
+
 // NextRowID returns the next identity allocated by this history.
 func (h *History) NextRowID() RowID {
 	if h == nil || h.nextRowID == 0 {
@@ -506,16 +691,22 @@ func (h *History) Cap() int {
 	return h.maxRows
 }
 
-// CellCap returns the configured bounded cell capacity.
-func (h *History) CellCap() int {
+// ByteCap returns the configured uncompressed logical-byte capacity.
+func (h *History) ByteCap() uint64 {
 	if h == nil {
 		return 0
 	}
-	return h.maxCells
+	return h.maxBytes
 }
 
-func (v HistoryView) Len() int        { return v.rows }
-func (v HistoryView) Cells() int      { return v.cells }
+func (v HistoryView) Len() int   { return v.rows }
+func (v HistoryView) Cells() int { return v.cells }
+func (v HistoryView) LogicalBytes() uint64 {
+	if v.logicalBytes != 0 || len(v.chunks) == 0 {
+		return v.logicalBytes
+	}
+	return historyChunksLogicalBytes(v.chunks)
+}
 func (v HistoryView) ChunkCount() int { return len(v.chunks) }
 
 // NextRowID returns the next identity recorded by this view.
@@ -623,8 +814,14 @@ func (v HistoryView) Bound(i int) LineBound {
 	return LineBound{}
 }
 
-func (v HistorySnapshotView) Len() int        { return v.rows }
-func (v HistorySnapshotView) Cells() int      { return v.cells }
+func (v HistorySnapshotView) Len() int   { return v.rows }
+func (v HistorySnapshotView) Cells() int { return v.cells }
+func (v HistorySnapshotView) LogicalBytes() uint64 {
+	if v.logicalBytes != 0 || v.rows == 0 {
+		return v.logicalBytes
+	}
+	return addLogicalBytes(historyChunksLogicalBytes(v.chunks), historyRowsLogicalBytes(v.tail))
+}
 func (v HistorySnapshotView) ChunkCount() int { return len(v.chunks) }
 
 // NextRowID returns the next identity recorded by this snapshot.
@@ -649,10 +846,11 @@ func (v HistorySnapshotView) Tail() HistoryView {
 		return HistoryView{nextRowID: v.nextRowID}
 	}
 	return HistoryView{
-		chunks:    newHistoryChunks(v.tail, v.tailBounds, v.tailIDs),
-		rows:      len(v.tail),
-		cells:     historyRowsCells(v.tail),
-		nextRowID: v.nextRowID,
+		chunks:       newHistoryChunks(v.tail, v.tailBounds, v.tailIDs),
+		rows:         len(v.tail),
+		cells:        historyRowsCells(v.tail),
+		logicalBytes: historyRowsLogicalBytes(v.tail),
+		nextRowID:    v.nextRowID,
 	}
 }
 

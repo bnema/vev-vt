@@ -238,7 +238,7 @@ func TestNewScreenWithRecoveryTranscriptRestoresHistoryThenTranscriptAndStartsBl
 		[]LineBound{{End: 7, Soft: true}, {End: 9, Soft: true}},
 	)
 
-	screen, err := NewScreenWithRecoveryTranscript(5, 2, HistoryConfig{MaxRows: 8, MaxCells: 128, ChunkRows: 2}, sealed, tail, transcript)
+	screen, err := NewScreenWithRecoveryTranscript(5, 2, HistoryConfig{MaxRows: 8, MaxBytes: 1 << 20, ChunkRows: 2}, sealed, tail, transcript)
 	require.NoError(t, err)
 
 	view := screen.History().View()
@@ -263,14 +263,14 @@ func TestNewScreenWithRecoveryTranscriptEvictsOldestRowsWithinBounds(t *testing.
 	}{
 		{
 			name:       "row budget",
-			config:     HistoryConfig{MaxRows: 3, MaxCells: 128, ChunkRows: 2},
+			config:     HistoryConfig{MaxRows: 3, MaxBytes: 1 << 20, ChunkRows: 2},
 			history:    []string{"old-1", "old-2", "old-3"},
 			transcript: []string{"new-1", "new-2"},
 			want:       []string{"old-3", "new-1", "new-2"},
 		},
 		{
-			name:       "cell budget",
-			config:     HistoryConfig{MaxRows: 10, MaxCells: 4, ChunkRows: 4},
+			name:       "byte budget",
+			config:     HistoryConfig{MaxRows: 10, MaxBytes: 108, ChunkRows: 4},
 			history:    []string{"aa", "b", "ccc"},
 			transcript: []string{"d", "ee"},
 			want:       []string{"d", "ee"},
@@ -293,9 +293,9 @@ func TestNewScreenWithRecoveryTranscriptRejectsOversizedTranscriptRow(t *testing
 	sealed, tail := recoveryHistoryBlobs(t, []string{"ok"})
 	transcript := recoveryTranscriptBlob(t, []string{"wide"}, nil)
 
-	screen, err := NewScreenWithRecoveryTranscript(4, 2, HistoryConfig{MaxRows: 4, MaxCells: 3}, sealed, tail, transcript)
+	screen, err := NewScreenWithRecoveryTranscript(4, 2, HistoryConfig{MaxRows: 4, MaxBytes: 83}, sealed, tail, transcript)
 
-	require.ErrorIs(t, err, ErrHistoryRowTooWide)
+	require.ErrorIs(t, err, ErrHistoryRowTooLarge)
 	require.Nil(t, screen)
 }
 
@@ -350,7 +350,7 @@ func BenchmarkNewScreenWithRecoveryTranscriptManyChunks(b *testing.B) {
 	require.NoError(b, err)
 	tail, err := MarshalEmptyHistoryTail()
 	require.NoError(b, err)
-	config := HistoryConfig{MaxRows: rows, MaxCells: rows, ChunkRows: maxHistoryChunkRows}
+	config := HistoryConfig{MaxRows: rows, MaxBytes: 1 << 30, ChunkRows: maxHistoryChunkRows}
 
 	b.ReportAllocs()
 	b.ReportMetric(float64(rows), "rows/restore")
@@ -366,7 +366,7 @@ func BenchmarkNewScreenWithRecoveryTranscriptManyChunks(b *testing.B) {
 
 func recoveryHistoryBlobs(t testing.TB, texts []string) ([][]byte, []byte) {
 	t.Helper()
-	history := NewHistory(HistoryConfig{MaxRows: len(texts) + 1, MaxCells: 1024, ChunkRows: 2})
+	history := NewHistory(HistoryConfig{MaxRows: len(texts) + 1, MaxBytes: 1 << 20, ChunkRows: 2})
 	for _, text := range texts {
 		require.NoError(t, history.Append(historyRow(text), LineBound{End: len(text)}))
 	}

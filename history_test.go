@@ -201,8 +201,8 @@ func TestHistoryRecordsOnlyTopEdgeScrollEvictions(t *testing.T) {
 	}
 }
 
-func TestHistoryBoundsRowsAndCellsWithExactRowEviction(t *testing.T) {
-	history := NewHistory(HistoryConfig{MaxRows: 4, MaxCells: 5, ChunkRows: 2})
+func TestHistoryBoundsRowsAndBytesWithExactRowEviction(t *testing.T) {
+	history := NewHistory(HistoryConfig{MaxRows: 4, MaxBytes: 108, ChunkRows: 2})
 	for _, text := range []string{"aa", "bbb", "c", "dd"} {
 		if err := history.Append(historyRow(text), LineBound{End: len(text)}); err != nil {
 			t.Fatalf("append %q: %v", text, err)
@@ -246,8 +246,8 @@ func TestHistoryAppendIsNoOpForNilAndZeroValue(t *testing.T) {
 	}
 }
 
-func TestHistoryRejectsRowWiderThanCellBudgetWithoutMutation(t *testing.T) {
-	history := NewHistory(HistoryConfig{MaxRows: 2, MaxCells: 2, ChunkRows: 2})
+func TestHistoryRejectsRowLargerThanByteBudgetWithoutMutation(t *testing.T) {
+	history := NewHistory(HistoryConfig{MaxRows: 2, MaxBytes: 60, ChunkRows: 2})
 	kept := historyRow("ok")
 	if err := history.Append(kept, LineBound{End: len(kept)}); err != nil {
 		t.Fatalf("append retained row: %v", err)
@@ -256,8 +256,8 @@ func TestHistoryRejectsRowWiderThanCellBudgetWithoutMutation(t *testing.T) {
 
 	wide := historyRow("wide")
 	err := history.Append(wide, LineBound{End: len(wide)})
-	if !errors.Is(err, ErrHistoryRowTooWide) {
-		t.Fatalf("append oversized row error = %v, want ErrHistoryRowTooWide", err)
+	if !errors.Is(err, ErrHistoryRowTooLarge) {
+		t.Fatalf("append oversized row error = %v, want ErrHistoryRowTooLarge", err)
 	}
 	if got, want := historyViewTexts(history.View()), historyViewTexts(before); !equalStrings(got, want) {
 		t.Fatalf("history mutated after rejected append: got %#v, want %#v", got, want)
@@ -268,7 +268,7 @@ func TestHistoryRejectsRowWiderThanCellBudgetWithoutMutation(t *testing.T) {
 }
 
 func TestScreenDropsOversizedHistoryRowsWithoutInterruptingScroll(t *testing.T) {
-	screen := NewScreenWithHistory(4, 2, HistoryConfig{MaxRows: 2, MaxCells: 3})
+	screen := NewScreenWithHistory(4, 2, HistoryConfig{MaxRows: 2, MaxBytes: 83})
 	var events []string
 	screen.OnLineEvicted = func(row []renderer.Cell) { events = append(events, rowText(row)) }
 	screen.frame.WriteRow(0, 0, historyRow("AAAA"))
@@ -314,7 +314,7 @@ func TestHistoryAppendRetainsBounds(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			h := NewHistory(HistoryConfig{MaxRows: 16, MaxCells: 1024, ChunkRows: tc.chunkRows})
+			h := NewHistory(HistoryConfig{MaxRows: 16, MaxBytes: 1 << 20, ChunkRows: tc.chunkRows})
 			for i, b := range tc.bounds {
 				if err := h.Append(row("abc"[:b.End]), b); err != nil {
 					t.Fatalf("append %d: %v", i, err)
@@ -331,7 +331,7 @@ func TestHistoryAppendRetainsBounds(t *testing.T) {
 }
 
 func TestHistoryEvictionKeepsRowsAndBoundsAligned(t *testing.T) {
-	h := NewHistory(HistoryConfig{MaxRows: 3, MaxCells: 1024, ChunkRows: 2})
+	h := NewHistory(HistoryConfig{MaxRows: 3, MaxBytes: 1 << 20, ChunkRows: 2})
 	for i := range 5 {
 		cells := []renderer.Cell{{Rune: rune('a' + i)}}
 		if err := h.Append(cells, LineBound{End: 1, Soft: i%2 == 0}); err != nil {
@@ -362,7 +362,7 @@ func TestHistorySlabAndTailAllocationBounds(t *testing.T) {
 		}
 	}
 
-	history := NewHistory(HistoryConfig{MaxRows: 256, MaxCells: 1_000_000, ChunkRows: 256})
+	history := NewHistory(HistoryConfig{MaxRows: 256, MaxBytes: 1 << 30, ChunkRows: 256})
 	row := make([]renderer.Cell, 10_000)
 	if err := history.Append(row, LineBound{}); err != nil {
 		t.Fatal(err)
@@ -374,7 +374,7 @@ func TestHistorySlabAndTailAllocationBounds(t *testing.T) {
 
 func TestHistorySealsCompactContiguousSlabs(t *testing.T) {
 	const rows, columns = 256, 120
-	history := NewHistory(HistoryConfig{MaxRows: rows, MaxCells: rows * columns, ChunkRows: rows})
+	history := NewHistory(HistoryConfig{MaxRows: rows, MaxBytes: 1 << 30, ChunkRows: rows})
 	row := make([]renderer.Cell, columns)
 	for x := range row {
 		row[x] = renderer.Cell{Rune: 'x', Style: renderer.Style{Bold: true, Foreground: 4}}
@@ -402,7 +402,7 @@ func TestHistorySealsCompactContiguousSlabs(t *testing.T) {
 }
 
 func TestHistorySplitsCompactSlabsWhenRowWidthChanges(t *testing.T) {
-	history := NewHistory(HistoryConfig{MaxRows: 4, MaxCells: 16, ChunkRows: 4})
+	history := NewHistory(HistoryConfig{MaxRows: 4, MaxBytes: 1 << 20, ChunkRows: 4})
 	for _, text := range []string{"aa", "bb", "ccc", "ddd"} {
 		if err := history.Append(historyRow(text), LineBound{End: len(text)}); err != nil {
 			t.Fatal(err)
@@ -419,10 +419,10 @@ func TestHistorySplitsCompactSlabsWhenRowWidthChanges(t *testing.T) {
 	}
 }
 
-func TestHistoryDefaultCellBudgetDoesNotOverflow(t *testing.T) {
+func TestHistoryDefaultByteBudgetDoesNotOverflow(t *testing.T) {
 	history := NewHistory(HistoryConfig{MaxRows: math.MaxInt, ChunkRows: 1})
-	if got, want := history.CellCap(), math.MaxInt; got != want {
-		t.Fatalf("default cell cap = %d, want %d", got, want)
+	if got := history.ByteCap(); got == 0 {
+		t.Fatal("default byte capacity overflowed to zero")
 	}
 }
 

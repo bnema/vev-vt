@@ -145,7 +145,7 @@ func buildStorageBenchmarkHistory(b *testing.B, fill func([]core.Cell, int)) *Hi
 	b.Helper()
 	history := NewHistory(HistoryConfig{
 		MaxRows:   storageBenchmarkRows,
-		MaxCells:  storageBenchmarkRows * storageBenchmarkWidth,
+		MaxBytes:  1 << 30,
 		ChunkRows: 256,
 	})
 	row := make([]core.Cell, storageBenchmarkWidth)

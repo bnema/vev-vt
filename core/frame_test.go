@@ -179,13 +179,13 @@ func TestFrameCellCountRejectsPortableOverflow(t *testing.T) {
 
 func TestFrameLogicalBytesAreDeterministic(t *testing.T) {
 	f := NewFrame(3, 2)
-	want := uint64(6*storedCellLogicalBytes + 2*rowDescriptorLogicalBytes + styleRecordLogicalBytes)
+	want := uint64(6*StoredCellLogicalBytes + 2*RowDescriptorLogicalBytes + StyleRecordLogicalBytes)
 	if got := f.LogicalBytes(); got != want {
 		t.Fatalf("LogicalBytes() = %d, want %d", got, want)
 	}
 	f.Set(0, 0, Cell{Rune: 'x', Style: Style{Bold: true}})
-	if got := f.LogicalBytes(); got != want+styleRecordLogicalBytes {
-		t.Fatalf("LogicalBytes() with one interned style = %d, want %d", got, want+styleRecordLogicalBytes)
+	if got := f.LogicalBytes(); got != want+StyleRecordLogicalBytes {
+		t.Fatalf("LogicalBytes() with one interned style = %d, want %d", got, want+StyleRecordLogicalBytes)
 	}
 }
 

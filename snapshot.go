@@ -111,31 +111,73 @@ func restoreHistoryViews(config HistoryConfig, sealed []HistoryView, tail Histor
 	h := NewHistory(config)
 	for _, view := range sealed {
 		h.nextRowID = max(h.nextRowID, view.nextRowID)
-		if h.maxRows == 0 {
+		chunk := h.boundedRestoredChunk(view.chunks[0])
+		if chunk == nil {
 			continue
 		}
-		chunk := view.chunks[0]
+		chunkBytes := historyChunkLogicalBytes(chunk)
+		for h.rows > h.maxRows-chunk.len() || h.logicalBytes > h.maxBytes-chunkBytes {
+			h.evictOldest()
+		}
 		h.chunks = append(h.chunks, chunk)
 		h.rows += chunk.len()
-		h.cells += view.Cells()
-		h.evict()
+		h.cells += chunk.cells()
+		h.logicalBytes += chunkBytes
 	}
 	h.nextRowID = max(h.nextRowID, tail.nextRowID)
-	if h.maxRows == 0 || len(tail.chunks) == 0 {
+	if h.maxRows == 0 {
 		return h
 	}
 	for _, chunk := range tail.chunks {
-		for i := range chunk.len() {
-			h.appendTailChunkRow(chunk, i)
-			h.tailBounds = append(h.tailBounds, chunk.bounds[i])
-			h.tailIDs = append(h.tailIDs, chunk.rowIDs[i])
+		for row := range chunk.len() {
+			if h.prepareChunkRowStyles(chunk, row) > h.maxBytes {
+				continue
+			}
+			for {
+				delta := h.tailAppendDelta(chunk.width)
+				if h.rows < h.maxRows && h.logicalBytes <= h.maxBytes-delta {
+					h.appendTailChunkRow(chunk, row)
+					h.recordTailRowStyles(chunk.width)
+					h.tailBytes += delta
+					h.logicalBytes += delta
+					h.tailBounds = append(h.tailBounds, chunk.bounds[row])
+					h.tailIDs = append(h.tailIDs, chunk.rowIDs[row])
+					h.rows++
+					h.cells += chunk.width
+					if len(h.tail) == h.chunkRows {
+						h.sealTail()
+					}
+					break
+				}
+				h.evictOldest()
+				h.prepareChunkRowStyles(chunk, row)
+			}
 		}
 	}
-	h.rows += len(h.tail)
-	h.cells += tail.Cells()
-	h.evict()
-	h.normalizeTail()
 	return h
+}
+
+func (h *History) boundedRestoredChunk(chunk *HistoryChunk) *HistoryChunk {
+	if h.maxRows == 0 || chunk == nil {
+		return nil
+	}
+	bounded := chunk
+	for bounded.count > h.maxRows || historyChunkLogicalBytes(bounded) > h.maxBytes {
+		if bounded.count == 1 {
+			return nil
+		}
+		bounded = &HistoryChunk{
+			frame:      bounded.frame,
+			start:      bounded.start + 1,
+			count:      bounded.count - 1,
+			width:      bounded.width,
+			bounds:     bounded.bounds[1:],
+			rowIDs:     bounded.rowIDs[1:],
+			styleDrops: bounded.styleDrops,
+			styleCount: bounded.styleCount - bounded.styleDrops[bounded.start],
+		}
+	}
+	return bounded
 }
 
 func validateRestoredHistoryView(view HistoryView, seen map[RowID]struct{}) bool {
