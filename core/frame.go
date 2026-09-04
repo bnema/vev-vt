@@ -110,12 +110,12 @@ func (f Frame) Clone() Frame {
 }
 
 // Replace replaces f with an independent structural copy of src's compact page.
+// An invalid or empty source leaves the destination unchanged.
 func (f *Frame) Replace(src Frame) {
 	if f == nil {
 		return
 	}
 	if err := src.validateStorage(); err != nil || src.Width <= 0 || src.Height <= 0 {
-		*f = Frame{}
 		return
 	}
 	*f = src.Clone()
@@ -306,7 +306,7 @@ func (f Frame) CopyRow(y, dst, src, count int) {
 }
 
 func (f Frame) FillRow(y, start, end int, cell Cell) {
-	for x := start; x < end; x++ {
+	for x := max(0, start); x < min(f.Width, end); x++ {
 		f.Set(x, y, cell)
 	}
 }
@@ -329,7 +329,12 @@ func (f Frame) ScrollDown(top, bottom, n int) {
 	}
 }
 
-func (f Frame) offset(x, y int) int { return int(f.page.rows[y]) + x }
+func (f Frame) offset(x, y int) int {
+	if x < 0 || x >= f.Width {
+		panic("frame column out of range")
+	}
+	return int(f.page.rows[y]) + x
+}
 
 func (f Frame) blankPhysicalRow(offset uint32) {
 	for x := range f.Width {

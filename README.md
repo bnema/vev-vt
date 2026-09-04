@@ -72,7 +72,8 @@ optional compression during idle time.
 
 ## A few rules
 
-- Write to a screen from one goroutine, or protect access with your own lock.
+- Serialize `Write`, `Resize`, `Snapshot`, reads and history mutations in one
+  goroutine, or protect them with your own lock.
 - Rows returned by the API are copies. Changing one does not change the screen.
 - Use `vt.DefaultStyle()` for terminal-default colors, not `vt.Style{}`.
 - Callbacks run during `screen.Write`; keep them short.

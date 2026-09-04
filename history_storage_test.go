@@ -41,6 +41,9 @@ func TestColdHistoryPreservesIdentityAccountingAndContents(t *testing.T) {
 	encoded, err := MarshalHistory(view)
 	require.NoError(t, err)
 	compressFixture(t, h)
+	for _, sealed := range h.chunks {
+		require.Equal(t, len(sealed.page.compressed), cap(sealed.page.compressed), "compressed backing must not retain buffer slack")
+	}
 	stats := h.CompressionStats()
 	require.Equal(t, 2, stats.ColdPages)
 	require.Positive(t, stats.CompressedBytes)

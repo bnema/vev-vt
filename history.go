@@ -28,6 +28,7 @@ type History struct {
 	chunkRows         int
 	chunks            []*HistoryChunk
 	tail              [][]renderer.Cell
+	cachedTail        []*HistoryChunk
 	tailCells         []renderer.Cell
 	tailBounds        []LineBound
 	tailIDs           []RowID
@@ -447,6 +448,7 @@ func growRowIDs(ids []RowID, rows int) []RowID {
 }
 
 func (h *History) reserveTailRow(width int) (start, end int) {
+	h.cachedTail = nil
 	start = len(h.tailCells)
 	end = start + width
 	if end > cap(h.tailCells) {
@@ -491,10 +493,11 @@ func (h *History) sealTail() {
 	if len(h.tail) == 0 {
 		return
 	}
-	chunks := newHistoryChunks(h.tail, h.tailBounds, h.tailIDs)
+	chunks := h.tailViewChunks()
 	h.chunks = append(h.chunks, chunks...)
 	h.logicalBytes = h.logicalBytes - h.tailBytes + historyChunksLogicalBytes(chunks)
 	h.tail = nil
+	h.cachedTail = nil
 	h.tailCells = nil
 	h.tailBounds = nil
 	h.tailIDs = nil
@@ -543,6 +546,7 @@ func (h *History) evictOldest() {
 	if len(h.tail) == 0 {
 		return
 	}
+	h.cachedTail = nil
 	row := h.tail[0]
 	h.rows--
 	h.cells -= len(row)
@@ -563,8 +567,15 @@ func (h *History) SealAndView() HistoryView {
 	return h.View()
 }
 
-// View captures the current history. Sealed chunks are shared by identity; a
-// partially-filled tail is copied into a new immutable chunk for this view.
+func (h *History) tailViewChunks() []*HistoryChunk {
+	if h.cachedTail == nil && len(h.tail) > 0 {
+		h.cachedTail = newHistoryChunks(h.tail, h.tailBounds, h.tailIDs)
+	}
+	return h.cachedTail
+}
+
+// View captures the current history. Sealed chunks are shared by identity;
+// the immutable tail copy is reused until the mutable tail changes.
 func (h *History) View() HistoryView {
 	if h == nil {
 		return HistoryView{}
@@ -575,7 +586,7 @@ func (h *History) View() HistoryView {
 	chunks := make([]*HistoryChunk, len(h.chunks), len(h.chunks)+1)
 	copy(chunks, h.chunks)
 	if len(h.tail) > 0 {
-		chunks = append(chunks, newHistoryChunks(h.tail, h.tailBounds, h.tailIDs)...)
+		chunks = append(chunks, h.tailViewChunks()...)
 	}
 	return HistoryView{chunks: chunks, rows: h.rows, cells: h.cells, logicalBytes: h.logicalBytes, nextRowID: h.nextRowID}
 }

@@ -2,6 +2,7 @@ package ansi
 
 import (
 	"fmt"
+	"reflect"
 
 	"github.com/bnema/vev-vt/core"
 )
@@ -19,8 +20,12 @@ func validateCellSource(source CellSource) error {
 	if source == nil {
 		return fmt.Errorf("nil cell source")
 	}
-	if frame, ok := source.(*Frame); ok && frame == nil {
-		return fmt.Errorf("nil cell source")
+	value := reflect.ValueOf(source)
+	switch value.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		if value.IsNil() {
+			return fmt.Errorf("nil cell source")
+		}
 	}
 	if source.Columns() <= 0 || source.Rows() <= 0 {
 		return fmt.Errorf("invalid cell source size %dx%d", source.Columns(), source.Rows())

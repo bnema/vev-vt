@@ -153,7 +153,8 @@ func (p *sealedPage) compressIfIdle() (bool, error) {
 		p.incompressible = true
 		return false, nil
 	}
-	p.compressed = out.Bytes()
+	p.compressed = make([]byte, out.Len())
+	copy(p.compressed, out.Bytes())
 	p.encodedSize = len(raw)
 	p.frame = renderer.Frame{}
 	return true, nil
