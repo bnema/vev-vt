@@ -101,4 +101,6 @@ go test . -run '^$' \
 
 It reports construction allocations and retained heap bytes for plain ASCII,
 repeated indexed and RGB styles, high-cardinality RGB churn, wide Unicode, and
-styled blanks.
+styled blanks. The compact page primitive can be measured with
+`go test ./core -run '^$' -bench '^BenchmarkCompactFrameBuild10Kx120$' -benchmem -benchtime=1x`;
+its logical-byte result is deterministic and excludes Go allocator/map overhead.

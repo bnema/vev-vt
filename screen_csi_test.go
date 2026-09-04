@@ -731,7 +731,7 @@ func TestBackgroundColorErase(t *testing.T) {
 			for y := range tt.height {
 				for x := tt.startX; x < tt.width; x++ {
 					cell := cellAt(s, x, y)
-					if cell.Rune != ' ' || cell.Style != tt.wantStyle {
+					if cell.Rune != ' ' || !cell.Style.Equal(tt.wantStyle) {
 						t.Errorf("cell(%d,%d) = %+v, want space with style %+v", x, y, cell, tt.wantStyle)
 					}
 				}
