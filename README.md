@@ -2,7 +2,7 @@
 
 `github.com/bnema/vev-vt` is a frontend-neutral VT terminal engine for Go.
 It provides the terminal screen, scrollback history, immutable snapshots,
-stable history chunks, VTH3 history bytes, and the reusable cell/frame model.
+stable history chunks, compact VTC1 history bytes, and the reusable cell/frame model.
 The `ansi` package turns core frames and damage into transactional ANSI output.
 
 ## Packages
@@ -49,6 +49,28 @@ a direct, documented break and removal of obsolete code when that produces a
 cleaner design. VEVS remains an application-owned outer snapshot envelope and
 is intentionally not implemented here.
 
+## History persistence
+
+`MarshalHistory` and `UnmarshalHistory` use **VTC1**, replacing VTH3 directly.
+Older formats are rejected; no migration reader or dual-format path is retained.
+The format stores a next-row-ID counter, equal-width chunks, canonical local
+style dictionaries, row IDs and bounds, and 9-byte rune/style-reference/continuation
+records. Default style ID zero is implicit. IDs are rebuilt from semantic styles,
+not copied from internal pages.
+
+Decoding validates the entire payload before allocating compact frames. It rejects
+invalid references, duplicate or unused styles, noncanonical style fields,
+duplicate row IDs, invalid counters, truncation and trailing bytes. Aggregate
+ceilings are 12,000 rows and 1,920,000 cells; wide rows are allowed within those
+ceilings. Preflight `DecodeStats.Bytes` reports uncompressed logical storage,
+not encoded length or allocator usage.
+
+Measure encoded size, throughput and allocations with:
+
+```sh
+go test . -run '^$' -bench '^BenchmarkCompactHistoryCodec$' -benchmem
+```
+
 ## Kitty graphics subset
 
 The VT accepts bounded static direct transmissions used by current
@@ -61,7 +83,7 @@ shared-memory, animation, composition, relative placement, and
 Unicode-placeholder commands remain unsupported.
 
 `Screen` allocates graphics state only after a Kitty APC. Graphics snapshots are
-separate from cells and history bytes; VTH3 remains text/history-only. Static
+separate from cells and history bytes; VTC1 remains text/history-only. Static
 placements move with terminal row scrolling and are clipped by the active
 viewport; reflow and relative-placement movement remain unsupported.
 

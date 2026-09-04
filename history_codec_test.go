@@ -10,9 +10,9 @@ import (
 	renderer "github.com/bnema/vev-vt/core"
 )
 
-func TestHistoryCodecV3Bytes(t *testing.T) {
+func TestHistoryCodecCompactBytes(t *testing.T) {
 	h := NewHistory(HistoryConfig{MaxRows: 8, MaxBytes: 1 << 20, ChunkRows: 2})
-	if err := h.Append([]renderer.Cell{{Rune: 'a'}}, LineBound{End: 1, Soft: true}); err != nil {
+	if err := h.Append([]renderer.Cell{{Rune: 'a', Style: renderer.DefaultStyle()}}, LineBound{End: 1, Soft: true}); err != nil {
 		t.Fatalf("append: %v", err)
 	}
 	got, err := MarshalHistory(h.SealAndView())
@@ -21,23 +21,16 @@ func TestHistoryCodecV3Bytes(t *testing.T) {
 	}
 
 	want := []byte{
-		'V', 'T', 'H', '1', 3, // magic, version
-		0, 0, 0, 1, // chunk count
+		'V', 'T', 'C', '1',
+		0, 0, 0, 1, // chunks
 		0, 0, 0, 0, 0, 0, 0, 2, // next row ID
-		0, 0, 0, 1, // row count
+		0, 0, 0, 1, // width
+		0, 0, 0, 1, // rows
+		0, 0, 0, 1, // implicit default style only
 		0, 0, 0, 0, 0, 0, 0, 1, // row ID
-		0, 0, 0, 1, // cell count
-		0, 0, 0, 'a', // Rune
-		0,    // flags
-		0, 0, // Attrs
-		0, 0, 0, 0, 0, 0, 0, 0, // Foreground
-		0, 0, 0, 0, 0, 0, 0, 0, // Background
-		0, 0, 0, // ForegroundRGB
-		0, 0, 0, // BackgroundRGB
-		0,                      // UnderlineStyle
-		0, 0, 0, 0, 0, 0, 0, 0, // UnderlineColor
-		0, 0, 0, // UnderlineColorRGB — 41 cell bytes through here
-		0, 0, 0, 1, 1, // bound: End=1, Soft=true
+		0, 0, 0, 1, 1, // bound
+		0, 0, 0, 'a', // rune
+		0, 0, 0, 0, 0, // style ID and continuation
 	}
 	if !bytes.Equal(got, want) {
 		t.Fatalf("MarshalHistory() = % x, want % x", got, want)
@@ -81,7 +74,7 @@ func TestHistoryCodecRejectsLegacyPayloads(t *testing.T) {
 		0, 0, 0,
 		0, 0, 0, 1, 1,
 	}
-	for _, version := range []byte{1, 2} {
+	for _, version := range []byte{1, 2, 3} {
 		data := append([]byte(nil), legacy...)
 		data[4] = version
 		if _, err := UnmarshalHistory(data); err == nil {
@@ -165,11 +158,11 @@ func TestChunkCodecRejectsTruncatedAndTrailingPayloads(t *testing.T) {
 
 	for i := range len(encoded) {
 		if _, err := UnmarshalHistory(encoded[:i]); err == nil {
-			t.Fatalf("accepted truncated version 3 prefix of length %d", i)
+			t.Fatalf("accepted truncated compact payload prefix of length %d", i)
 		}
 	}
 	if _, err := UnmarshalHistory(append(append([]byte(nil), encoded...), 0)); err == nil {
-		t.Fatal("accepted trailing garbage after version 3 payload")
+		t.Fatal("accepted trailing garbage after compact payload")
 	}
 }
 
@@ -301,26 +294,22 @@ func historyViewWithDimensions(rowCount, width int) HistoryView {
 }
 
 func historyPayloadWithDimensions(rowCount, width int) []byte {
-	data := make([]byte, 17)
-	copy(data, historyMagic)
-	data[4] = historyVersion
-	chunkCount := (rowCount + maxHistoryChunkRows - 1) / maxHistoryChunkRows
-	binary.BigEndian.PutUint32(data[5:], uint32(chunkCount))
-	binary.BigEndian.PutUint64(data[9:], uint64(rowCount+1))
-	rowID := uint64(1)
+	chunks := (rowCount + maxHistoryChunkRows - 1) / maxHistoryChunkRows
+	data := binary.BigEndian.AppendUint32([]byte(historyMagic), uint32(chunks))
+	data = binary.BigEndian.AppendUint64(data, uint64(rowCount+1))
+	id := uint64(1)
 	for rowCount > 0 {
-		chunkRows := min(rowCount, maxHistoryChunkRows)
-		data = binary.BigEndian.AppendUint32(data, uint32(chunkRows))
-		for range chunkRows {
-			data = binary.BigEndian.AppendUint64(data, rowID)
-			rowID++
-			data = binary.BigEndian.AppendUint32(data, uint32(width))
-			//nolint:makezero // The header prefix is retained while zeroed cell records are appended.
-			data = append(data, make([]byte, width*historyCellBytes)...)
-			data = binary.BigEndian.AppendUint32(data, uint32(width))
-			data = append(data, 0) //nolint:makezero // The header prefix is retained while the bound is appended.
+		rows := min(rowCount, maxHistoryChunkRows)
+		data = binary.BigEndian.AppendUint32(data, uint32(width))
+		data = binary.BigEndian.AppendUint32(data, uint32(rows))
+		data = binary.BigEndian.AppendUint32(data, 1)
+		for range rows {
+			data = binary.BigEndian.AppendUint64(data, id)
+			id++
+			data = appendHistoryBound(data, LineBound{End: width})
 		}
-		rowCount -= chunkRows
+		data = append(data, make([]byte, rows*width*historyStoredCellBytes)...)
+		rowCount -= rows
 	}
 	return data
 }
@@ -329,29 +318,25 @@ func historyPayloadWithDimensions(rowCount, width int) []byte {
 // budget, but its cells exceed the aggregate budget. It deliberately omits
 // cell payload bytes: the aggregate limit must reject it before allocation.
 func aggregateCellLimitDeclaration() []byte {
-	data := make([]byte, 17, 29)
-	copy(data, historyMagic)
-	data[4] = historyVersion
-	binary.BigEndian.PutUint32(data[5:], 1)
-	binary.BigEndian.PutUint64(data[9:], 2)
+	data := binary.BigEndian.AppendUint32([]byte(historyMagic), 1)
+	data = binary.BigEndian.AppendUint64(data, 2)
+	data = binary.BigEndian.AppendUint32(data, maxHistoryCells+1)
 	data = binary.BigEndian.AppendUint32(data, 1)
-	data = binary.BigEndian.AppendUint64(data, 1)
-	return binary.BigEndian.AppendUint32(data, uint32(maxHistoryCells+1))
+	return binary.BigEndian.AppendUint32(data, 1)
 }
 
 func hostileHistoryDeclarations(chunkCount, rowCount int) []byte {
-	data := make([]byte, 17, 17+chunkCount*(4+rowCount*12))
-	copy(data, historyMagic)
-	data[4] = historyVersion
-	binary.BigEndian.PutUint32(data[5:], uint32(chunkCount))
-	binary.BigEndian.PutUint64(data[9:], uint64(chunkCount*rowCount+1))
+	data := binary.BigEndian.AppendUint32([]byte(historyMagic), uint32(chunkCount))
+	data = binary.BigEndian.AppendUint64(data, uint64(chunkCount*rowCount+1))
 	id := uint64(1)
 	for range chunkCount {
+		data = binary.BigEndian.AppendUint32(data, 0)
 		data = binary.BigEndian.AppendUint32(data, uint32(rowCount))
+		data = binary.BigEndian.AppendUint32(data, 1)
 		for range rowCount {
 			data = binary.BigEndian.AppendUint64(data, id)
 			id++
-			data = binary.BigEndian.AppendUint32(data, 0)
+			data = appendHistoryBound(data, LineBound{})
 		}
 	}
 	return data
@@ -363,9 +348,9 @@ func TestHistoryPreflightMatchesUnmarshalMalformedInput(t *testing.T) {
 		t.Fatalf("marshal valid history: %v", err)
 	}
 	invalidRune := append([]byte(nil), valid...)
-	binary.BigEndian.PutUint32(invalidRune[33:37], ^uint32(0))
+	binary.BigEndian.PutUint32(invalidRune[len(valid)-historyStoredCellBytes:], ^uint32(0))
 	invalidUnderlineStyle := append([]byte(nil), valid...)
-	invalidUnderlineStyle[33+29] = byte(renderer.UnderlineDashed + 1)
+	invalidUnderlineStyle[historyHeaderBytes+historyChunkHeaderBytes+25] = byte(renderer.UnderlineDashed + 1)
 
 	tests := []struct {
 		name  string
@@ -379,7 +364,7 @@ func TestHistoryPreflightMatchesUnmarshalMalformedInput(t *testing.T) {
 		{name: "invalid underline style", data: invalidUnderlineStyle},
 		{name: "aggregate row budget", data: hostileHistoryDeclarations(47, maxHistoryChunkRows)},
 		{name: "aggregate cell budget", data: aggregateCellLimitDeclaration()},
-		{name: "zero row count", data: []byte{'V', 'T', 'H', '1', historyVersion, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0}},
+		{name: "zero row count", data: hostileHistoryDeclarations(1, 0)},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -398,7 +383,7 @@ func FuzzHistoryPreflightMatchesUnmarshal(f *testing.F) {
 		f.Fatalf("marshal valid history: %v", err)
 	}
 	invalidRune := append([]byte(nil), valid...)
-	binary.BigEndian.PutUint32(invalidRune[33:37], ^uint32(0))
+	binary.BigEndian.PutUint32(invalidRune[len(valid)-historyStoredCellBytes:], ^uint32(0))
 	f.Add(valid)
 	f.Add(invalidRune)
 	f.Add([]byte("VTH1\x01\x00\x00\x00\x00"))

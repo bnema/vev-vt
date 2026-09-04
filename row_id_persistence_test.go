@@ -15,16 +15,17 @@ func TestHistoryCodecRejectsMalformedRowIDsAndCounters(t *testing.T) {
 	encoded, err := MarshalHistory(history.SealAndView())
 	require.NoError(t, err)
 
-	firstIDOffset := 17 + 4
-	secondIDOffset := firstIDOffset + 8 + 4 + historyCellBytes + historyBoundBytes
+	styles := int(binary.BigEndian.Uint32(encoded[24:28]))
+	firstIDOffset := historyHeaderBytes + historyChunkHeaderBytes + (styles-1)*historyStyleBytes
+	secondIDOffset := firstIDOffset + historyRowBytes
 	for _, test := range []struct {
 		name   string
 		mutate func([]byte)
 	}{
 		{name: "zero row ID", mutate: func(data []byte) { binary.BigEndian.PutUint64(data[firstIDOffset:], 0) }},
 		{name: "duplicate row ID", mutate: func(data []byte) { copy(data[secondIDOffset:secondIDOffset+8], data[firstIDOffset:firstIDOffset+8]) }},
-		{name: "counter does not exceed IDs", mutate: func(data []byte) { binary.BigEndian.PutUint64(data[9:17], 2) }},
-		{name: "max counter", mutate: func(data []byte) { binary.BigEndian.PutUint64(data[9:17], ^uint64(0)) }},
+		{name: "counter does not exceed IDs", mutate: func(data []byte) { binary.BigEndian.PutUint64(data[8:16], 2) }},
+		{name: "max counter", mutate: func(data []byte) { binary.BigEndian.PutUint64(data[8:16], ^uint64(0)) }},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			data := append([]byte(nil), encoded...)
