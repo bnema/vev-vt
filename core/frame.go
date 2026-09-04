@@ -17,7 +17,7 @@ type CellSource interface {
 const (
 	// StoredCellLogicalBytes is the deterministic uncompressed size of one
 	// compact cell, independent of the Go allocator and host architecture.
-	StoredCellLogicalBytes uint64 = 12
+	StoredCellLogicalBytes uint64 = 16
 	// RowDescriptorLogicalBytes is the deterministic size of one compact row
 	// descriptor.
 	RowDescriptorLogicalBytes uint64 = 4
@@ -29,9 +29,10 @@ const (
 )
 
 type storedCell struct {
-	rune    int32
-	styleID uint32
-	flags   uint8
+	rune      int32
+	styleID   uint32
+	payloadID uint32
+	flags     uint8
 }
 
 type styleSlot struct {
@@ -41,12 +42,16 @@ type styleSlot struct {
 }
 
 type cellPage struct {
-	cells      []storedCell
-	rows       []uint32
-	styles     []styleSlot
-	styleIndex map[Style]uint32
-	freeStyles []uint32
-	styleCount uint32
+	cells        []storedCell
+	rows         []uint32
+	styles       []styleSlot
+	styleIndex   map[Style]uint32
+	freeStyles   []uint32
+	styleCount   uint32
+	payloads     []payloadSlot
+	payloadIndex map[CellPayload]uint32
+	freePayloads []uint32
+	payloadBytes uint64
 }
 
 // Frame is a fixed-size semantic grid backed by one compact page. Cells carry
@@ -90,12 +95,16 @@ func (f Frame) Clone() Frame {
 		Width:  f.Width,
 		Height: f.Height,
 		page: &cellPage{
-			cells:      append([]storedCell(nil), f.page.cells...),
-			rows:       append([]uint32(nil), f.page.rows...),
-			styles:     append([]styleSlot(nil), f.page.styles...),
-			styleIndex: maps.Clone(f.page.styleIndex),
-			freeStyles: append([]uint32(nil), f.page.freeStyles...),
-			styleCount: f.page.styleCount,
+			cells:        append([]storedCell(nil), f.page.cells...),
+			rows:         append([]uint32(nil), f.page.rows...),
+			styles:       append([]styleSlot(nil), f.page.styles...),
+			styleIndex:   maps.Clone(f.page.styleIndex),
+			freeStyles:   append([]uint32(nil), f.page.freeStyles...),
+			styleCount:   f.page.styleCount,
+			payloads:     append([]payloadSlot(nil), f.page.payloads...),
+			payloadIndex: maps.Clone(f.page.payloadIndex),
+			freePayloads: append([]uint32(nil), f.page.freePayloads...),
+			payloadBytes: f.page.payloadBytes,
 		},
 	}
 }
@@ -219,7 +228,7 @@ func (f Frame) CheckInvariants() error {
 	if used != f.page.styleCount || len(f.page.styleIndex) != int(used) {
 		return fmt.Errorf("style count = %d/%d, index entries %d", used, f.page.styleCount, len(f.page.styleIndex))
 	}
-	return nil
+	return f.checkPayloadInvariants()
 }
 
 // LogicalBytes returns deterministic uncompressed page bytes independent of Go
@@ -228,7 +237,7 @@ func (f Frame) LogicalBytes() uint64 {
 	if f.page == nil {
 		return 0
 	}
-	return uint64(len(f.page.cells))*StoredCellLogicalBytes + uint64(len(f.page.rows))*RowDescriptorLogicalBytes + uint64(f.page.styleCount)*StyleRecordLogicalBytes
+	return uint64(len(f.page.cells))*StoredCellLogicalBytes + uint64(len(f.page.rows))*RowDescriptorLogicalBytes + uint64(f.page.styleCount)*StyleRecordLogicalBytes + f.page.payloadBytes
 }
 
 // StyleCount returns the number of live page-local styles, including default ID zero.
@@ -243,12 +252,14 @@ func (f Frame) Columns() int { return f.Width }
 func (f Frame) Rows() int    { return f.Height }
 func (f Frame) Cell(x, y int) Cell {
 	stored := f.page.cells[f.offset(x, y)]
-	return Cell{Rune: rune(stored.rune), Style: f.page.styles[stored.styleID].style, Continuation: stored.flags&continuationFlag != 0}
+	return Cell{Rune: rune(stored.rune), Style: f.page.styles[stored.styleID].style, Payload: f.payload(stored.payloadID), Continuation: stored.flags&continuationFlag != 0}
 }
 func (f Frame) At(x, y int) Cell { return f.Cell(x, y) }
 
 func (f Frame) Set(x, y int, cell Cell) {
 	index := f.offset(x, y)
+	payloadID := f.internPayload(cell.Payload)
+	f.releasePayload(f.page.cells[index].payloadID)
 	oldID := f.page.cells[index].styleID
 	styleID := f.internStyle(cell.Style)
 	if oldID == styleID {
@@ -260,7 +271,7 @@ func (f Frame) Set(x, y int, cell Cell) {
 	if cell.Continuation {
 		flags = continuationFlag
 	}
-	f.page.cells[index] = storedCell{rune: int32(cell.Rune), styleID: styleID, flags: flags}
+	f.page.cells[index] = storedCell{rune: int32(cell.Rune), styleID: styleID, payloadID: payloadID, flags: flags}
 }
 
 func (f Frame) Row(y int) []Cell {
@@ -323,6 +334,7 @@ func (f Frame) offset(x, y int) int { return int(f.page.rows[y]) + x }
 func (f Frame) blankPhysicalRow(offset uint32) {
 	for x := range f.Width {
 		index := int(offset) + x
+		f.releasePayload(f.page.cells[index].payloadID)
 		oldID := f.page.cells[index].styleID
 		if oldID != 0 {
 			f.page.styles[0].refs++

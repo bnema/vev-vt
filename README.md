@@ -58,22 +58,38 @@ is intentionally not implemented here.
 `MarshalHistory` and `UnmarshalHistory` use **VTC1**, replacing VTH3 directly.
 Older formats are rejected; no migration reader or dual-format path is retained.
 The format stores a next-row-ID counter, equal-width chunks, canonical local
-style dictionaries, row IDs and bounds, and 9-byte rune/style-reference/continuation
-records. Default style ID zero is implicit. IDs are rebuilt from semantic styles,
-not copied from internal pages.
+style and exceptional-payload dictionaries, row IDs and bounds. Ordinary cells
+use 9-byte rune/style-reference/flag records; exceptional cells add a 4-byte
+payload reference. Default style and empty payload IDs are implicit. IDs are
+rebuilt from semantic values, not copied from internal pages.
 
 Decoding validates the entire payload before allocating compact frames. It rejects
 invalid references, duplicate or unused styles, noncanonical style fields,
 duplicate row IDs, invalid counters, truncation and trailing bytes. Aggregate
 ceilings are 12,000 rows and 1,920,000 cells; wide rows are allowed within those
-ceilings. Preflight `DecodeStats.Bytes` reports uncompressed logical storage,
-not encoded length or allocator usage.
+ceilings. Exceptional payload records and strings have a separate aggregate
+64 MiB decode ceiling. Preflight `DecodeStats.Bytes` reports uncompressed logical
+storage, not encoded length or allocator usage.
 
 Measure encoded size, throughput and allocations with:
 
 ```sh
 go test . -run '^$' -bench '^BenchmarkCompactHistoryCodec$' -benchmem
 ```
+
+## Exceptional payload storage
+
+`core.NewCellPayload(grapheme, hyperlink)` constructs an immutable value for
+`Cell.Payload`. Values contain at most 128 grapheme bytes and 4,096 hyperlink
+bytes; invalid UTF-8 and terminal control characters are rejected. Empty payload
+ID zero costs no dictionary entry. Pages intern nonempty values locally, reclaim
+unreferenced slots after overwrite/clear, and remap values on cross-page copies.
+Clone, reflow, snapshots, history eviction and VTC1 persistence preserve payloads.
+
+This is the storage foundation for exceptional values, not a new grapheme
+segmentation engine or OSC 8 parser. The VT parser and ANSI output still support
+their existing rune-based text semantics; callers must not infer new protocol
+support from the ability to retain payload values.
 
 ## Kitty graphics subset
 
@@ -126,17 +142,18 @@ go test . -run '^$' \
 
 It reports construction allocations and retained heap bytes for plain ASCII,
 repeated indexed and RGB styles, high-cardinality RGB churn, wide Unicode, and
-styled blanks. Compact sealed history retains about 17.1 MB for the plain-ASCII
-case, more than 5× below the original 95.3 MB baseline while keeping a bounded
+styled blanks. History with 16-byte cells retains about 23.0 MB for the plain-ASCII
+case, more than 4× below the original 95.3 MB baseline while keeping a bounded
 mutable tail.
 
 The compact page primitive can be measured with
 `go test ./core -run '^$' -bench '^BenchmarkCompactFrameBuild10Kx120$' -benchmem -benchtime=1x`;
 its logical-byte result is deterministic and excludes Go allocator/map overhead.
 
-Scrollback retention uses the same uncompressed logical model: 12 bytes per
-stored cell, 4 bytes per row descriptor, and 32 bytes per distinct canonical
-style in each compact slab (including its default style). Configure independent
+Scrollback retention uses the same uncompressed logical model: 16 bytes per
+stored cell, 4 bytes per row descriptor, 32 bytes per distinct canonical style
+in each compact slab (including its default style), and 16 bytes plus UTF-8
+string lengths per distinct nonempty exceptional payload. Configure independent
 byte and row ceilings with `HistoryConfig.MaxBytes` and `HistoryConfig.MaxRows`.
 `History.LogicalBytes`, `HistoryView.LogicalBytes`, and
 `HistorySnapshotView.LogicalBytes` expose current usage. This accounting covers

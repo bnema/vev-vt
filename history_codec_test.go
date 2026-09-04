@@ -27,6 +27,7 @@ func TestHistoryCodecCompactBytes(t *testing.T) {
 		0, 0, 0, 1, // width
 		0, 0, 0, 1, // rows
 		0, 0, 0, 1, // implicit default style only
+		0, 0, 0, 0, // no exceptional payloads
 		0, 0, 0, 0, 0, 0, 0, 1, // row ID
 		0, 0, 0, 1, 1, // bound
 		0, 0, 0, 'a', // rune
@@ -303,6 +304,7 @@ func historyPayloadWithDimensions(rowCount, width int) []byte {
 		data = binary.BigEndian.AppendUint32(data, uint32(width))
 		data = binary.BigEndian.AppendUint32(data, uint32(rows))
 		data = binary.BigEndian.AppendUint32(data, 1)
+		data = binary.BigEndian.AppendUint32(data, 0)
 		for range rows {
 			data = binary.BigEndian.AppendUint64(data, id)
 			id++
@@ -322,7 +324,8 @@ func aggregateCellLimitDeclaration() []byte {
 	data = binary.BigEndian.AppendUint64(data, 2)
 	data = binary.BigEndian.AppendUint32(data, maxHistoryCells+1)
 	data = binary.BigEndian.AppendUint32(data, 1)
-	return binary.BigEndian.AppendUint32(data, 1)
+	data = binary.BigEndian.AppendUint32(data, 1)
+	return binary.BigEndian.AppendUint32(data, 0)
 }
 
 func hostileHistoryDeclarations(chunkCount, rowCount int) []byte {
@@ -333,6 +336,7 @@ func hostileHistoryDeclarations(chunkCount, rowCount int) []byte {
 		data = binary.BigEndian.AppendUint32(data, 0)
 		data = binary.BigEndian.AppendUint32(data, uint32(rowCount))
 		data = binary.BigEndian.AppendUint32(data, 1)
+		data = binary.BigEndian.AppendUint32(data, 0)
 		for range rowCount {
 			data = binary.BigEndian.AppendUint64(data, id)
 			id++

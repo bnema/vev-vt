@@ -97,6 +97,7 @@ func (snapshot RecoveryTranscriptSnapshot) Marshal() ([]byte, error) {
 				bounds: segment.bounds[start : start+count], rowIDs: segment.rowIDs[start : start+count],
 				styleDrops: drops, styleCount: uint64(len(lastStyleRow)) + 1,
 			}
+			chunk.recordPayloads()
 			view.chunks = append(view.chunks, chunk)
 			view.rows += count
 			view.cells += count * frame.Width

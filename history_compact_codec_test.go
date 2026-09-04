@@ -76,6 +76,7 @@ func TestCompactHistoryRejectsMalformedDictionaries(t *testing.T) {
 		b = binary.BigEndian.AppendUint32(b, uint32(len(refs)))
 		b = binary.BigEndian.AppendUint32(b, 1)
 		b = binary.BigEndian.AppendUint32(b, uint32(len(styles)+1))
+		b = binary.BigEndian.AppendUint32(b, 0)
 		for _, s := range styles {
 			b = appendHistoryStyle(b, s)
 		}

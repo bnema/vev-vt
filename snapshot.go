@@ -166,16 +166,7 @@ func (h *History) boundedRestoredChunk(chunk *HistoryChunk) *HistoryChunk {
 		if bounded.count == 1 {
 			return nil
 		}
-		bounded = &HistoryChunk{
-			frame:      bounded.frame,
-			start:      bounded.start + 1,
-			count:      bounded.count - 1,
-			width:      bounded.width,
-			bounds:     bounded.bounds[1:],
-			rowIDs:     bounded.rowIDs[1:],
-			styleDrops: bounded.styleDrops,
-			styleCount: bounded.styleCount - bounded.styleDrops[bounded.start],
-		}
+		bounded = bounded.withoutFirstRow()
 	}
 	return bounded
 }

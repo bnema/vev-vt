@@ -6,6 +6,7 @@ import "github.com/bnema/vev-vt/core"
 // history, and renderer consumers share one cell/style/frame representation.
 // The implementation and storage policy remain owned by the core package.
 type Cell = core.Cell
+type CellPayload = core.CellPayload
 type RGB = core.RGB
 type StyleAttrs = core.StyleAttrs
 type UnderlineStyle = core.UnderlineStyle
@@ -36,10 +37,11 @@ const (
 )
 
 var (
-	BlankCell    = core.BlankCell
-	DefaultStyle = core.DefaultStyle
-	FullRedraw   = core.FullRedraw
-	NewFrame     = core.NewFrame
+	BlankCell      = core.BlankCell
+	DefaultStyle   = core.DefaultStyle
+	FullRedraw     = core.FullRedraw
+	NewFrame       = core.NewFrame
+	NewCellPayload = core.NewCellPayload
 )
 
 func RuneWidth(r rune) int { return core.RuneWidth(r) }

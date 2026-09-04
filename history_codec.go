@@ -12,7 +12,7 @@ import (
 const (
 	historyMagic            = "VTC1"
 	historyHeaderBytes      = 16
-	historyChunkHeaderBytes = 12
+	historyChunkHeaderBytes = 16
 	historyStoredCellBytes  = 9
 	historyStyleBytes       = 37
 	historyRowBytes         = 13
@@ -27,15 +27,17 @@ const (
 	maxHistoryCells          = maxHistoryRows * maxHistoryRowCells
 	maxHistoryStylesPerChunk = maxHistoryCells + 1
 	maxHistoryDecodeStyles   = maxHistoryCells + maxHistoryChunks
+	maxHistoryPayloadBytes   = 64 << 20
 	maxHistoryDecodedBytes   = maxHistoryCells*renderer.StoredCellLogicalBytes +
 		maxHistoryRows*renderer.RowDescriptorLogicalBytes +
-		maxHistoryDecodeStyles*renderer.StyleRecordLogicalBytes
+		maxHistoryDecodeStyles*renderer.StyleRecordLogicalBytes + maxHistoryPayloadBytes
 )
 
 var errInvalidHistory = errors.New("invalid history payload")
 
 type historyDecodeStats struct {
 	chunks, rows, cells, styles, bytes uint64
+	payloadBytes                       uint64
 }
 
 // MarshalHistory serializes semantic cells with canonical chunk-local style
@@ -49,9 +51,11 @@ func MarshalHistory(view HistoryView) ([]byte, error) {
 		return nil, fmt.Errorf("marshal history: %w", errInvalidHistory)
 	}
 	type encodedChunk struct {
-		chunk  *HistoryChunk
-		styles []renderer.Style
-		ids    map[renderer.Style]uint32
+		chunk      *HistoryChunk
+		styles     []renderer.Style
+		ids        map[renderer.Style]uint32
+		payloads   []renderer.CellPayload
+		payloadIDs map[renderer.CellPayload]uint32
 	}
 	encoded := make([]encodedChunk, 0, len(view.chunks))
 	size := uint64(historyHeaderBytes)
@@ -69,6 +73,9 @@ func MarshalHistory(view HistoryView) ([]byte, error) {
 		}
 		styles := []renderer.Style{renderer.DefaultStyle()}
 		ids := map[renderer.Style]uint32{renderer.DefaultStyle(): 0}
+		var payloads []renderer.CellPayload
+		var payloadIDs map[renderer.CellPayload]uint32
+		var payloadWireBytes uint64
 		for row := range chunk.len() {
 			if !validHistoryBound(chunk.bounds[row], chunk.width) {
 				return nil, fmt.Errorf("marshal history: %w", errInvalidHistory)
@@ -77,6 +84,21 @@ func MarshalHistory(view HistoryView) ([]byte, error) {
 				cell := chunk.cell(row, x)
 				if !validHistoryCell(cell) {
 					return nil, fmt.Errorf("marshal history: %w", errInvalidHistory)
+				}
+				if !cell.Payload.Empty() {
+					payloadWireBytes += 4 // The handle is present only for exceptional cells.
+					if payloadIDs == nil {
+						payloadIDs = make(map[renderer.CellPayload]uint32)
+					}
+					if _, exists := payloadIDs[cell.Payload]; !exists {
+						n := cell.Payload.LogicalBytes()
+						if !addHistoryDecodeBudget(&stats.payloadBytes, n, maxHistoryPayloadBytes) || !addHistoryDecodeBudget(&stats.bytes, n, maxHistoryDecodedBytes) {
+							return nil, fmt.Errorf("marshal history: %w", errInvalidHistory)
+						}
+						payloads = append(payloads, cell.Payload)
+						payloadIDs[cell.Payload] = uint32(len(payloads))
+						payloadWireBytes += 8 + uint64(len(cell.Payload.Grapheme())+len(cell.Payload.Hyperlink()))
+					}
 				}
 				style := cell.Style.Canonical()
 				if _, exists := ids[style]; !exists {
@@ -89,8 +111,8 @@ func MarshalHistory(view HistoryView) ([]byte, error) {
 			!addHistoryLogicalBytes(&stats, cells, uint64(chunk.len()), uint64(len(styles))) {
 			return nil, fmt.Errorf("marshal history: %w", errInvalidHistory)
 		}
-		size += historyChunkHeaderBytes + uint64(len(styles)-1)*historyStyleBytes + uint64(chunk.len())*historyRowBytes + cells*historyStoredCellBytes
-		encoded = append(encoded, encodedChunk{chunk: chunk, styles: styles, ids: ids})
+		size += historyChunkHeaderBytes + uint64(len(styles)-1)*historyStyleBytes + uint64(chunk.len())*historyRowBytes + cells*historyStoredCellBytes + payloadWireBytes
+		encoded = append(encoded, encodedChunk{chunk: chunk, styles: styles, ids: ids, payloads: payloads, payloadIDs: payloadIDs})
 	}
 	// Aggregate budgets bound size well below MaxInt even on 32-bit hosts.
 	out := make([]byte, 0, int(size))
@@ -102,8 +124,12 @@ func MarshalHistory(view HistoryView) ([]byte, error) {
 		out = binary.BigEndian.AppendUint32(out, uint32(chunk.width))
 		out = binary.BigEndian.AppendUint32(out, uint32(chunk.len()))
 		out = binary.BigEndian.AppendUint32(out, uint32(len(styles)))
+		out = binary.BigEndian.AppendUint32(out, uint32(len(entry.payloads)))
 		for _, style := range styles[1:] {
 			out = appendHistoryStyle(out, style)
+		}
+		for _, p := range entry.payloads {
+			out = appendHistoryPayload(out, p)
 		}
 		for row, id := range chunk.rowIDs {
 			out = binary.BigEndian.AppendUint64(out, uint64(id))
@@ -118,7 +144,13 @@ func MarshalHistory(view HistoryView) ([]byte, error) {
 				if cell.Continuation {
 					flag = 1
 				}
+				if !cell.Payload.Empty() {
+					flag |= 2
+				}
 				out = append(out, flag)
+				if !cell.Payload.Empty() {
+					out = binary.BigEndian.AppendUint32(out, entry.payloadIDs[cell.Payload])
+				}
 			}
 		}
 	}
@@ -201,11 +233,12 @@ func parseHistory(data []byte, populate bool) (HistoryView, historyDecodeStats, 
 		width, wok := p.uint32()
 		rows, rok := p.uint32()
 		nstyles, sok := p.uint32()
-		if !wok || !rok || !sok || rows == 0 || rows > maxHistoryChunkRows || uint64(width) > uint64(math.MaxInt) || nstyles == 0 || nstyles > maxHistoryStylesPerChunk {
+		npayloads, pok := p.uint32()
+		if !wok || !rok || !sok || !pok || rows == 0 || rows > maxHistoryChunkRows || uint64(width) > uint64(math.MaxInt) || nstyles == 0 || nstyles > maxHistoryStylesPerChunk {
 			return invalid()
 		}
 		cells := uint64(width) * uint64(rows)
-		if uint64(nstyles) > cells+1 ||
+		if uint64(nstyles) > cells+1 || uint64(npayloads) > cells ||
 			!addHistoryDecodeBudget(&stats.rows, uint64(rows), maxHistoryRows) ||
 			!addHistoryDecodeBudget(&stats.cells, cells, maxHistoryCells) ||
 			!addHistoryDecodeBudget(&stats.styles, uint64(nstyles), maxHistoryDecodeStyles) ||
@@ -213,7 +246,7 @@ func parseHistory(data []byte, populate bool) (HistoryView, historyDecodeStats, 
 			return invalid()
 		}
 		// Counts have now passed aggregate budgets. This sum cannot overflow.
-		payload := uint64(nstyles-1)*historyStyleBytes + uint64(rows)*historyRowBytes + cells*historyStoredCellBytes
+		payload := uint64(nstyles-1)*historyStyleBytes + uint64(npayloads)*8 + uint64(rows)*historyRowBytes + cells*historyStoredCellBytes
 		if payload > uint64(len(p.data)) {
 			return invalid()
 		}
@@ -231,6 +264,11 @@ func parseHistory(data []byte, populate bool) (HistoryView, historyDecodeStats, 
 			seenStyles[style] = struct{}{}
 			styles[id] = style
 		}
+		payloads, ok := p.payloadDictionary(npayloads, &stats)
+		if !ok {
+			return invalid()
+		}
+		usedPayloads := make([]bool, npayloads)
 		rowIDs := make([]RowID, rows)
 		bounds := make([]LineBound, rows)
 		for row := range rows {
@@ -256,13 +294,18 @@ func parseHistory(data []byte, populate bool) (HistoryView, historyDecodeStats, 
 		}
 		for row := range rows {
 			for x := range width {
-				r, id, continuation, ok := p.storedCell(nstyles)
+				r, id, payloadID, continuation, ok := p.storedCell(nstyles, npayloads)
 				if !ok {
 					return invalid()
 				}
 				lastStyleRow[id] = int(row)
+				var value renderer.CellPayload
+				if payloadID != 0 {
+					usedPayloads[payloadID-1] = true
+					value = payloads[payloadID-1]
+				}
 				if populate {
-					frame.Set(int(x), int(row), renderer.Cell{Rune: r, Style: styles[id], Continuation: continuation})
+					frame.Set(int(x), int(row), renderer.Cell{Rune: r, Style: styles[id], Payload: value, Continuation: continuation})
 				}
 			}
 		}
@@ -271,12 +314,19 @@ func parseHistory(data []byte, populate bool) (HistoryView, historyDecodeStats, 
 				return invalid()
 			}
 		}
+		for _, used := range usedPayloads {
+			if !used {
+				return invalid()
+			}
+		}
 		if populate {
 			drops := make([]uint64, rows)
 			for id := uint32(1); id < nstyles; id++ {
 				drops[lastStyleRow[id]]++
 			}
-			chunks = append(chunks, &HistoryChunk{frame: frame, count: int(rows), width: int(width), bounds: bounds, rowIDs: rowIDs, styleDrops: drops, styleCount: uint64(nstyles)})
+			chunk := &HistoryChunk{frame: frame, count: int(rows), width: int(width), bounds: bounds, rowIDs: rowIDs, styleDrops: drops, styleCount: uint64(nstyles)}
+			chunk.recordPayloads()
+			chunks = append(chunks, chunk)
 		}
 	}
 	if len(p.data) != 0 || RowID(nextID) <= maxID {

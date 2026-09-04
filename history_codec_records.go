@@ -103,18 +103,26 @@ func (p *historyParser) bound() (LineBound, bool) {
 	return LineBound{End: int(end), Soft: flag == 1}, true
 }
 
-func (p *historyParser) storedCell(styles uint32) (rune, uint32, bool, bool) {
+func (p *historyParser) storedCell(styles, payloads uint32) (rune, uint32, uint32, bool, bool) {
 	if len(p.data) < historyStoredCellBytes {
-		return 0, 0, false, false
+		return 0, 0, 0, false, false
 	}
 	b := p.data[:historyStoredCellBytes]
 	p.data = p.data[historyStoredCellBytes:]
 	r := rune(binary.BigEndian.Uint32(b[:4]))
 	id := binary.BigEndian.Uint32(b[4:8])
-	if !utf8.ValidRune(r) || id >= styles || b[8] > 1 {
-		return 0, 0, false, false
+	if !utf8.ValidRune(r) || id >= styles || b[8] > 3 {
+		return 0, 0, 0, false, false
 	}
-	return r, id, b[8] == 1, true
+	var payloadID uint32
+	if b[8]&2 != 0 {
+		var ok bool
+		payloadID, ok = p.uint32()
+		if !ok || payloadID == 0 || payloadID > payloads {
+			return 0, 0, 0, false, false
+		}
+	}
+	return r, id, payloadID, b[8]&1 != 0, true
 }
 
 func historyInt(raw uint64) (int, bool) {

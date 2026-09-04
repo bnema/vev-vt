@@ -9,11 +9,12 @@ package core
 type Cell struct {
 	Rune         rune
 	Style        Style
+	Payload      CellPayload
 	Continuation bool
 }
 
 func BlankCell() Cell { return Cell{Rune: ' ', Style: DefaultStyle()} }
 
 func (c Cell) Equal(other Cell) bool {
-	return c.Rune == other.Rune && c.Continuation == other.Continuation && c.Style.Equal(other.Style)
+	return c.Rune == other.Rune && c.Continuation == other.Continuation && c.Payload == other.Payload && c.Style.Equal(other.Style)
 }

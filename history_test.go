@@ -202,7 +202,8 @@ func TestHistoryRecordsOnlyTopEdgeScrollEvictions(t *testing.T) {
 }
 
 func TestHistoryBoundsRowsAndBytesWithExactRowEviction(t *testing.T) {
-	history := NewHistory(HistoryConfig{MaxRows: 4, MaxBytes: 108, ChunkRows: 2})
+	const budget = 3*renderer.StoredCellLogicalBytes + 2*renderer.RowDescriptorLogicalBytes + 2*renderer.StyleRecordLogicalBytes
+	history := NewHistory(HistoryConfig{MaxRows: 4, MaxBytes: budget, ChunkRows: 2})
 	for _, text := range []string{"aa", "bbb", "c", "dd"} {
 		if err := history.Append(historyRow(text), LineBound{End: len(text)}); err != nil {
 			t.Fatalf("append %q: %v", text, err)
@@ -247,7 +248,8 @@ func TestHistoryAppendIsNoOpForNilAndZeroValue(t *testing.T) {
 }
 
 func TestHistoryRejectsRowLargerThanByteBudgetWithoutMutation(t *testing.T) {
-	history := NewHistory(HistoryConfig{MaxRows: 2, MaxBytes: 60, ChunkRows: 2})
+	const budget = 2*renderer.StoredCellLogicalBytes + renderer.RowDescriptorLogicalBytes + renderer.StyleRecordLogicalBytes
+	history := NewHistory(HistoryConfig{MaxRows: 2, MaxBytes: budget, ChunkRows: 2})
 	kept := historyRow("ok")
 	if err := history.Append(kept, LineBound{End: len(kept)}); err != nil {
 		t.Fatalf("append retained row: %v", err)
@@ -390,7 +392,8 @@ func TestHistorySealsCompactContiguousSlabs(t *testing.T) {
 	if view.ChunkCount() != 1 || chunk == nil || chunk.count != rows || chunk.width != columns {
 		t.Fatalf("compact chunk = %#v, chunks %d", chunk, view.ChunkCount())
 	}
-	if got, max := chunk.frame.LogicalBytes(), uint64(rows*columns*16); got >= max {
+	// The original inline Cell occupied 72 bytes; retain the 4x reduction gate.
+	if got, max := chunk.frame.LogicalBytes(), uint64(rows*columns*72/4); got >= max {
 		t.Fatalf("compact slab logical bytes = %d, want below %d", got, max)
 	}
 	if got := chunk.frame.StyleCount(); got != 2 {

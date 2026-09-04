@@ -79,7 +79,8 @@ func TestHistoryFromBlobsRestoresAccountingAndEvictsToBothBudgets(t *testing.T) 
 	tail, err := MarshalHistoryTail(view)
 	require.NoError(t, err)
 
-	restored, err := HistoryFromBlobs(HistoryConfig{MaxRows: 4, MaxBytes: 60, ChunkRows: 2}, sealed, tail)
+	const budget = 2*renderer.StoredCellLogicalBytes + renderer.RowDescriptorLogicalBytes + renderer.StyleRecordLogicalBytes
+	restored, err := HistoryFromBlobs(HistoryConfig{MaxRows: 4, MaxBytes: budget, ChunkRows: 2}, sealed, tail)
 	require.NoError(t, err)
 	require.Equal(t, []string{"cc"}, historyViewTexts(restored.View()))
 	require.Equal(t, 2, restored.Cells())

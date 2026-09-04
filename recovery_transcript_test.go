@@ -270,7 +270,7 @@ func TestNewScreenWithRecoveryTranscriptEvictsOldestRowsWithinBounds(t *testing.
 		},
 		{
 			name:       "byte budget",
-			config:     HistoryConfig{MaxRows: 10, MaxBytes: 108, ChunkRows: 4},
+			config:     HistoryConfig{MaxRows: 10, MaxBytes: 3*renderer.StoredCellLogicalBytes + 2*renderer.RowDescriptorLogicalBytes + 2*renderer.StyleRecordLogicalBytes, ChunkRows: 4},
 			history:    []string{"aa", "b", "ccc"},
 			transcript: []string{"d", "ee"},
 			want:       []string{"d", "ee"},

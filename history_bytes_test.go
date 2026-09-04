@@ -8,7 +8,8 @@ import (
 )
 
 func TestHistoryBoundsRetainedLogicalBytes(t *testing.T) {
-	history := NewHistory(HistoryConfig{MaxRows: 8, MaxBytes: 88, ChunkRows: 4})
+	const budget = 2*(2*renderer.StoredCellLogicalBytes+renderer.RowDescriptorLogicalBytes) + renderer.StyleRecordLogicalBytes
+	history := NewHistory(HistoryConfig{MaxRows: 8, MaxBytes: budget, ChunkRows: 4})
 	for _, text := range []string{"aa", "bb", "cc"} {
 		requireHistoryAppend(t, history, historyRow(text))
 	}
@@ -16,19 +17,20 @@ func TestHistoryBoundsRetainedLogicalBytes(t *testing.T) {
 	if got, want := historyViewTexts(history.View()), []string{"bb", "cc"}; !equalStrings(got, want) {
 		t.Fatalf("retained rows = %#v, want %#v", got, want)
 	}
-	if got, want := history.LogicalBytes(), uint64(88); got != want {
+	if got, want := history.LogicalBytes(), budget; got != want {
 		t.Fatalf("logical bytes = %d, want %d", got, want)
 	}
-	if got, want := history.View().LogicalBytes(), uint64(88); got != want {
+	if got, want := history.View().LogicalBytes(), budget; got != want {
 		t.Fatalf("view logical bytes = %d, want %d", got, want)
 	}
-	if got, want := history.ByteCap(), uint64(88); got != want {
+	if got, want := history.ByteCap(), budget; got != want {
 		t.Fatalf("byte capacity = %d, want %d", got, want)
 	}
 }
 
 func TestHistoryLogicalBytesDeduplicateCanonicalStylesPerSlab(t *testing.T) {
-	history := NewHistory(HistoryConfig{MaxRows: 8, MaxBytes: 96, ChunkRows: 2})
+	const budget = 2*(renderer.StoredCellLogicalBytes+renderer.RowDescriptorLogicalBytes) + 2*renderer.StyleRecordLogicalBytes
+	history := NewHistory(HistoryConfig{MaxRows: 8, MaxBytes: budget, ChunkRows: 2})
 	style := renderer.Style{Bold: true}
 	for _, r := range []rune{'a', 'b'} {
 		if err := history.Append([]renderer.Cell{{Rune: r, Style: style}}, LineBound{End: 1}); err != nil {
@@ -36,7 +38,7 @@ func TestHistoryLogicalBytesDeduplicateCanonicalStylesPerSlab(t *testing.T) {
 		}
 	}
 
-	if got, want := history.LogicalBytes(), uint64(96); got != want {
+	if got, want := history.LogicalBytes(), budget; got != want {
 		t.Fatalf("logical bytes = %d, want %d", got, want)
 	}
 	if got := history.SnapshotView().LogicalBytes(); got != history.LogicalBytes() {
@@ -114,7 +116,8 @@ func TestHistoryRestoreEvictsToLogicalByteBudget(t *testing.T) {
 		t.Fatalf("marshal history: %v", err)
 	}
 
-	restored, err := HistoryFromBlobs(HistoryConfig{MaxRows: 8, MaxBytes: 88, ChunkRows: 4}, sealed, tail)
+	const budget = 2*(2*renderer.StoredCellLogicalBytes+renderer.RowDescriptorLogicalBytes) + renderer.StyleRecordLogicalBytes
+	restored, err := HistoryFromBlobs(HistoryConfig{MaxRows: 8, MaxBytes: budget, ChunkRows: 4}, sealed, tail)
 	if err != nil {
 		t.Fatalf("restore history: %v", err)
 	}
