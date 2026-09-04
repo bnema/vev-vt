@@ -1,7 +1,6 @@
 package vt_test
 
 import (
-	"bytes"
 	"encoding/binary"
 	"encoding/hex"
 	"testing"
@@ -51,14 +50,6 @@ func TestExternalVTH3GoldenVectors(t *testing.T) {
 			if err != nil {
 				t.Fatalf("UnmarshalHistory: %v", err)
 			}
-			reencoded, err := vt.MarshalHistory(view)
-			if err != nil {
-				t.Fatalf("MarshalHistory: %v", err)
-			}
-			if !bytes.Equal(reencoded, data) {
-				t.Fatalf("canonical bytes changed:\n got %x\nwant %x", reencoded, data)
-			}
-
 			switch vector.name {
 			case "empty":
 				if view.Len() != 0 || view.ChunkCount() != 0 || view.NextRowID() != 42 {

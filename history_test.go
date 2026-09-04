@@ -345,7 +345,76 @@ func TestHistoryEvictionKeepsRowsAndBoundsAligned(t *testing.T) {
 	// Rows 2, 3, 4 survived; their Soft flags were true, false, true.
 	for i, want := range []bool{true, false, true} {
 		if got := view.Bound(i).Soft; got != want {
-			t.Errorf("Bound(%d).Soft = %v, want %v (row %q)", i, got, want, view.BorrowedRow(i)[0].Rune)
+			t.Errorf("Bound(%d).Soft = %v, want %v (row %q)", i, got, want, view.Row(i)[0].Rune)
+		}
+	}
+}
+
+func TestHistorySlabAndTailAllocationBounds(t *testing.T) {
+	if uint64(math.MaxInt) >= uint64(math.MaxUint32) {
+		maxWidth := uint64(math.MaxUint32)
+		width := int(maxWidth)
+		if got := maxHistorySlabRows(width); got != 1 {
+			t.Fatalf("maxHistorySlabRows(MaxUint32) = %d, want 1", got)
+		}
+		if got := maxHistorySlabRows(width / 2); got != 2 {
+			t.Fatalf("maxHistorySlabRows(MaxUint32/2) = %d, want 2", got)
+		}
+	}
+
+	history := NewHistory(HistoryConfig{MaxRows: 256, MaxCells: 1_000_000, ChunkRows: 256})
+	row := make([]renderer.Cell, 10_000)
+	if err := history.Append(row, LineBound{}); err != nil {
+		t.Fatal(err)
+	}
+	if got, max := cap(history.tailCells), max(len(row), maxTailPreallocCells); got > max {
+		t.Fatalf("wide-row tail capacity = %d, want at most %d", got, max)
+	}
+}
+
+func TestHistorySealsCompactContiguousSlabs(t *testing.T) {
+	const rows, columns = 256, 120
+	history := NewHistory(HistoryConfig{MaxRows: rows, MaxCells: rows * columns, ChunkRows: rows})
+	row := make([]renderer.Cell, columns)
+	for x := range row {
+		row[x] = renderer.Cell{Rune: 'x', Style: renderer.Style{Bold: true, Foreground: 4}}
+	}
+	for range rows {
+		if err := history.Append(row, LineBound{End: columns}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	view := history.View()
+	chunk := view.Chunk(0)
+	if view.ChunkCount() != 1 || chunk == nil || chunk.count != rows || chunk.width != columns {
+		t.Fatalf("compact chunk = %#v, chunks %d", chunk, view.ChunkCount())
+	}
+	if got, max := chunk.frame.LogicalBytes(), uint64(rows*columns*16); got >= max {
+		t.Fatalf("compact slab logical bytes = %d, want below %d", got, max)
+	}
+	if got := chunk.frame.StyleCount(); got != 2 {
+		t.Fatalf("page-local style count = %d, want default plus repeated style", got)
+	}
+	if err := chunk.CheckInvariants(); err != nil {
+		t.Fatalf("compact chunk invariants: %v", err)
+	}
+}
+
+func TestHistorySplitsCompactSlabsWhenRowWidthChanges(t *testing.T) {
+	history := NewHistory(HistoryConfig{MaxRows: 4, MaxCells: 16, ChunkRows: 4})
+	for _, text := range []string{"aa", "bb", "ccc", "ddd"} {
+		if err := history.Append(historyRow(text), LineBound{End: len(text)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	view := history.View()
+	if got := view.ChunkCount(); got != 2 {
+		t.Fatalf("ChunkCount() = %d, want one slab per consecutive width", got)
+	}
+	for i, want := range []string{"aa", "bb", "ccc", "ddd"} {
+		if got := rowText(view.Row(i)); got != want {
+			t.Fatalf("Row(%d) = %q, want %q", i, got, want)
 		}
 	}
 }

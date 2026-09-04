@@ -28,6 +28,14 @@ func cellAt(s *Screen, x, y int) renderer.Cell {
 	return s.frame.At(x, y)
 }
 
+func testHistoryChunk(rows [][]renderer.Cell, bounds []LineBound, rowIDs []RowID) *HistoryChunk {
+	chunks := newHistoryChunks(rows, bounds, rowIDs)
+	if len(chunks) != 1 {
+		panic("test history chunk rows must have one width")
+	}
+	return chunks[0]
+}
+
 func assertFramesEqual(t *testing.T, got, want renderer.Frame) {
 	t.Helper()
 	if !reflect.DeepEqual(got, want) {

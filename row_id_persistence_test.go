@@ -154,7 +154,7 @@ func TestScreenRowIDBoundaryMatchesHistoryPersistence(t *testing.T) {
 
 func TestHistoryCodecRejectsMissingRowIDsOnMarshal(t *testing.T) {
 	_, err := MarshalHistory(HistoryView{
-		chunks: []*HistoryChunk{{rows: [][]renderer.Cell{historyRow("row")}, bounds: []LineBound{{End: 3}}}},
+		chunks: []*HistoryChunk{testHistoryChunk([][]renderer.Cell{historyRow("row")}, []LineBound{{End: 3}}, nil)},
 		rows:   1,
 	})
 	require.Error(t, err)
@@ -166,7 +166,7 @@ func TestRestoredScreenAllocatesAbovePersistedRowIDs(t *testing.T) {
 	sealed, tail, err := MarshalSealedHistory(history.SealAndView())
 	require.NoError(t, err)
 	transcript, err := MarshalHistory(HistoryView{
-		chunks:    []*HistoryChunk{{rows: [][]renderer.Cell{historyRow("live")}, bounds: []LineBound{{End: 4}}, rowIDs: []RowID{50}}},
+		chunks:    []*HistoryChunk{testHistoryChunk([][]renderer.Cell{historyRow("live")}, []LineBound{{End: 4}}, []RowID{50})},
 		rows:      1,
 		nextRowID: 51,
 	})
@@ -186,7 +186,7 @@ func TestRestoredScreenAllocatesAbovePersistedRowIDs(t *testing.T) {
 
 func TestHistoryRestoreRejectsDuplicateIDsAcrossEvictedHistoryAndTranscript(t *testing.T) {
 	sealedView := HistoryView{
-		chunks:    []*HistoryChunk{{rows: [][]renderer.Cell{historyRow("old")}, bounds: []LineBound{{End: 3}}, rowIDs: []RowID{7}}},
+		chunks:    []*HistoryChunk{testHistoryChunk([][]renderer.Cell{historyRow("old")}, []LineBound{{End: 3}}, []RowID{7})},
 		rows:      1,
 		nextRowID: 8,
 	}
@@ -195,7 +195,7 @@ func TestHistoryRestoreRejectsDuplicateIDsAcrossEvictedHistoryAndTranscript(t *t
 	tail, err := MarshalEmptyHistoryTail()
 	require.NoError(t, err)
 	transcript, err := MarshalHistory(HistoryView{
-		chunks:    []*HistoryChunk{{rows: [][]renderer.Cell{historyRow("live")}, bounds: []LineBound{{End: 4}}, rowIDs: []RowID{7}}},
+		chunks:    []*HistoryChunk{testHistoryChunk([][]renderer.Cell{historyRow("live")}, []LineBound{{End: 4}}, []RowID{7})},
 		rows:      1,
 		nextRowID: 8,
 	})

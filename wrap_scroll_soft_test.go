@@ -128,8 +128,8 @@ func TestSoftLinkFromABottomRowWrapReachesHistory(t *testing.T) {
 
 	view := s.History().SealAndView()
 	require.Equal(t, 7, view.Len(), "history row count")
-	require.Equal(t, "abcdefgh", rowString(view.BorrowedRow(5)))
+	require.Equal(t, "abcdefgh", rowString(view.Row(5)))
 	require.Equal(t, LineBound{End: 8, Soft: true}, view.Bound(5), "the wrapped row must reach history soft")
-	require.Equal(t, "ij      ", rowString(view.BorrowedRow(6)))
+	require.Equal(t, "ij      ", rowString(view.Row(6)))
 	require.Equal(t, LineBound{End: 2, Soft: false}, view.Bound(6), "its continuation is a hard line end")
 }

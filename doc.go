@@ -17,8 +17,7 @@
 // Snapshot and HistorySnapshotView capture owned state without sealing or
 // mutating the live owner. Screen, ScreenSnapshot, and core.Frame expose
 // storage-independent CellSource reads, and Row methods return owned copies.
-// HistoryView.BorrowedRow and HistoryView.Range expose immutable backing
-// storage: callers must not mutate it, and Range callbacks must not retain
-// their row after returning. A HistoryChunk pointer has stable identity for the
-// lifetime of the view, so consumers can reuse unchanged sealed chunks.
+// HistoryView.Row and HistoryView.Range decode owned semantic rows from compact
+// slabs. A HistoryChunk pointer has stable identity for the lifetime of the
+// view, so consumers can reuse unchanged sealed chunks.
 package vt

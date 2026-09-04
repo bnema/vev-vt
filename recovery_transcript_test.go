@@ -209,8 +209,8 @@ func TestRecoveryTranscriptSnapshotChunksMoreThan256RowsCanonically(t *testing.T
 
 	require.Equal(t, 257, view.Len())
 	require.Equal(t, 2, view.ChunkCount())
-	require.Len(t, view.Chunk(0).rows, 256)
-	require.Len(t, view.Chunk(1).rows, 1)
+	require.Equal(t, 256, view.Chunk(0).len())
+	require.Equal(t, 1, view.Chunk(1).len())
 	require.True(t, view.Bound(255).Soft, "a chunk boundary is not a transcript seam")
 	require.False(t, view.Bound(256).Soft, "the transcript's final seam must be hard")
 }
@@ -402,7 +402,7 @@ func recoveryTranscriptBlob(t testing.TB, texts []string, bounds []LineBound) []
 	}
 	view := HistoryView{rows: len(rows), cells: cells, nextRowID: RowID(100 + len(rows))}
 	if len(rows) > 0 {
-		view.chunks = []*HistoryChunk{{rows: rows, bounds: bounds, rowIDs: rowIDs}}
+		view.chunks = newHistoryChunks(rows, bounds, rowIDs)
 	}
 	blob, err := MarshalHistory(view)
 	require.NoError(t, err)

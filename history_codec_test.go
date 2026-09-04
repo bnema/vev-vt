@@ -294,7 +294,7 @@ func historyViewWithDimensions(rowCount, width int) HistoryView {
 			rowIDs[i] = rowID
 			rowID++
 		}
-		chunks = append(chunks, &HistoryChunk{rows: rows, rowIDs: rowIDs})
+		chunks = append(chunks, testHistoryChunk(rows, nil, rowIDs))
 		rowCount -= chunkRows
 	}
 	return HistoryView{chunks: chunks, rows: totalRows, nextRowID: rowID}

@@ -2,6 +2,7 @@ package vt
 
 import (
 	"errors"
+	"fmt"
 	"math"
 	"slices"
 
@@ -13,6 +14,8 @@ import (
 var ErrHistoryRowTooWide = errors.New("history row exceeds cell capacity")
 
 var errInvalidHistoryRowID = errors.New("invalid history row ID")
+
+const maxTailPreallocCells = 32 * 1024
 
 // HistoryConfig controls the bounded terminal history retained by a Screen.
 type HistoryConfig struct {
@@ -30,6 +33,7 @@ type History struct {
 	chunkRows  int
 	chunks     []*HistoryChunk
 	tail       [][]renderer.Cell
+	tailCells  []renderer.Cell
 	tailBounds []LineBound
 	tailIDs    []RowID
 	rows       int
@@ -37,13 +41,95 @@ type History struct {
 	nextRowID  RowID
 }
 
-// HistoryChunk is an immutable group of history rows. Its identity is stable
-// and can be used by consumers to avoid copying unchanged sealed chunks.
-// bounds is parallel to rows and always has the same length.
+// HistoryChunk is an immutable compact slab of equal-width history rows. Its
+// identity is stable and can be used by consumers to reuse unchanged chunks.
 type HistoryChunk struct {
-	rows   [][]renderer.Cell
+	frame  renderer.Frame
+	start  int
+	count  int
+	width  int
 	bounds []LineBound
 	rowIDs []RowID
+}
+
+func newHistoryChunks(rows [][]renderer.Cell, bounds []LineBound, rowIDs []RowID) []*HistoryChunk {
+	bounds = growBounds(bounds, len(rows))
+	rowIDs = growRowIDs(rowIDs, len(rows))
+	var chunks []*HistoryChunk
+	for start := 0; start < len(rows); {
+		width := len(rows[start])
+		limit := start + min(len(rows)-start, maxHistorySlabRows(width))
+		end := start + 1
+		for end < limit && len(rows[end]) == width {
+			end++
+		}
+		frame := renderer.NewFrame(width, end-start)
+		for i := start; i < end; i++ {
+			frame.WriteRow(i-start, 0, rows[i])
+		}
+		chunks = append(chunks, &HistoryChunk{
+			frame:  frame,
+			count:  end - start,
+			width:  width,
+			bounds: append([]LineBound(nil), bounds[start:end]...),
+			rowIDs: append([]RowID(nil), rowIDs[start:end]...),
+		})
+		start = end
+	}
+	return chunks
+}
+
+func maxHistorySlabRows(width int) int {
+	if width <= 0 {
+		return math.MaxInt
+	}
+	rows := min(uint64(math.MaxUint32)/uint64(width), uint64(math.MaxInt))
+	return max(int(rows), 1)
+}
+
+func (c *HistoryChunk) len() int {
+	if c == nil {
+		return 0
+	}
+	return c.count
+}
+
+func (c *HistoryChunk) row(i int) []renderer.Cell {
+	if c == nil || i < 0 || i >= c.count {
+		return nil
+	}
+	return c.frame.Row(c.start + i)
+}
+
+func (c *HistoryChunk) cell(row, column int) renderer.Cell {
+	return c.frame.Cell(column, c.start+row)
+}
+
+func (c *HistoryChunk) cells() int { return c.count * c.width }
+
+// CheckInvariants validates one compact immutable history slab.
+func (c *HistoryChunk) CheckInvariants() error {
+	if c == nil {
+		return fmt.Errorf("nil history chunk")
+	}
+	if c.start < 0 || c.count <= 0 || c.width < 0 || c.start > c.frame.Height-c.count {
+		return fmt.Errorf("invalid history chunk range start=%d count=%d", c.start, c.count)
+	}
+	if c.frame.Width != c.width || len(c.bounds) != c.count || len(c.rowIDs) != c.count {
+		return fmt.Errorf("history chunk metadata is not parallel")
+	}
+	if err := c.frame.CheckInvariants(); err != nil {
+		return fmt.Errorf("history chunk frame: %w", err)
+	}
+	for i, id := range c.rowIDs {
+		if id == 0 || id >= ^RowID(0)-1 {
+			return fmt.Errorf("history row %d has invalid ID %d", i, id)
+		}
+		if !validHistoryBound(c.bounds[i], c.width) {
+			return fmt.Errorf("history row %d has invalid bound", i)
+		}
+	}
+	return nil
 }
 
 // HistoryView is an immutable snapshot of history. Row returns a copy so the
@@ -100,7 +186,7 @@ func (h *History) Append(row []renderer.Cell, bound LineBound) error {
 	if h == nil || h.maxRows == 0 {
 		return nil
 	}
-	if len(row) > h.maxCells {
+	if uint64(len(row)) > uint64(math.MaxUint32) || len(row) > h.maxCells {
 		return ErrHistoryRowTooWide
 	}
 	id, err := h.allocateRowID()
@@ -119,7 +205,7 @@ func (h *History) AppendWithID(row []renderer.Cell, bound LineBound, id RowID) e
 	if h == nil || h.maxRows == 0 {
 		return nil
 	}
-	if len(row) > h.maxCells {
+	if uint64(len(row)) > uint64(math.MaxUint32) || len(row) > h.maxCells {
 		return ErrHistoryRowTooWide
 	}
 	if h.hasRowID(id) {
@@ -132,7 +218,7 @@ func (h *History) appendRow(row []renderer.Cell, bound LineBound, id RowID) erro
 	if h.nextRowID == ^RowID(0) {
 		return errInvalidHistoryRowID
 	}
-	if len(row) > h.maxCells {
+	if uint64(len(row)) > uint64(math.MaxUint32) || len(row) > h.maxCells {
 		return ErrHistoryRowTooWide
 	}
 	if id >= ^RowID(0)-1 {
@@ -144,7 +230,7 @@ func (h *History) appendRow(row []renderer.Cell, bound LineBound, id RowID) erro
 	// Make room before adding so Cells cannot overflow even when the default
 	// capacity is MaxInt.
 	h.evictFor(len(row))
-	h.tail = append(h.tail, append([]renderer.Cell(nil), row...))
+	h.appendTailRow(row)
 	h.tailBounds = append(h.tailBounds, clampBound(bound, len(row)))
 	h.tailIDs = append(h.tailIDs, id)
 	h.rows++
@@ -211,16 +297,52 @@ func cloneRowIDs(ids []RowID, rows int) []RowID {
 	return out
 }
 
+func (h *History) reserveTailRow(width int) (start, end int) {
+	start = len(h.tailCells)
+	end = start + width
+	if end > cap(h.tailCells) {
+		capacity := end
+		if cap(h.tailCells) <= (math.MaxInt-1)/2 {
+			capacity = max(capacity, cap(h.tailCells)*2)
+		}
+		if len(h.tailCells) == 0 {
+			capacity = max(capacity, min(h.maxCells, max(width, maxTailPreallocCells)))
+		}
+		cells := make([]renderer.Cell, len(h.tailCells), capacity)
+		copy(cells, h.tailCells)
+		h.tailCells = cells
+		offset := 0
+		for i := range h.tail {
+			rowWidth := len(h.tail[i])
+			h.tail[i] = h.tailCells[offset : offset+rowWidth : offset+rowWidth]
+			offset += rowWidth
+		}
+	}
+	h.tailCells = h.tailCells[:end]
+	return start, end
+}
+
+func (h *History) appendTailRow(row []renderer.Cell) {
+	start, end := h.reserveTailRow(len(row))
+	copy(h.tailCells[start:end], row)
+	h.tail = append(h.tail, h.tailCells[start:end:end])
+}
+
+func (h *History) appendTailChunkRow(chunk *HistoryChunk, row int) {
+	start, end := h.reserveTailRow(chunk.width)
+	for x := range chunk.width {
+		h.tailCells[start+x] = chunk.cell(row, x)
+	}
+	h.tail = append(h.tail, h.tailCells[start:end:end])
+}
+
 func (h *History) sealTail() {
 	if len(h.tail) == 0 {
 		return
 	}
-	h.chunks = append(h.chunks, &HistoryChunk{
-		rows:   h.tail,
-		bounds: growBounds(h.tailBounds, len(h.tail)),
-		rowIDs: h.tailIDs,
-	})
+	h.chunks = append(h.chunks, newHistoryChunks(h.tail, h.tailBounds, h.tailIDs)...)
 	h.tail = nil
+	h.tailCells = nil
 	h.tailBounds = nil
 	h.tailIDs = nil
 }
@@ -232,12 +354,10 @@ func (h *History) normalizeTail() {
 	h.tailIDs = growRowIDs(h.tailIDs, len(h.tail))
 	for h.chunkRows > 0 && len(h.tail) >= h.chunkRows {
 		bounds := growBounds(h.tailBounds, len(h.tail))
-		h.chunks = append(h.chunks, &HistoryChunk{
-			rows:   h.tail[:h.chunkRows],
-			bounds: bounds[:h.chunkRows],
-			rowIDs: h.tailIDs[:h.chunkRows],
-		})
+		h.chunks = append(h.chunks, newHistoryChunks(h.tail[:h.chunkRows], bounds[:h.chunkRows], h.tailIDs[:h.chunkRows])...)
+		removedCells := historyRowsCells(h.tail[:h.chunkRows])
 		h.tail = h.tail[h.chunkRows:]
+		h.tailCells = h.tailCells[removedCells:]
 		h.tailBounds = bounds[h.chunkRows:]
 		h.tailIDs = h.tailIDs[h.chunkRows:]
 	}
@@ -258,22 +378,22 @@ func (h *History) evictUntil(rowCount, cellCount int) {
 	for h.rows > h.maxRows-rowCount || h.cells > h.maxCells-cellCount {
 		if len(h.chunks) > 0 {
 			chunk := h.chunks[0]
-			row := chunk.rows[0]
 			h.rows--
-			h.cells -= len(row)
-			if len(chunk.rows) == 1 {
+			h.cells -= chunk.width
+			if chunk.count == 1 {
 				copy(h.chunks, h.chunks[1:])
 				h.chunks[len(h.chunks)-1] = nil
 				h.chunks = h.chunks[:len(h.chunks)-1]
 			} else {
 				// Preserve cell storage while replacing only the chunk wrapper: a
 				// retained view may still refer to the original immutable chunk.
-				bounds := growBounds(chunk.bounds, len(chunk.rows))
-				rowIDs := growRowIDs(chunk.rowIDs, len(chunk.rows))
 				h.chunks[0] = &HistoryChunk{
-					rows:   chunk.rows[1:],
-					bounds: bounds[1:],
-					rowIDs: rowIDs[1:],
+					frame:  chunk.frame,
+					start:  chunk.start + 1,
+					count:  chunk.count - 1,
+					width:  chunk.width,
+					bounds: chunk.bounds[1:],
+					rowIDs: chunk.rowIDs[1:],
 				}
 			}
 			continue
@@ -286,6 +406,7 @@ func (h *History) evictUntil(rowCount, cellCount int) {
 		h.cells -= len(row)
 		h.tail[0] = nil
 		h.tail = h.tail[1:]
+		h.tailCells = h.tailCells[len(row):]
 		h.tailBounds = growBounds(h.tailBounds, len(h.tail)+1)[1:]
 		h.tailIDs = growRowIDs(h.tailIDs, len(h.tail)+1)[1:]
 	}
@@ -312,11 +433,7 @@ func (h *History) View() HistoryView {
 	chunks := make([]*HistoryChunk, len(h.chunks), len(h.chunks)+1)
 	copy(chunks, h.chunks)
 	if len(h.tail) > 0 {
-		chunks = append(chunks, &HistoryChunk{
-			rows:   cloneHistoryRows(h.tail),
-			bounds: append([]LineBound(nil), growBounds(h.tailBounds, len(h.tail))...),
-			rowIDs: cloneRowIDs(h.tailIDs, len(h.tail)),
-		})
+		chunks = append(chunks, newHistoryChunks(h.tail, h.tailBounds, h.tailIDs)...)
 	}
 	return HistoryView{chunks: chunks, rows: h.rows, cells: h.cells, nextRowID: h.nextRowID}
 }
@@ -345,9 +462,14 @@ func cloneHistoryRows(rows [][]renderer.Cell) [][]renderer.Cell {
 	if len(rows) == 0 {
 		return nil
 	}
+	cells := make([]renderer.Cell, historyRowsCells(rows))
 	copyRows := make([][]renderer.Cell, len(rows))
+	offset := 0
 	for i, row := range rows {
-		copyRows[i] = append([]renderer.Cell(nil), row...)
+		end := offset + len(row)
+		copy(cells[offset:end], row)
+		copyRows[i] = cells[offset:end:end]
+		offset = end
 	}
 	return copyRows
 }
@@ -416,35 +538,27 @@ func (v HistoryView) Chunk(i int) *HistoryChunk {
 	return v.chunks[i]
 }
 
-// Range calls yield for each row in oldest-first order. The row is borrowed
-// immutable storage: yield must not mutate or retain it after returning.
+// Range calls yield with a decoded owned row in oldest-first order.
 func (v HistoryView) Range(yield func([]renderer.Cell) bool) {
 	for _, chunk := range v.chunks {
-		for _, row := range chunk.rows {
-			if !yield(row) {
+		for i := range chunk.len() {
+			if !yield(chunk.row(i)) {
 				return
 			}
 		}
 	}
 }
 
-// Row returns a copy of the row at i, or nil when i is out of range.
+// Row returns a decoded owned copy of the row at i, or nil when out of range.
 func (v HistoryView) Row(i int) []renderer.Cell {
-	return append([]renderer.Cell(nil), v.BorrowedRow(i)...)
-}
-
-// BorrowedRow returns immutable storage for the row at i, or nil when i is out
-// of range. The caller must not mutate or retain the result after it no longer
-// retains v. Consumers that need ownership should use Row instead.
-func (v HistoryView) BorrowedRow(i int) []renderer.Cell {
 	if i < 0 {
 		return nil
 	}
 	for _, chunk := range v.chunks {
-		if i < len(chunk.rows) {
-			return chunk.rows[i]
+		if i < chunk.len() {
+			return chunk.row(i)
 		}
-		i -= len(chunk.rows)
+		i -= chunk.len()
 	}
 	return nil
 }
@@ -455,13 +569,13 @@ func (v HistoryView) RowID(i int) RowID {
 		return 0
 	}
 	for _, chunk := range v.chunks {
-		if i < len(chunk.rows) {
+		if i < chunk.len() {
 			if i < len(chunk.rowIDs) {
 				return chunk.rowIDs[i]
 			}
 			return 0
 		}
-		i -= len(chunk.rows)
+		i -= chunk.len()
 	}
 	return 0
 }
@@ -473,7 +587,7 @@ func (v HistoryView) FindRowID(id RowID) int {
 	}
 	index := 0
 	for _, chunk := range v.chunks {
-		for row := range chunk.rows {
+		for row := range chunk.len() {
 			if row < len(chunk.rowIDs) && chunk.rowIDs[row] == id {
 				return index
 			}
@@ -498,13 +612,13 @@ func (v HistoryView) Bound(i int) LineBound {
 		return LineBound{}
 	}
 	for _, chunk := range v.chunks {
-		if i < len(chunk.rows) {
+		if i < chunk.len() {
 			if i < len(chunk.bounds) {
 				return chunk.bounds[i]
 			}
 			return LineBound{}
 		}
-		i -= len(chunk.rows)
+		i -= chunk.len()
 	}
 	return LineBound{}
 }
@@ -535,7 +649,7 @@ func (v HistorySnapshotView) Tail() HistoryView {
 		return HistoryView{nextRowID: v.nextRowID}
 	}
 	return HistoryView{
-		chunks:    []*HistoryChunk{{rows: v.tail, bounds: growBounds(v.tailBounds, len(v.tail)), rowIDs: growRowIDs(v.tailIDs, len(v.tail))}},
+		chunks:    newHistoryChunks(v.tail, v.tailBounds, v.tailIDs),
 		rows:      len(v.tail),
 		cells:     historyRowsCells(v.tail),
 		nextRowID: v.nextRowID,

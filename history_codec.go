@@ -33,7 +33,7 @@ const (
 var errInvalidHistory = errors.New("invalid history payload")
 
 // MarshalHistory encodes a HistoryView in a deterministic, self-contained
-// format. It preserves chunk boundaries as well as every Cell and Style field.
+// format. It preserves compact chunk boundaries and semantic cell/style values.
 func MarshalHistory(view HistoryView) ([]byte, error) {
 	if view.rows < 0 || view.rows != historyViewRowCount(view) || uint64(len(view.chunks)) > math.MaxUint32 || uint64(len(view.chunks)) > maxHistoryChunks {
 		return nil, fmt.Errorf("marshal history: %w", errInvalidHistory)
@@ -45,12 +45,12 @@ func MarshalHistory(view HistoryView) ([]byte, error) {
 	stats := historyDecodeStats{}
 	seen := make(map[RowID]struct{}, view.rows)
 	for _, chunk := range view.chunks {
-		if chunk == nil || len(chunk.rows) == 0 || len(chunk.rows) != len(chunk.rowIDs) || len(chunk.rows) > maxHistoryChunkRows ||
-			!addHistoryDecodeBudget(&stats.rows, uint64(len(chunk.rows)), maxHistoryRows) {
+		if chunk == nil || chunk.len() == 0 || chunk.len() != len(chunk.rowIDs) || chunk.len() > maxHistoryChunkRows ||
+			!addHistoryDecodeBudget(&stats.rows, uint64(chunk.len()), maxHistoryRows) {
 			return nil, fmt.Errorf("marshal history: %w", errInvalidHistory)
 		}
-		for i, row := range chunk.rows {
-			if uint64(len(row)) > math.MaxUint32 {
+		for i := range chunk.len() {
+			if uint64(chunk.width) > math.MaxUint32 {
 				return nil, fmt.Errorf("marshal history: %w", errInvalidHistory)
 			}
 			id := chunk.rowIDs[i]
@@ -61,7 +61,7 @@ func MarshalHistory(view HistoryView) ([]byte, error) {
 				return nil, fmt.Errorf("marshal history: %w", errInvalidHistory)
 			}
 			seen[id] = struct{}{}
-			cellCount := uint64(len(row))
+			cellCount := uint64(chunk.width)
 			cellBytes, ok := historyCellByteCount(cellCount)
 			if !ok ||
 				!addHistoryDecodeBudget(&stats.cells, cellCount, maxHistoryCells) ||
@@ -70,11 +70,11 @@ func MarshalHistory(view HistoryView) ([]byte, error) {
 				return nil, fmt.Errorf("marshal history: %w", errInvalidHistory)
 			}
 			bound := chunkBound(chunk, i)
-			if !validHistoryBound(bound, len(row)) {
+			if !validHistoryBound(bound, chunk.width) {
 				return nil, fmt.Errorf("marshal history: %w", errInvalidHistory)
 			}
-			for _, cell := range row {
-				if !validHistoryCell(cell) {
+			for x := range chunk.width {
+				if !validHistoryCell(chunk.cell(i, x)) {
 					return nil, fmt.Errorf("marshal history: %w", errInvalidHistory)
 				}
 			}
@@ -90,12 +90,12 @@ func MarshalHistory(view HistoryView) ([]byte, error) {
 	out = appendUint32(out, uint32(len(view.chunks)))
 	out = binary.BigEndian.AppendUint64(out, uint64(nextRowID))
 	for _, chunk := range view.chunks {
-		out = appendUint32(out, uint32(len(chunk.rows)))
-		for i, row := range chunk.rows {
+		out = appendUint32(out, uint32(chunk.len()))
+		for i := range chunk.len() {
 			out = binary.BigEndian.AppendUint64(out, uint64(chunk.rowIDs[i]))
-			out = appendUint32(out, uint32(len(row)))
-			for _, cell := range row {
-				out = appendHistoryCell(out, cell)
+			out = appendUint32(out, uint32(chunk.width))
+			for x := range chunk.width {
+				out = appendHistoryCell(out, chunk.cell(i, x))
 			}
 			out = appendHistoryBound(out, chunkBound(chunk, i))
 		}
@@ -106,7 +106,7 @@ func MarshalHistory(view HistoryView) ([]byte, error) {
 func historyViewNextRowID(view HistoryView) (RowID, bool) {
 	seen := make(map[RowID]struct{}, view.rows)
 	for _, chunk := range view.chunks {
-		if chunk == nil || len(chunk.rows) != len(chunk.rowIDs) {
+		if chunk == nil || chunk.len() != len(chunk.rowIDs) {
 			return 0, false
 		}
 		for _, id := range chunk.rowIDs {
@@ -146,8 +146,8 @@ func maxHistoryRowID(ids map[RowID]struct{}) RowID {
 func historyViewRowCount(view HistoryView) int {
 	n := 0
 	for _, chunk := range view.chunks {
-		if chunk != nil && len(chunk.rows) <= math.MaxInt-n {
-			n += len(chunk.rows)
+		if chunk != nil && chunk.len() <= math.MaxInt-n {
+			n += chunk.len()
 			continue
 		}
 		return -1
@@ -329,7 +329,7 @@ func parseHistory(data []byte, populate bool) (HistoryView, historyDecodeStats, 
 			}
 		}
 		if populate {
-			chunks = append(chunks, &HistoryChunk{rows: rows, bounds: bounds, rowIDs: rowIDs})
+			chunks = append(chunks, newHistoryChunks(rows, bounds, rowIDs)...)
 		}
 	}
 	slices.Sort(seenIDs[:seenCount])

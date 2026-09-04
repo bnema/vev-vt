@@ -31,10 +31,9 @@ parser event order. Consume or copy response bytes during the callback.
 
 `Screen`, `ScreenSnapshot`, and `Frame` provide storage-independent semantic
 cell reads through `core.CellSource`. Their row extraction methods return owned
-copies. `HistoryView.BorrowedRow` and `HistoryView.Range` expose borrowed storage
-with the lifetimes documented by their APIs; borrowed storage must not be
-mutated or retained beyond its documented lifetime. Sealed `HistoryChunk`
-identity is stable for the lifetime of a view.
+copies. `HistoryView.Row` and `HistoryView.Range` decode caller-owned semantic
+rows from compact sealed slabs. Sealed `HistoryChunk` identity is stable for the
+lifetime of a view.
 
 ## Alpha stability
 
@@ -101,6 +100,10 @@ go test . -run '^$' \
 
 It reports construction allocations and retained heap bytes for plain ASCII,
 repeated indexed and RGB styles, high-cardinality RGB churn, wide Unicode, and
-styled blanks. The compact page primitive can be measured with
+styled blanks. Compact sealed history retains about 17.1 MB for the plain-ASCII
+case, more than 5× below the original 95.3 MB baseline while keeping a bounded
+mutable tail.
+
+The compact page primitive can be measured with
 `go test ./core -run '^$' -bench '^BenchmarkCompactFrameBuild10Kx120$' -benchmem -benchtime=1x`;
 its logical-byte result is deterministic and excludes Go allocator/map overhead.

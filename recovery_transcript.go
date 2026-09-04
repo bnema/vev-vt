@@ -98,30 +98,17 @@ func (snapshot RecoveryTranscriptSnapshot) Marshal() ([]byte, error) {
 	}
 
 	view := HistoryView{rows: rows, cells: cells, nextRowID: snapshot.nextRowID}
+	var allRows [][]renderer.Cell
+	var allBounds []LineBound
+	var allIDs []RowID
 	for _, segment := range snapshot.segments {
-		for start := 0; start < len(segment.rows); {
-			space := maxHistoryChunkRows
-			if len(view.chunks) > 0 {
-				last := view.chunks[len(view.chunks)-1]
-				if len(last.rows) < maxHistoryChunkRows {
-					space = maxHistoryChunkRows - len(last.rows)
-					end := min(start+space, len(segment.rows))
-					last.rows = append(last.rows, segment.rows[start:end]...)
-					last.bounds = append(last.bounds, segment.bounds[start:end]...)
-					last.rowIDs = append(last.rowIDs, segment.rowIDs[start:end]...)
-					start = end
-					continue
-				}
-			}
-
-			end := min(start+space, len(segment.rows))
-			view.chunks = append(view.chunks, &HistoryChunk{
-				rows:   append([][]renderer.Cell(nil), segment.rows[start:end]...),
-				bounds: append([]LineBound(nil), segment.bounds[start:end]...),
-				rowIDs: append([]RowID(nil), segment.rowIDs[start:end]...),
-			})
-			start = end
-		}
+		allRows = append(allRows, segment.rows...)
+		allBounds = append(allBounds, segment.bounds...)
+		allIDs = append(allIDs, segment.rowIDs...)
+	}
+	for start := 0; start < len(allRows); start += maxHistoryChunkRows {
+		end := min(start+maxHistoryChunkRows, len(allRows))
+		view.chunks = append(view.chunks, newHistoryChunks(allRows[start:end], allBounds[start:end], allIDs[start:end])...)
 	}
 	return MarshalHistory(view)
 }

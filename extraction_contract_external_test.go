@@ -142,9 +142,6 @@ func TestExternalSnapshotsAndHistoryRespectOwnershipContracts(t *testing.T) {
 	if got := before.Row(0)[0].Rune; got != 'a' {
 		t.Fatalf("owned history row mutation changed view to %q", got)
 	}
-	if borrowed := before.BorrowedRow(0); &borrowed[0] == &copyOfRow[0] {
-		t.Fatal("Row returned borrowed history storage instead of an owned copy")
-	}
 
 	appendHistoryRow(t, history, 'c', 12)
 	after := history.View()
