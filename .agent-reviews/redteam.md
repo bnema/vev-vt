@@ -60,3 +60,24 @@ Critic pass (performed directly; the user canceled reviewer subagents):
 
 These objections remain implementation gates, not claims that the follow-ups
 are complete. No pooling, mmap, unsafe code or SIMD is approved without evidence.
+
+## Aggregate restore sizing
+
+Decision: expose an allocation-free `MeasureHistoryBlob` sizing pass before an
+application accepts a collection-wide budget. Keep `PreflightHistoryBlob` as the
+separate semantic validator; sizing must never authorize decoding by itself.
+
+Direct critic pass:
+
+- **High: sizing could bypass duplicate-ID or dictionary validation.** Its API
+  explicitly disclaims validation. The consumer must validate all blobs after
+  aggregate sizing and before constructing the session. A regression test shows
+  an invalid row identity passes sizing but fails semantic validation.
+- **High: a size mismatch could understate the budget.** Reuse codec constants,
+  stored-cell parsing and overflow helpers; compare sizing and validated stats
+  for multiple chunks, styles and payloads, including fuzz inputs.
+- **Medium: two scans cost CPU.** Accept linear scanning to reject over-budget
+  collections without allocating a dictionary or row-ID map for every pane.
+
+Evidence: library suite and a five-second differential fuzz run passed;
+valid sizing performs zero allocations. Consumer integration remains a gate.
