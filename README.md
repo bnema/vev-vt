@@ -91,6 +91,35 @@ segmentation engine or OSC 8 parser. The VT parser and ANSI output still support
 their existing rune-based text semantics; callers must not infer new protocol
 support from the ability to retain payload values.
 
+## Cold history compression
+
+The owner may call `History.CompressIdle(maxPages)` from an idle timer. Each call
+visits at most that many sealed pages. A page must remain unread across two
+visits; the newest sealed page and mutable tail stay hot. Compression uses the
+standard library's zlib implementation over validated VTC1 data, with no worker
+goroutines, pooling, mmap or platform-specific memory operations.
+
+Borrowed chunk identity and uncompressed retention accounting do not change.
+Random-access reads restore a page into a cache; later idle visits can release
+that cache without recompressing immutable contents. `Range` and persistence
+restore cold pages transiently instead of warming the entire history.
+`CompressionStats` reports cold pages, compressed bytes, resident logical bytes
+(excluding allocator overhead), and restore operations.
+
+Restore checks the exact backing length, zlib checksum, geometry and VTC1
+references. `HistoryChunk.Restore()` lets hosts handle `ErrHistoryCorrupt` before
+a read transaction. Ordinary reads panic with that error if private backing is
+corrupted: they never silently replace lost text with blanks. External history
+bytes still go through the strict public decoder before installation.
+
+On the synthetic 10,000×120 plain-ASCII benchmark, 38 cold pages retain about
+4.6 MB including the hot tail and page, versus 23.0 MB before compression.
+This is a repeatable fixture result, not a promise about real-world RSS:
+
+```sh
+go test . -run '^$' -bench '^BenchmarkColdHistoryRetained10Kx120$' -benchmem -benchtime=1x
+```
+
 ## Kitty graphics subset
 
 The VT accepts bounded static direct transmissions used by current
@@ -158,5 +187,5 @@ byte and row ceilings with `HistoryConfig.MaxBytes` and `HistoryConfig.MaxRows`.
 `History.LogicalBytes`, `HistoryView.LogicalBytes`, and
 `HistorySnapshotView.LogicalBytes` expose current usage. This accounting covers
 retained scrollback only—not the live primary or alternate screen—and has no
-page-granularity allowance. It remains unchanged if sealed history is later
+page-granularity allowance. It remains unchanged when sealed history is
 compressed.

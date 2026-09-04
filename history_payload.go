@@ -3,10 +3,11 @@ package vt
 import renderer "github.com/bnema/vev-vt/core"
 
 func (c *HistoryChunk) recordPayloads() {
+	frame := c.frameView()
 	var last map[renderer.CellPayload]int
 	for row := range c.count {
 		for x := range c.width {
-			p := c.cell(row, x).Payload
+			p := frame.Cell(x, c.start+row).Payload
 			if p.Empty() {
 				continue
 			}
@@ -21,7 +22,7 @@ func (c *HistoryChunk) recordPayloads() {
 	if len(last) == 0 {
 		return
 	}
-	c.payloadDrops = make([]uint64, c.frame.Height)
+	c.payloadDrops = make([]uint64, frame.Height)
 	for value, row := range last {
 		bytes := value.LogicalBytes()
 		c.payloadBytes += bytes
@@ -35,7 +36,7 @@ func (c *HistoryChunk) withoutFirstRow() *HistoryChunk {
 		payloadBytes -= c.payloadDrops[c.start]
 	}
 	return &HistoryChunk{
-		frame: c.frame, start: c.start + 1, count: c.count - 1, width: c.width,
+		page: c.page, start: c.start + 1, count: c.count - 1, width: c.width,
 		bounds: c.bounds[1:], rowIDs: c.rowIDs[1:],
 		styleDrops: c.styleDrops, styleCount: c.styleCount - c.styleDrops[c.start],
 		payloadDrops: c.payloadDrops, payloadBytes: payloadBytes,

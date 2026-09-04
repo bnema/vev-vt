@@ -28,31 +28,32 @@ type HistoryConfig struct {
 // mutated by the owner of a Screen; views are safe to retain after later
 // appends.
 type History struct {
-	maxRows          int
-	maxBytes         uint64
-	chunkRows        int
-	chunks           []*HistoryChunk
-	tail             [][]renderer.Cell
-	tailCells        []renderer.Cell
-	tailBounds       []LineBound
-	tailIDs          []RowID
-	tailBytes        uint64
-	tailPageWidth    int
-	tailPageRows     int
-	tailPageStyles   map[renderer.Style]struct{}
-	styleScratch     map[renderer.Style]struct{}
-	payloadScratch   map[renderer.CellPayload]struct{}
-	tailPagePayloads map[renderer.CellPayload]struct{}
-	rows             int
-	cells            int
-	logicalBytes     uint64
-	nextRowID        RowID
+	maxRows           int
+	maxBytes          uint64
+	chunkRows         int
+	chunks            []*HistoryChunk
+	tail              [][]renderer.Cell
+	tailCells         []renderer.Cell
+	tailBounds        []LineBound
+	tailIDs           []RowID
+	tailBytes         uint64
+	tailPageWidth     int
+	tailPageRows      int
+	tailPageStyles    map[renderer.Style]struct{}
+	styleScratch      map[renderer.Style]struct{}
+	payloadScratch    map[renderer.CellPayload]struct{}
+	tailPagePayloads  map[renderer.CellPayload]struct{}
+	rows              int
+	cells             int
+	logicalBytes      uint64
+	nextRowID         RowID
+	compressionCursor int
 }
 
 // HistoryChunk is an immutable compact slab of equal-width history rows. Its
 // identity is stable and can be used by consumers to reuse unchanged chunks.
 type HistoryChunk struct {
-	frame        renderer.Frame
+	page         *sealedPage
 	start        int
 	count        int
 	width        int
@@ -91,7 +92,7 @@ func newHistoryChunks(rows [][]renderer.Cell, bounds []LineBound, rowIDs []RowID
 			styleDrops[row]++
 		}
 		chunks = append(chunks, &HistoryChunk{
-			frame:      frame,
+			page:       newSealedPage(frame),
 			count:      end - start,
 			width:      width,
 			bounds:     append([]LineBound(nil), bounds[start:end]...),
@@ -124,24 +125,28 @@ func (c *HistoryChunk) row(i int) []renderer.Cell {
 	if c == nil || i < 0 || i >= c.count {
 		return nil
 	}
-	return c.frame.Row(c.start + i)
+	return c.frameView().Row(c.start + i)
 }
 
 func (c *HistoryChunk) cell(row, column int) renderer.Cell {
-	return c.frame.Cell(column, c.start+row)
+	return c.frameView().Cell(column, c.start+row)
 }
 
 func (c *HistoryChunk) cells() int { return c.count * c.width }
 
 // CheckInvariants validates one compact immutable history slab.
 func (c *HistoryChunk) CheckInvariants() error {
-	if c == nil {
-		return fmt.Errorf("nil history chunk")
+	if c == nil || c.page == nil {
+		return fmt.Errorf("nil history chunk backing")
 	}
-	if c.start < 0 || c.count <= 0 || c.width < 0 || c.start > c.frame.Height-c.count {
+	frame, err := c.page.readFrame(true)
+	if err != nil {
+		return err
+	}
+	if c.start < 0 || c.count <= 0 || c.width < 0 || c.start > frame.Height-c.count {
 		return fmt.Errorf("invalid history chunk range start=%d count=%d", c.start, c.count)
 	}
-	if c.frame.Width != c.width || len(c.bounds) != c.count || len(c.rowIDs) != c.count || len(c.styleDrops) != c.frame.Height {
+	if frame.Width != c.width || len(c.bounds) != c.count || len(c.rowIDs) != c.count || len(c.styleDrops) != frame.Height {
 		return fmt.Errorf("history chunk metadata is not parallel")
 	}
 	styles := uint64(1)
@@ -153,7 +158,7 @@ func (c *HistoryChunk) CheckInvariants() error {
 	}
 	var payloadBytes uint64
 	if len(c.payloadDrops) != 0 {
-		if len(c.payloadDrops) != c.frame.Height {
+		if len(c.payloadDrops) != frame.Height {
 			return fmt.Errorf("history payload metadata is not parallel")
 		}
 		for _, dropped := range c.payloadDrops[c.start:] {
@@ -163,7 +168,7 @@ func (c *HistoryChunk) CheckInvariants() error {
 	if payloadBytes != c.payloadBytes {
 		return fmt.Errorf("history payload accounting mismatch")
 	}
-	if err := c.frame.CheckInvariants(); err != nil {
+	if err := frame.CheckInvariants(); err != nil {
 		return fmt.Errorf("history chunk frame: %w", err)
 	}
 	for i, id := range c.rowIDs {
@@ -719,8 +724,14 @@ func (v HistoryView) Chunk(i int) *HistoryChunk {
 // Range calls yield with a decoded owned row in oldest-first order.
 func (v HistoryView) Range(yield func([]renderer.Cell) bool) {
 	for _, chunk := range v.chunks {
+		// Streaming search restores at most one transient page at a time and
+		// does not populate the random-access cache of every cold page.
+		frame, err := chunk.page.readFrame(false)
+		if err != nil {
+			panic(err)
+		}
 		for i := range chunk.len() {
-			if !yield(chunk.row(i)) {
+			if !yield(frame.Row(chunk.start + i)) {
 				return
 			}
 		}

@@ -60,6 +60,39 @@ func BenchmarkHistoryRetained10Kx120(b *testing.B) {
 	}
 }
 
+// BenchmarkColdHistoryRetained10Kx120 measures the same scenarios after two
+// bounded idle passes. The newest sealed page and mutable tail remain hot.
+func BenchmarkColdHistoryRetained10Kx120(b *testing.B) {
+	for _, scenario := range historyStorageScenarios() {
+		b.Run(scenario.name, func(b *testing.B) {
+			var retained uint64
+			for b.Loop() {
+				benchmarkStorageHistorySink = nil
+				runtime.GC()
+				var before, after runtime.MemStats
+				runtime.ReadMemStats(&before)
+				h := buildStorageBenchmarkHistory(b, scenario.fill)
+				for range 2 {
+					if _, err := h.CompressIdle(len(h.chunks)); err != nil {
+						b.Fatal(err)
+					}
+				}
+				benchmarkStorageHistorySink = h
+				runtime.GC()
+				runtime.ReadMemStats(&after)
+				if after.HeapAlloc >= before.HeapAlloc {
+					retained += after.HeapAlloc - before.HeapAlloc
+				}
+			}
+			stats := benchmarkStorageHistorySink.CompressionStats()
+			b.ReportMetric(float64(stats.CompressedBytes), "compressed-B")
+			b.ReportMetric(float64(stats.ColdPages), "cold-pages")
+			b.ReportMetric(float64(retained)/float64(b.N), "retained-B/op")
+			benchmarkStorageHistorySink = nil
+		})
+	}
+}
+
 func historyStorageScenarios() []storageBenchmarkScenario {
 	defaultStyle := core.DefaultStyle()
 	repeatedIndexed := core.Style{

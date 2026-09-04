@@ -393,10 +393,10 @@ func TestHistorySealsCompactContiguousSlabs(t *testing.T) {
 		t.Fatalf("compact chunk = %#v, chunks %d", chunk, view.ChunkCount())
 	}
 	// The original inline Cell occupied 72 bytes; retain the 4x reduction gate.
-	if got, max := chunk.frame.LogicalBytes(), uint64(rows*columns*72/4); got >= max {
+	if got, max := chunk.frameView().LogicalBytes(), uint64(rows*columns*72/4); got >= max {
 		t.Fatalf("compact slab logical bytes = %d, want below %d", got, max)
 	}
-	if got := chunk.frame.StyleCount(); got != 2 {
+	if got := chunk.frameView().StyleCount(); got != 2 {
 		t.Fatalf("page-local style count = %d, want default plus repeated style", got)
 	}
 	if err := chunk.CheckInvariants(); err != nil {

@@ -31,8 +31,9 @@ func (v HistoryView) CopyRow(y int, dst []renderer.Cell) int {
 		return 0
 	}
 	n := min(len(dst), chunk.width)
+	frame := chunk.frameView()
 	for x := range n {
-		dst[x] = chunk.cell(row, x)
+		dst[x] = frame.Cell(x, chunk.start+row)
 	}
 	return n
 }

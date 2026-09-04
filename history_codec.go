@@ -61,7 +61,7 @@ func MarshalHistory(view HistoryView) ([]byte, error) {
 	size := uint64(historyHeaderBytes)
 	stats := historyDecodeStats{chunks: uint64(len(view.chunks))}
 	for _, chunk := range view.chunks {
-		if chunk == nil || chunk.len() == 0 || chunk.len() > maxHistoryChunkRows ||
+		if chunk == nil || chunk.page == nil || chunk.len() == 0 || chunk.len() > maxHistoryChunkRows ||
 			chunk.len() != len(chunk.rowIDs) || chunk.len() != len(chunk.bounds) || chunk.width < 0 ||
 			uint64(chunk.width) > math.MaxUint32 {
 			return nil, fmt.Errorf("marshal history: %w", errInvalidHistory)
@@ -69,6 +69,13 @@ func MarshalHistory(view HistoryView) ([]byte, error) {
 		cells := uint64(chunk.width) * uint64(chunk.len())
 		if !addHistoryDecodeBudget(&stats.rows, uint64(chunk.len()), maxHistoryRows) ||
 			!addHistoryDecodeBudget(&stats.cells, cells, maxHistoryCells) {
+			return nil, fmt.Errorf("marshal history: %w", errInvalidHistory)
+		}
+		frame, err := chunk.page.readFrame(false)
+		if err != nil {
+			return nil, fmt.Errorf("marshal history: %w", err)
+		}
+		if frame.Width != chunk.width || chunk.start < 0 || chunk.start > frame.Height-chunk.count {
 			return nil, fmt.Errorf("marshal history: %w", errInvalidHistory)
 		}
 		styles := []renderer.Style{renderer.DefaultStyle()}
@@ -81,7 +88,7 @@ func MarshalHistory(view HistoryView) ([]byte, error) {
 				return nil, fmt.Errorf("marshal history: %w", errInvalidHistory)
 			}
 			for x := range chunk.width {
-				cell := chunk.cell(row, x)
+				cell := frame.Cell(x, chunk.start+row)
 				if !validHistoryCell(cell) {
 					return nil, fmt.Errorf("marshal history: %w", errInvalidHistory)
 				}
@@ -121,6 +128,10 @@ func MarshalHistory(view HistoryView) ([]byte, error) {
 	out = binary.BigEndian.AppendUint64(out, uint64(nextID))
 	for _, entry := range encoded {
 		chunk, styles, ids := entry.chunk, entry.styles, entry.ids
+		frame, err := chunk.page.readFrame(false)
+		if err != nil {
+			return nil, fmt.Errorf("marshal history: %w", err)
+		}
 		out = binary.BigEndian.AppendUint32(out, uint32(chunk.width))
 		out = binary.BigEndian.AppendUint32(out, uint32(chunk.len()))
 		out = binary.BigEndian.AppendUint32(out, uint32(len(styles)))
@@ -137,7 +148,7 @@ func MarshalHistory(view HistoryView) ([]byte, error) {
 		}
 		for row := range chunk.len() {
 			for x := range chunk.width {
-				cell := chunk.cell(row, x)
+				cell := frame.Cell(x, chunk.start+row)
 				out = binary.BigEndian.AppendUint32(out, uint32(cell.Rune))
 				out = binary.BigEndian.AppendUint32(out, ids[cell.Style.Canonical()])
 				flag := byte(0)
@@ -324,7 +335,7 @@ func parseHistory(data []byte, populate bool) (HistoryView, historyDecodeStats, 
 			for id := uint32(1); id < nstyles; id++ {
 				drops[lastStyleRow[id]]++
 			}
-			chunk := &HistoryChunk{frame: frame, count: int(rows), width: int(width), bounds: bounds, rowIDs: rowIDs, styleDrops: drops, styleCount: uint64(nstyles)}
+			chunk := &HistoryChunk{page: newSealedPage(frame), count: int(rows), width: int(width), bounds: bounds, rowIDs: rowIDs, styleDrops: drops, styleCount: uint64(nstyles)}
 			chunk.recordPayloads()
 			chunks = append(chunks, chunk)
 		}
