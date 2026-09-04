@@ -59,6 +59,12 @@ func (f *Frame) Replace(src Frame) {
 		*f = Frame{}
 		return
 	}
+	// Frame values may be copied while retaining the same backing storage. Clone
+	// before canonicalizing the destination offsets so Replace remains correct
+	// for self-replacement and other aliased values.
+	if framesShareStorage(*f, src) {
+		src = src.Clone()
+	}
 
 	sameDimensions := f.Width == src.Width && f.Height == src.Height
 	cellCount := src.Width * src.Height
@@ -80,6 +86,12 @@ func (f *Frame) Replace(src Frame) {
 	for y := range src.Height {
 		copy(f.row(y), src.row(y))
 	}
+}
+
+func framesShareStorage(a, b Frame) bool {
+	cellsShared := len(a.cells) != 0 && len(b.cells) != 0 && &a.cells[0] == &b.cells[0]
+	offsetsShared := len(a.lineOffset) != 0 && len(b.lineOffset) != 0 && &a.lineOffset[0] == &b.lineOffset[0]
+	return cellsShared || offsetsShared
 }
 
 func (f Frame) Validate() error {

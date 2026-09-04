@@ -63,6 +63,31 @@ func TestCheckInvariantsDetectsBrokenRotation(t *testing.T) {
 	}
 }
 
+func TestReplacePreservesSelfAliasedScrolledRows(t *testing.T) {
+	f := NewFrame(3, 3)
+	for y, row := range []string{"abc", "def", "ghi"} {
+		for x, r := range row {
+			f.Set(x, y, Cell{Rune: r})
+		}
+	}
+	f.ScrollUp(0, 2, 1)
+	want := [][]Cell{f.Row(0), f.Row(1), f.Row(2)}
+
+	f.Replace(f)
+
+	for y := range want {
+		got := f.Row(y)
+		for x := range want[y] {
+			if !got[x].Equal(want[y][x]) {
+				t.Fatalf("cell (%d,%d) = %+v, want %+v", x, y, got[x], want[y][x])
+			}
+		}
+	}
+	if err := f.CheckInvariants(); err != nil {
+		t.Fatalf("replaced frame invariants: %v", err)
+	}
+}
+
 func TestReplacePreservesLogicalRows(t *testing.T) {
 	dst := NewFrame(3, 3)
 	dst.Set(0, 0, Cell{Rune: 'x'})
