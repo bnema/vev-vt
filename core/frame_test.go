@@ -1,6 +1,7 @@
 package core
 
 import (
+	"math"
 	"reflect"
 	"testing"
 )
@@ -112,6 +113,67 @@ func TestFrameCrossPageWriteRemapsStyles(t *testing.T) {
 	}
 	if err := dst.CheckInvariants(); err != nil {
 		t.Fatalf("destination invariants: %v", err)
+	}
+}
+
+func TestFrameClonePreservesStructureWithoutAliasing(t *testing.T) {
+	f := NewFrame(3, 2)
+	f.ScrollUp(0, 1, 1)
+	f.Set(0, 0, Cell{Rune: 'a', Style: Style{Foreground: 1}})
+	f.Set(1, 0, Cell{Rune: 'b', Style: Style{Foreground: 2}})
+	f.Set(1, 0, BlankCell()) // leave one reusable style slot
+
+	clone := f.Clone()
+	if clone.page == f.page || &clone.page.cells[0] == &f.page.cells[0] || &clone.page.rows[0] == &f.page.rows[0] {
+		t.Fatal("Clone shares page slice storage")
+	}
+	if clone.page.rows[0] != f.page.rows[0] || clone.page.cells[clone.offset(0, 0)].styleID != f.page.cells[f.offset(0, 0)].styleID {
+		t.Fatal("Clone changed row rotation or page-local style IDs")
+	}
+	clone.Set(0, 0, Cell{Rune: 'x', Style: Style{Bold: true}})
+	if f.Cell(0, 0).Rune != 'a' {
+		t.Fatal("mutating clone changed source cells")
+	}
+	if _, ok := f.page.styleIndex[Style{Bold: true}.Canonical()]; ok {
+		t.Fatal("mutating clone changed source style map")
+	}
+	if err := clone.CheckInvariants(); err != nil {
+		t.Fatalf("clone invariants: %v", err)
+	}
+}
+
+func TestCheckInvariantsValidatesFreeStyleList(t *testing.T) {
+	newFrameWithFreeStyle := func() Frame {
+		f := NewFrame(1, 1)
+		f.Set(0, 0, Cell{Style: Style{Foreground: 1}})
+		f.Set(0, 0, BlankCell())
+		return f
+	}
+	tests := map[string]func(*Frame){
+		"duplicate": func(f *Frame) { f.page.freeStyles = append(f.page.freeStyles, f.page.freeStyles[0]) },
+		"missing":   func(f *Frame) { f.page.freeStyles = nil },
+		"used":      func(f *Frame) { f.page.freeStyles = append(f.page.freeStyles, 0) },
+		"out of range": func(f *Frame) {
+			f.page.freeStyles = append(f.page.freeStyles, uint32(len(f.page.styles)))
+		},
+	}
+	for name, corrupt := range tests {
+		t.Run(name, func(t *testing.T) {
+			f := newFrameWithFreeStyle()
+			corrupt(&f)
+			if err := f.CheckInvariants(); err == nil {
+				t.Fatal("CheckInvariants accepted corrupt free style list")
+			}
+		})
+	}
+}
+
+func TestFrameCellCountRejectsPortableOverflow(t *testing.T) {
+	if _, ok := frameCellCount(math.MaxInt, 2); ok {
+		t.Fatal("accepted dimensions whose product exceeds int or uint32")
+	}
+	if _, ok := frameCellCount(65_536, 65_536); ok {
+		t.Fatal("accepted dimensions whose product exceeds uint32")
 	}
 }
 

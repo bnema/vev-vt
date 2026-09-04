@@ -7,6 +7,7 @@ func BenchmarkCompactFrameBuild10Kx120(b *testing.B) {
 	style := Style{Bold: true, Foreground: 4}
 	b.ReportAllocs()
 	b.ReportMetric(rows*columns, "cells/op")
+	var logicalBytes uint64
 	for b.Loop() {
 		frame := NewFrame(columns, rows)
 		for y := range rows {
@@ -14,6 +15,7 @@ func BenchmarkCompactFrameBuild10Kx120(b *testing.B) {
 				frame.Set(x, y, Cell{Rune: 'x', Style: style})
 			}
 		}
-		b.ReportMetric(float64(frame.LogicalBytes()), "logical-B/op")
+		logicalBytes = frame.LogicalBytes()
 	}
+	b.ReportMetric(float64(logicalBytes), "logical-B/op")
 }

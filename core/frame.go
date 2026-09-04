@@ -1,6 +1,10 @@
 package core
 
-import "fmt"
+import (
+	"fmt"
+	"maps"
+	"math"
+)
 
 // CellSource exposes semantic terminal cells without exposing mutable storage.
 // Implementations may use any physical layout; callers must use Cell for reads.
@@ -49,13 +53,10 @@ type Frame struct {
 }
 
 func NewFrame(width, height int) Frame {
-	if width < 0 || height < 0 {
-		panic("negative frame size")
-	}
-	if width != 0 && height > int(^uint32(0))/width {
+	cellCount, ok := frameCellCount(width, height)
+	if !ok {
 		panic("frame cell count exceeds page limit")
 	}
-	cellCount := width * height
 	page := &cellPage{
 		cells:      make([]storedCell, cellCount),
 		rows:       make([]uint32, height),
@@ -72,19 +73,27 @@ func NewFrame(width, height int) Frame {
 	return Frame{Width: width, Height: height, page: page}
 }
 
-// Clone returns an independent compact page preserving logical row contents.
+// Clone returns an independent compact page preserving physical row rotation
+// and page-local style IDs.
 func (f Frame) Clone() Frame {
-	clone := NewFrame(f.Width, f.Height)
-	for y := range f.Height {
-		for x := range f.Width {
-			clone.Set(x, y, f.Cell(x, y))
-		}
+	if f.page == nil {
+		return Frame{Width: f.Width, Height: f.Height}
 	}
-	return clone
+	return Frame{
+		Width:  f.Width,
+		Height: f.Height,
+		page: &cellPage{
+			cells:      append([]storedCell(nil), f.page.cells...),
+			rows:       append([]uint32(nil), f.page.rows...),
+			styles:     append([]styleSlot(nil), f.page.styles...),
+			styleIndex: maps.Clone(f.page.styleIndex),
+			freeStyles: append([]uint32(nil), f.page.freeStyles...),
+			styleCount: f.page.styleCount,
+		},
+	}
 }
 
-// Replace replaces f with an independent compact page containing src's
-// logical cells. Decoding and interning at this boundary remaps page-local IDs.
+// Replace replaces f with an independent structural copy of src's compact page.
 func (f *Frame) Replace(src Frame) {
 	if f == nil {
 		return
@@ -96,18 +105,28 @@ func (f *Frame) Replace(src Frame) {
 	*f = src.Clone()
 }
 
+func frameCellCount(width, height int) (int, bool) {
+	if width < 0 || height < 0 {
+		return 0, false
+	}
+	limit := min(uint64(math.MaxUint32), uint64(math.MaxInt))
+	w, h := uint64(width), uint64(height)
+	if w > limit || h > limit || w != 0 && w*h > limit {
+		return 0, false
+	}
+	return int(w * h), true
+}
+
 func (f Frame) validateStorage() error {
 	if f.page == nil {
 		return fmt.Errorf("missing frame page")
 	}
-	if f.Width < 0 || f.Height < 0 {
-		return fmt.Errorf("invalid frame size %dx%d", f.Width, f.Height)
-	}
-	if f.Width != 0 && f.Height > int(^uint32(0))/f.Width {
+	cellCount, ok := frameCellCount(f.Width, f.Height)
+	if !ok {
 		return fmt.Errorf("frame cell count exceeds page limit")
 	}
-	if len(f.page.cells) != f.Width*f.Height {
-		return fmt.Errorf("invalid cell count: got %d want %d", len(f.page.cells), f.Width*f.Height)
+	if len(f.page.cells) != cellCount {
+		return fmt.Errorf("invalid cell count: got %d want %d", len(f.page.cells), cellCount)
 	}
 	if len(f.page.rows) != f.Height {
 		return fmt.Errorf("row descriptor count: got %d want %d", len(f.page.rows), f.Height)
@@ -152,11 +171,27 @@ func (f Frame) CheckInvariants() error {
 		}
 		refs[cell.styleID]++
 	}
+	free := make([]bool, len(f.page.styles))
+	for position, id := range f.page.freeStyles {
+		if int(id) >= len(f.page.styles) {
+			return fmt.Errorf("free style entry %d has out-of-range ID %d", position, id)
+		}
+		if f.page.styles[id].used {
+			return fmt.Errorf("free style entry %d identifies used style %d", position, id)
+		}
+		if free[id] {
+			return fmt.Errorf("free style ID %d appears more than once", id)
+		}
+		free[id] = true
+	}
 	var used uint32
 	for id, slot := range f.page.styles {
 		if !slot.used {
 			if slot.refs != 0 {
 				return fmt.Errorf("free style %d has %d references", id, slot.refs)
+			}
+			if !free[id] {
+				return fmt.Errorf("unused style %d is missing from free list", id)
 			}
 			continue
 		}
