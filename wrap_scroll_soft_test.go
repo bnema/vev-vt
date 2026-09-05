@@ -86,7 +86,7 @@ func TestSoftLinkSurvivesTheScrollItCaused(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			s := NewScreenWithHistory(width, tc.height, HistoryConfig{MaxRows: 64, MaxCells: 4096})
+			s := NewScreenWithHistory(width, tc.height, HistoryConfig{MaxRows: 64, MaxBytes: 1 << 20})
 			s.Write([]byte(tc.input))
 
 			bounds := s.LineBounds()
@@ -104,7 +104,7 @@ func TestSoftLinkSurvivesTheScrollItCaused(t *testing.T) {
 // wrapped out of the bottom row used to be two unrelated physical rows, and
 // widening the pane left it split instead of rejoining it.
 func TestResizeRejoinsALineWrappedOutOfTheBottomRow(t *testing.T) {
-	s := NewScreenWithHistory(8, 4, HistoryConfig{MaxRows: 64, MaxCells: 4096})
+	s := NewScreenWithHistory(8, 4, HistoryConfig{MaxRows: 64, MaxBytes: 1 << 20})
 	s.Write([]byte("1\r\n2\r\n3\r\n4\r\n5\r\nabcdefghij"))
 
 	s.Resize(16, 4)
@@ -122,14 +122,14 @@ func TestSoftLinkFromABottomRowWrapReachesHistory(t *testing.T) {
 		width  = 8
 		height = 4
 	)
-	s := NewScreenWithHistory(width, height, HistoryConfig{MaxRows: 64, MaxCells: 4096})
+	s := NewScreenWithHistory(width, height, HistoryConfig{MaxRows: 64, MaxBytes: 1 << 20})
 	// Wrap out of the bottom row, then push both physical rows into history.
 	s.Write([]byte("1\r\n2\r\n3\r\n4\r\n5\r\nabcdefghij\r\nx\r\ny\r\nz\r\n"))
 
 	view := s.History().SealAndView()
 	require.Equal(t, 7, view.Len(), "history row count")
-	require.Equal(t, "abcdefgh", rowString(view.BorrowedRow(5)))
+	require.Equal(t, "abcdefgh", rowString(view.Row(5)))
 	require.Equal(t, LineBound{End: 8, Soft: true}, view.Bound(5), "the wrapped row must reach history soft")
-	require.Equal(t, "ij      ", rowString(view.BorrowedRow(6)))
+	require.Equal(t, "ij      ", rowString(view.Row(6)))
 	require.Equal(t, LineBound{End: 2, Soft: false}, view.Bound(6), "its continuation is a hard line end")
 }

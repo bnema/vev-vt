@@ -26,7 +26,7 @@ const (
 )
 
 type Screen struct {
-	Frame renderer.Frame
+	frame renderer.Frame
 	Row   int
 	Col   int
 	Style renderer.Style
@@ -107,7 +107,7 @@ func NewScreen(width, height int) *Screen {
 		geometry:         Geometry{Cols: width, Rows: height},
 	}
 	s.buffer = s.newBuffer(width, height)
-	s.Frame = s.buffer.frame
+	s.frame = s.buffer.frame
 	s.resetScrollRegion()
 	return s
 }
@@ -123,6 +123,36 @@ func NewScreenWithHistory(width, height int, config HistoryConfig) *Screen {
 // History returns this screen's terminal history, or nil when history was not
 // configured with NewScreenWithHistory.
 func (s *Screen) History() *History { return s.history }
+
+// Columns returns the visible grid width.
+func (s *Screen) Columns() int {
+	if s == nil || s.buffer == nil {
+		return 0
+	}
+	return s.buffer.frame.Width
+}
+
+// Rows returns the visible grid height.
+func (s *Screen) Rows() int {
+	if s == nil || s.buffer == nil {
+		return 0
+	}
+	return s.buffer.frame.Height
+}
+
+// Cell returns the semantic cell at x, y. Coordinates must be inside the
+// visible grid.
+func (s *Screen) Cell(x, y int) renderer.Cell {
+	return s.buffer.frame.At(x, y)
+}
+
+// RowCells returns an owned copy of visible row y, or nil when y is out of range.
+func (s *Screen) RowCells(y int) []renderer.Cell {
+	if s == nil || s.buffer == nil || y < 0 || y >= s.buffer.frame.Height {
+		return nil
+	}
+	return s.buffer.frame.Row(y)
+}
 
 // LineBounds returns an owned copy of the live grid's per-row logical extents,
 // indexed like Frame rows. It returns nil when the screen has no buffer.
@@ -440,10 +470,10 @@ func (s *Screen) kittyCursorX() uint64 {
 }
 
 func (s *Screen) kittyCursorColumn() int {
-	if s.Frame.Width <= 0 {
+	if s.frame.Width <= 0 {
 		return 0
 	}
-	return clamp(s.Col, 0, s.Frame.Width-1)
+	return clamp(s.Col, 0, s.frame.Width-1)
 }
 
 func (s *Screen) kittyCursorY() uint64 {
@@ -467,12 +497,12 @@ func (s *Screen) kittyCellPixels() (width, height int, ok bool) {
 }
 
 func (s *Screen) applyKittyCursorMovement(c kittygraphics.Controls, mutation kittygraphics.Mutation) {
-	if c.HasCursor && c.Cursor == 1 || s.Frame.Width <= 0 || s.Frame.Height <= 0 {
+	if c.HasCursor && c.Cursor == 1 || s.frame.Width <= 0 || s.frame.Height <= 0 {
 		return
 	}
 	columns, rows := s.kittyPlacementGridSize(c, mutation)
 	targetColumn := s.kittyCursorColumn() + columns
-	wraps := targetColumn >= s.Frame.Width
+	wraps := targetColumn >= s.frame.Width
 	rowMoves := max(rows-1, 0)
 	if wraps {
 		rowMoves++
@@ -486,7 +516,7 @@ func (s *Screen) applyKittyCursorMovement(c kittygraphics.Controls, mutation kit
 }
 
 func (s *Screen) advanceKittyCursorRows(rows int) {
-	if rows <= 0 || s.Frame.Height <= 0 {
+	if rows <= 0 || s.frame.Height <= 0 {
 		return
 	}
 	if s.Row >= s.scrollTop && s.Row <= s.scrollBottom {
@@ -499,7 +529,7 @@ func (s *Screen) advanceKittyCursorRows(rows int) {
 		s.scrollUpRegion(s.scrollTop, s.scrollBottom, rows-beforeScroll)
 		return
 	}
-	s.Row = min(s.Row+rows, s.Frame.Height-1)
+	s.Row = min(s.Row+rows, s.frame.Height-1)
 }
 
 func (s *Screen) kittyPlacementGridSize(c kittygraphics.Controls, mutation kittygraphics.Mutation) (columns, rows int) {

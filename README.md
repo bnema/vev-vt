@@ -1,87 +1,102 @@
 # vev-vt
 
-`github.com/bnema/vev-vt` is a frontend-neutral VT terminal engine for Go.
-It provides the terminal screen, scrollback history, immutable snapshots,
-stable history chunks, VTH3 history bytes, and the reusable cell/frame model.
-The `ansi` package turns core frames and damage into transactional ANSI output.
+A Go library for reading terminal output and keeping track of what should appear
+on screen. It powers [vev](https://github.com/bnema/vev).
+
+Feed it the bytes from a shell or command. It handles text, colors, cursor
+movement, scrolling and resizing. You can then read the screen, save its history,
+or use the `ansi` package to draw it in a terminal.
+
+This library does **not** start processes or manage a PTY. Your application does
+that and passes the output to vev-vt.
+
+## Install
+
+Requires Go 1.27 or newer.
+
+```sh
+go get github.com/bnema/vev-vt
+```
+
+**Alpha software:** APIs and saved-history formats can change between versions.
+The current history format does not read older VTH3 data.
+
+## Read terminal output
+
+```go
+package main
+
+import (
+    "fmt"
+
+    vt "github.com/bnema/vev-vt"
+)
+
+func main() {
+    screen := vt.NewScreen(80, 24)
+    screen.Write([]byte("Hello, \x1b[31mworld\x1b[0m!"))
+
+    // Colors and escape sequences are processed, not included in the text.
+    for x := 0; x < 13; x++ {
+        fmt.Printf("%c", screen.Cell(x, 0).Rune)
+    }
+    fmt.Println() // Hello, world!
+}
+```
+
+Use `screen.Resize(columns, rows)` when the terminal size changes.
+Use `screen.Snapshot()` when you need a copy that stays unchanged as new output
+arrives.
+
+## Keep scrollback
+
+Scrollback is the text that has moved above the visible screen.
+
+```go
+// Your application chooses these limits; vev-vt has no default budget.
+config := vt.HistoryConfig{
+    MaxBytes: 20_000_000, // At most 20 MB of history data.
+    MaxRows:  5_000,      // Optional: also keep at most 5,000 lines.
+}
+screen := vt.NewScreenWithHistory(80, 24, config)
+```
+
+vev-vt enforces the limits your application supplies. The PTY transports bytes;
+it does not store scrollback. The oldest lines are removed when a supplied limit
+is reached. Limits apply to each
+screen separately and exclude the visible screen. The byte limit measures
+uncompressed history data, **not total process memory**.
+
+[History guide →](docs/history.md): limit settings, saving/restoring history and
+optional compression during idle time.
+
+## A few rules
+
+- Serialize `Write`, `Resize`, `Snapshot`, reads and history mutations in one
+  goroutine, or protect them with your own lock.
+- Rows returned by the API are copies. Changing one does not change the screen.
+- Use `vt.DefaultStyle()` for terminal-default colors, not `vt.Style{}`.
+- Callbacks run during `screen.Write`; keep them short.
+
+[API ownership and styles →](docs/ownership.md)
 
 ## Packages
 
-- The module root (`github.com/bnema/vev-vt`) owns VT parsing, screen state,
-  history, snapshots, callbacks, and the public model aliases (`Cell`, `Style`,
-  `RGB`, `Frame`, `Damage`, and `RuneWidth`).
-- `github.com/bnema/vev-vt/core` owns the frontend-neutral cell, style, frame,
-  damage, and width implementation. It has no terminal, renderer, transport,
-  or application dependencies.
-- `github.com/bnema/vev-vt/ansi` is the concrete ANSI output package. It consumes
-  core frames and damage; it does not define a renderer-backend interface.
-- `github.com/bnema/vev-vt/graphics` owns bounded renderer-neutral raster assets,
-  sparse placements, clipping fragments, and immutable scene snapshots. It has no
-  Kitty, ANSI, VT-policy, or transport dependency.
-- `github.com/bnema/vev-vt/protocol/kittygraphics` parses bounded Kitty graphics
-  APC commands and translates the supported static/direct subset into `graphics`.
+| Package | Use it for |
+| --- | --- |
+| `vev-vt` | Parse terminal output, read the screen and manage history. |
+| `vev-vt/core` | Work with cells, styles and writable grids. |
+| `vev-vt/ansi` | Render a screen or grid as ANSI terminal output. |
+| `vev-vt/graphics` | Read supported terminal images and their positions. |
 
-## Ownership contract
+[Supported image features →](docs/graphics.md)
 
-Stateful values are single-owner and are not internally synchronized. Serialize
-screen writes, resizes, snapshots, and history mutations in one owner. Parsing
-and callbacks are synchronous: callbacks run before `Write` returns and follow
-parser event order. Consume or copy response bytes during the callback.
-
-`Snapshot`, `HistorySnapshotView`, and `Row` methods provide owned captures or
-copies. `BorrowedRow`, `Frame.Row`, and `HistoryView.Range` expose borrowed
-storage with the lifetimes documented by their APIs; borrowed storage must not
-be mutated or retained beyond its documented lifetime. Sealed `HistoryChunk`
-identity is stable for the lifetime of a view.
-
-## Compatibility
-
-VTH3 history bytes are canonical and are decoded strictly, including malformed,
-truncated, and trailing input rejection. VEVS is an application-owned outer
-snapshot envelope and is intentionally not implemented here.
-
-The module has no production dependencies. `github.com/stretchr/testify` is
-used only by the test suite. Keep the public v0.x API and byte formats immutable
-once released; behavior changes require explicit versioning and compatibility
-evidence.
-
-## Kitty graphics subset
-
-The VT accepts bounded static direct transmissions used by current
-`kitten icat --transfer-mode=stream`: PNG, RGB, and RGBA assets; transmit,
-transmit-and-display, place, query, and supported delete operations; chunked
-Base64 uploads with optional zlib compression; source rectangles; cell extents;
-pixel offsets; z-index; and cursor movement policy. Assets and decoded pixels
-are bounded by explicit scene and parser limits. File, temporary-file,
-shared-memory, animation, composition, relative placement, and
-Unicode-placeholder commands remain unsupported.
-
-`Screen` allocates graphics state only after a Kitty APC. Graphics snapshots are
-separate from cells and history bytes; VTH3 remains text/history-only. Static
-placements move with terminal row scrolling and are clipped by the active
-viewport; reflow and relative-placement movement remain unsupported.
-
-### Headless graphics harness
-
-`cmd/graphics-harness` feeds a terminal byte capture into a fresh `Screen` and
-writes its active graphics snapshot as a PNG using an internal reference
-compositor. It is a development inspection tool, not a terminal emulator.
-
-```sh
-go run ./cmd/graphics-harness \
-  -input internal/graphicsharness/testdata/demo.apc \
-  -output /tmp/graphics-harness.png \
-  -cols 4 -rows 4 -pixel-width 4 -pixel-height 4 -scale 64
-```
-
-The included demo has an opaque blue background and a semi-transparent red
-overlay. Its output is suitable for direct image inspection.
-
-## Checks
+## Development
 
 ```sh
 go test ./...
 go test ./... -race
 go vet ./...
-go test ./... -run '^$' -bench='.' -benchmem
 ```
+
+[Storage benchmarks and design decisions →](docs/storage-optimization.md)

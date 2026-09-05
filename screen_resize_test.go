@@ -11,16 +11,16 @@ import (
 func TestResize(t *testing.T) {
 	setRow := func(s *Screen, y int, text string) {
 		for x, r := range []rune(text) {
-			if x >= s.Frame.Width {
+			if x >= s.frame.Width {
 				break
 			}
-			s.Frame.Set(x, y, renderer.Cell{Rune: r, Style: renderer.DefaultStyle()})
+			s.frame.Set(x, y, renderer.Cell{Rune: r, Style: renderer.DefaultStyle()})
 		}
 	}
 	rowString := func(s *Screen, y int) string {
-		runes := make([]rune, s.Frame.Width)
-		for x := range s.Frame.Width {
-			runes[x] = s.Frame.At(x, y).Rune
+		runes := make([]rune, s.frame.Width)
+		for x := range s.frame.Width {
+			runes[x] = s.frame.At(x, y).Rune
 		}
 		return string(runes)
 	}
@@ -216,7 +216,7 @@ func TestResize(t *testing.T) {
 				for range 200 {
 					s := NewScreen(8, 4)
 					s.Write([]byte("a界b好c語d"))
-					s.Row = rng.Intn(s.Frame.Height)
+					s.Row = rng.Intn(s.frame.Height)
 
 					s.Resize(rng.Intn(8)+1, rng.Intn(4)+1)
 

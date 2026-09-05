@@ -2,123 +2,107 @@ package vt
 
 import renderer "github.com/bnema/vev-vt/core"
 
-// RecoveryTranscriptSnapshot is an owned, immutable capture of the viewport
-// rows that should be replayed after retained terminal history during recovery.
+// RecoveryTranscriptSnapshot owns compact viewport pages to replay after
+// retained history. No semantic row slices are retained by the snapshot.
 type RecoveryTranscriptSnapshot struct {
 	segments  []recoveryTranscriptSegment
 	nextRowID RowID
 }
 
 type recoveryTranscriptSegment struct {
-	rows   [][]renderer.Cell
+	frame  renderer.Frame
 	bounds []LineBound
 	rowIDs []RowID
 }
 
-// RecoveryTranscriptSnapshot captures the active primary viewport, or the
-// saved primary viewport followed by the active alternate viewport.
+// RecoveryTranscriptSnapshot captures the primary viewport, followed by the
+// alternate viewport when active. Untouched trailing rows are omitted and each
+// viewport ends with a hard line, independently of physical row rotation.
 func (s *Screen) RecoveryTranscriptSnapshot() RecoveryTranscriptSnapshot {
 	if s == nil {
 		return RecoveryTranscriptSnapshot{}
 	}
-
 	buffers := []*buffer{s.buffer}
 	if s.alternate != nil {
 		buffers = []*buffer{s.alternate.buffer, s.buffer}
 	}
-
-	nextRowID := s.nextRowID
-	if nextRowID < ^RowID(0) {
-		nextRowID++
+	nextID := s.nextRowID
+	if nextID < ^RowID(0) {
+		nextID++
 	}
-	snapshot := RecoveryTranscriptSnapshot{segments: make([]recoveryTranscriptSegment, 0, len(buffers)), nextRowID: nextRowID}
+	snapshot := RecoveryTranscriptSnapshot{nextRowID: nextID, segments: make([]recoveryTranscriptSegment, 0, len(buffers))}
 	for _, b := range buffers {
-		segment := captureRecoveryTranscriptSegment(b)
-		if len(segment.rows) > 0 {
-			snapshot.segments = append(snapshot.segments, segment)
+		if b == nil {
+			continue
 		}
+		rows := b.frame.Height
+		for rows > 0 && recoveryTranscriptFrameRowUntouched(b.frame, rows-1, b.bound(rows-1)) {
+			rows--
+		}
+		if rows == 0 {
+			continue
+		}
+		frame := renderer.NewFrame(b.frame.Width, rows)
+		for y := range rows {
+			for x := range frame.Width {
+				frame.Set(x, y, b.frame.Cell(x, y))
+			}
+		}
+		bounds := append([]LineBound(nil), b.boundaries[:rows]...)
+		bounds[rows-1].Soft = false
+		snapshot.segments = append(snapshot.segments, recoveryTranscriptSegment{
+			frame: frame, bounds: bounds, rowIDs: append([]RowID(nil), b.rowIDs[:rows]...),
+		})
 	}
 	return snapshot
 }
 
-func captureRecoveryTranscriptSegment(b *buffer) recoveryTranscriptSegment {
-	if b == nil {
-		return recoveryTranscriptSegment{}
-	}
-
-	rowCount := b.frame.Height
-	for rowCount > 0 && recoveryTranscriptRowUntouched(b.frame.Row(rowCount-1), b.bound(rowCount-1)) {
-		rowCount--
-	}
-	if rowCount == 0 {
-		return recoveryTranscriptSegment{}
-	}
-
-	segment := recoveryTranscriptSegment{
-		rows:   make([][]renderer.Cell, rowCount),
-		bounds: append([]LineBound(nil), b.boundaries[:rowCount]...),
-		rowIDs: append([]RowID(nil), b.rowIDs[:rowCount]...),
-	}
-	cells := make([]renderer.Cell, rowCount*b.frame.Width)
-	for y := range rowCount {
-		start := y * b.frame.Width
-		end := start + b.frame.Width
-		segment.rows[y] = cells[start:end:end]
-		copy(segment.rows[y], b.frame.Row(y))
-	}
-	segment.bounds[rowCount-1].Soft = false
-	return segment
-}
-
-func recoveryTranscriptRowUntouched(row []renderer.Cell, bound LineBound) bool {
+func recoveryTranscriptFrameRowUntouched(frame renderer.Frame, y int, bound LineBound) bool {
 	if bound.End != 0 || bound.Soft {
 		return false
 	}
 	blank := renderer.BlankCell()
-	for _, cell := range row {
-		if !cell.Equal(blank) {
+	for x := range frame.Width {
+		if !frame.Cell(x, y).Equal(blank) {
 			return false
 		}
 	}
 	return true
 }
 
-// Marshal encodes the captured rows as canonical terminal history without
-// consulting or mutating live Screen history.
+// Marshal encodes the compact capture without consulting or mutating live state.
 func (snapshot RecoveryTranscriptSnapshot) Marshal() ([]byte, error) {
-	rows := 0
-	cells := 0
+	view := HistoryView{nextRowID: snapshot.nextRowID}
 	for _, segment := range snapshot.segments {
-		rows += len(segment.rows)
-		for _, row := range segment.rows {
-			cells += len(row)
-		}
-	}
-
-	view := HistoryView{rows: rows, cells: cells, nextRowID: snapshot.nextRowID}
-	for _, segment := range snapshot.segments {
-		for start := 0; start < len(segment.rows); {
-			space := maxHistoryChunkRows
-			if len(view.chunks) > 0 {
-				last := view.chunks[len(view.chunks)-1]
-				if len(last.rows) < maxHistoryChunkRows {
-					space = maxHistoryChunkRows - len(last.rows)
-					end := min(start+space, len(segment.rows))
-					last.rows = append(last.rows, segment.rows[start:end]...)
-					last.bounds = append(last.bounds, segment.bounds[start:end]...)
-					last.rowIDs = append(last.rowIDs, segment.rowIDs[start:end]...)
-					start = end
-					continue
+		for start := 0; start < segment.frame.Height; {
+			count := min(segment.frame.Height-start, maxHistoryChunkRows, maxHistorySlabRows(segment.frame.Width))
+			frame := renderer.NewFrame(segment.frame.Width, count)
+			lastStyleRow := make(map[renderer.Style]int)
+			for y := range count {
+				for x := range frame.Width {
+					cell := segment.frame.Cell(x, start+y)
+					frame.Set(x, y, cell)
+					style := cell.Style.Canonical()
+					if style != renderer.DefaultStyle() {
+						lastStyleRow[style] = y
+					}
 				}
 			}
-
-			end := min(start+space, len(segment.rows))
-			view.chunks = append(view.chunks, &HistoryChunk{
-				rows:   append([][]renderer.Cell(nil), segment.rows[start:end]...),
-				bounds: append([]LineBound(nil), segment.bounds[start:end]...),
-				rowIDs: append([]RowID(nil), segment.rowIDs[start:end]...),
-			})
-			start = end
+			drops := make([]uint64, count)
+			for _, y := range lastStyleRow {
+				drops[y]++
+			}
+			chunk := &HistoryChunk{
+				page: newSealedPage(frame), count: count, width: frame.Width,
+				bounds: segment.bounds[start : start+count], rowIDs: segment.rowIDs[start : start+count],
+				styleDrops: drops, styleCount: uint64(len(lastStyleRow)) + 1,
+			}
+			chunk.recordPayloads()
+			view.chunks = append(view.chunks, chunk)
+			view.rows += count
+			view.cells += count * frame.Width
+			view.logicalBytes += historyChunkLogicalBytes(chunk)
+			start += count
 		}
 	}
 	return MarshalHistory(view)

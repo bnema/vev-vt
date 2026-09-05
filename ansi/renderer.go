@@ -22,7 +22,7 @@ type Renderer struct {
 	colorProfile ColorProfile
 	width        int
 	height       int
-	shadow       []Cell
+	hasCommitted bool
 	committed    Frame
 }
 
@@ -47,7 +47,7 @@ func NewWithColorProfile(caps Capabilities, profile ColorProfile) *Renderer {
 func (r *Renderer) Reset() {
 	r.width = 0
 	r.height = 0
-	r.shadow = nil
+	r.hasCommitted = false
 	r.committed = Frame{}
 }
 
@@ -63,7 +63,13 @@ func (p *PreparedDraw) Commit() {
 	}
 	p.commitOnce.Do(func() {
 		committed := p.renderer.committedFrame()
-		p.candidate.Commit(&committed)
+		if p.candidate.Plan.Snapshot {
+			// PreparedDraw privately owns this snapshot. Its shared Once makes
+			// transfer safe even when the caller retains copies of the draw.
+			committed = p.candidate.frame
+		} else {
+			p.candidate.Commit(&committed)
+		}
 		p.renderer.setCommittedFrame(committed)
 	})
 }
@@ -71,19 +77,21 @@ func (p *PreparedDraw) Commit() {
 // Prepare plans and encodes a transactional draw. The renderer advances only
 // when the returned draw is committed. Keep at most one prepared draw
 // outstanding; commit or discard it before calling Prepare again.
-func (r *Renderer) Prepare(frame Frame, damage []Damage, reset bool) (PreparedDraw, error) {
+func (r *Renderer) Prepare(frame CellSource, damage []Damage, reset bool) (PreparedDraw, error) {
 	var candidate DeltaCandidate
 	var err error
-	if !reset && len(r.shadow) != 0 && r.width == frame.Width && r.height == frame.Height && len(damage) == 1 && (damage[0].Kind == DamageText || damage[0].Kind == DamageClear) {
-		if err = frame.Validate(); err == nil {
-			plan := planSingleDamage(frame, damage[0])
-			candidate = DeltaCandidate{Plan: plan}
-			if plan.Snapshot || plan.Scroll.Height != 0 || len(plan.Spans) != 0 {
-				candidate.frame = frame.Clone()
-			}
+	if err = validateCellSource(frame); err != nil {
+		return PreparedDraw{}, err
+	}
+	columns, rows := frame.Columns(), frame.Rows()
+	if !reset && r.hasCommitted && r.width == columns && r.height == rows && len(damage) == 1 && (damage[0].Kind == DamageText || damage[0].Kind == DamageClear) {
+		plan := planSingleDamage(frame, damage[0])
+		candidate = DeltaCandidate{Plan: plan}
+		if plan.Snapshot || plan.Scroll.Height != 0 || len(plan.Spans) != 0 {
+			candidate.frame = cloneCellSource(frame)
 		}
 	} else {
-		candidate, err = PlanDelta(frame, damage, r.committedFrame(), reset || len(r.shadow) == 0)
+		candidate, err = PlanDelta(frame, damage, r.committedFrame(), reset || !r.hasCommitted)
 	}
 	if err != nil {
 		return PreparedDraw{}, err
@@ -114,7 +122,7 @@ func (r *Renderer) Prepare(frame Frame, damage []Damage, reset bool) (PreparedDr
 	} else {
 		if plan.Scroll.Height != 0 {
 			scroll := plan.Scroll
-			emitScrollUp(buf, Damage{Kind: DamageScrollUp, X: 0, Y: scroll.Y, Width: frame.Width, Height: scroll.Height, Count: scroll.Count})
+			emitScrollUp(buf, Damage{Kind: DamageScrollUp, X: 0, Y: scroll.Y, Width: columns, Height: scroll.Height, Count: scroll.Count})
 		}
 		for _, span := range plan.Spans {
 			r.emitSpan(buf, frame, span.Y, span.X, span.Width, &st)
@@ -128,7 +136,7 @@ func (r *Renderer) Prepare(frame Frame, damage []Damage, reset bool) (PreparedDr
 	return prepared, nil
 }
 
-func (r *Renderer) Draw(frame Frame, damage []Damage) ([]byte, error) {
+func (r *Renderer) Draw(frame CellSource, damage []Damage) ([]byte, error) {
 	prepared, err := r.Prepare(frame, damage, false)
 	if err != nil {
 		return nil, err
@@ -144,7 +152,7 @@ func (r *Renderer) committedFrame() Frame {
 func (r *Renderer) setCommittedFrame(frame Frame) {
 	r.width = frame.Width
 	r.height = frame.Height
-	r.shadow = frame.Cells
+	r.hasCommitted = true
 	r.committed = frame
 }
 
@@ -185,22 +193,23 @@ func hasScrollDamage(damage []Damage) bool {
 	return false
 }
 
-func (r *Renderer) writeFull(out *bytes.Buffer, frame Frame, st *drawState) {
-	for y := range frame.Height {
-		r.emitSpan(out, frame, y, 0, frame.Width, st)
+func (r *Renderer) writeFull(out *bytes.Buffer, frame CellSource, st *drawState) {
+	columns := frame.Columns()
+	for y := range frame.Rows() {
+		r.emitSpan(out, frame, y, 0, columns, st)
 	}
 	out.WriteString("\x1b[0m")
 }
 
-func (r *Renderer) emitDamageSpans(out *bytes.Buffer, frame Frame, spans []Span, st *drawState) {
+func (r *Renderer) emitDamageSpans(out *bytes.Buffer, frame CellSource, spans []Span, st *drawState) {
 	for _, span := range spans {
 		r.emitSpan(out, frame, span.Y, span.X, span.Width, st)
 	}
 	out.WriteString("\x1b[0m")
 }
-func clampRect(frame Frame, x, y, width, height int) (int, int, int, int, bool) {
-	x, width, okX := clampRange(x, width, frame.Width)
-	y, height, okY := clampRange(y, height, frame.Height)
+func clampRect(frame CellSource, x, y, width, height int) (int, int, int, int, bool) {
+	x, width, okX := clampRange(x, width, frame.Columns())
+	y, height, okY := clampRange(y, height, frame.Rows())
 	if !okX || !okY {
 		return 0, 0, 0, 0, false
 	}

@@ -24,13 +24,9 @@ func newBuffer(width, height int) *buffer {
 	return &buffer{frame: renderer.NewFrame(width, height), boundaries: make([]LineBound, height), rowIDs: make([]RowID, height)}
 }
 
-func bufferFromFrame(frame renderer.Frame) *buffer {
-	return &buffer{frame: frame, boundaries: make([]LineBound, frame.Height), rowIDs: make([]RowID, frame.Height)}
-}
-
 func (b *buffer) clone() *buffer {
 	out := &buffer{
-		frame:      cloneFrame(b.frame),
+		frame:      b.frame.Clone(),
 		boundaries: append([]LineBound(nil), b.boundaries...),
 		rowIDs:     append([]RowID(nil), b.rowIDs...),
 	}
@@ -169,7 +165,7 @@ func (b *buffer) resizeFixed(width, height int, active, saved *bufferCursor) ([]
 	evictedBounds := make([]LineBound, 0, shift)
 	evictedIDs := make([]RowID, 0, shift)
 	for y := range shift {
-		evicted = append(evicted, append([]renderer.Cell(nil), b.frame.Row(y)...))
+		evicted = append(evicted, b.frame.Row(y))
 		// The evicted row keeps its source width, so its extent needs no clamping.
 		evictedBounds = append(evictedBounds, b.boundaries[y])
 		evictedIDs = append(evictedIDs, b.rowIDs[y])
@@ -190,7 +186,9 @@ func (b *buffer) resizeFixed(width, height int, active, saved *bufferCursor) ([]
 		if sy >= b.frame.Height {
 			break
 		}
-		copy(next.frame.Row(y), b.frame.Row(sy))
+		for x := range min(width, b.frame.Width) {
+			next.frame.Set(x, y, b.frame.At(x, sy))
+		}
 		next.boundaries[y] = b.boundaries[sy]
 		next.rowIDs[y] = b.rowIDs[sy]
 		next.boundaries[y].End = min(next.boundaries[y].End, width)
@@ -312,23 +310,24 @@ func (b *buffer) layoutReflow(width int, points *[2]reflowPoint, dst *buffer, sh
 			dst.rowIDs[outputRow-shift] = id
 		}
 	}
-	blankEvicted := func(outputRow int) []renderer.Cell {
+	blankOutput := func(outputRow int) {
 		if outputRow < shift {
 			out := evicted[outputRow*width : (outputRow+1)*width]
 			for i := range out {
 				out[i] = renderer.BlankCell()
 			}
-			return out
+		}
+	}
+	setOutput := func(outputRow, column int, cell renderer.Cell) {
+		if outputRow < shift {
+			evicted[outputRow*width+column] = cell
+			return
 		}
 		if dst != nil && outputRow < shift+dst.frame.Height {
-			return dst.frame.Row(outputRow - shift)
+			dst.frame.Set(column, outputRow-shift, cell)
 		}
-		return nil
 	}
-	var output []renderer.Cell
-	if dst != nil && (shift > 0 || dst.frame.Height > 0) {
-		output = blankEvicted(0)
-	}
+	blankOutput(0)
 	finishRow := func(soft bool) {
 		// An output row belongs either to history or to the retained viewport, and
 		// only this pass knows where it ended, so both destinations are written here.
@@ -344,7 +343,7 @@ func (b *buffer) layoutReflow(width int, points *[2]reflowPoint, dst *buffer, sh
 		row++
 		col = 0
 		if dst != nil {
-			output = blankEvicted(row)
+			blankOutput(row)
 		}
 	}
 	setPoint := func(line, offset, pointRow, pointCol int) {
@@ -381,17 +380,16 @@ func (b *buffer) layoutReflow(width int, points *[2]reflowPoint, dst *buffer, sh
 		}
 		truncated := false
 		for y := start; y <= end && !truncated; y++ {
-			cells := b.frame.Row(y)
 			limit := b.boundaries[y].End
 			for x := 0; x < limit; {
-				cell := cells[x]
+				cell := b.frame.At(x, y)
 				if cell.Continuation { // Repair malformed rows by dropping orphaned tails.
 					setPoint(start, offset, row, col)
 					x++
 					offset++
 					continue
 				}
-				wide := renderer.RuneWidth(cell.Rune) == 2 && x+1 < limit && cells[x+1].Continuation
+				wide := renderer.RuneWidth(cell.Rune) == 2 && x+1 < limit && b.frame.At(x+1, y).Continuation
 				w := 1
 				if wide && width >= 2 {
 					w = 2
@@ -406,9 +404,8 @@ func (b *buffer) layoutReflow(width int, points *[2]reflowPoint, dst *buffer, sh
 				}
 				setPoint(start, offset, row, col)
 				if wide && width >= 2 {
-					if output != nil {
-						output[col], output[col+1] = cell, cells[x+1]
-					}
+					setOutput(row, col, cell)
+					setOutput(row, col+1, b.frame.At(x+1, y))
 					setPoint(start, offset+1, row, col+1)
 					col += 2
 					x += 2
@@ -419,9 +416,7 @@ func (b *buffer) layoutReflow(width int, points *[2]reflowPoint, dst *buffer, sh
 					cell.Rune = '\uFFFD'
 					cell.Continuation = false
 				}
-				if output != nil {
-					output[col] = cell
-				}
+				setOutput(row, col, cell)
 				col++
 				x++
 				offset++

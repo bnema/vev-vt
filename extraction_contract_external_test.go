@@ -12,14 +12,23 @@ func TestExternalScreenParserPreservesPublicTerminalModel(t *testing.T) {
 	screen := vt.NewScreen(6, 2)
 	screen.Write([]byte("A界"))
 
-	if got := screen.Frame.At(0, 0); got.Rune != 'A' {
+	var source vt.CellSource = screen
+	if source.Columns() != 6 || source.Rows() != 2 {
+		t.Fatalf("screen dimensions = %dx%d, want 6x2", source.Columns(), source.Rows())
+	}
+	if got := source.Cell(0, 0); got.Rune != 'A' {
 		t.Fatalf("ASCII cell = %#v, want A", got)
 	}
-	if got := screen.Frame.At(1, 0); got.Rune != '界' || got.Continuation {
+	if got := source.Cell(1, 0); got.Rune != '界' || got.Continuation {
 		t.Fatalf("wide-rune lead cell = %#v, want 界 lead", got)
 	}
-	if got := screen.Frame.At(2, 0); !got.Continuation {
+	if got := source.Cell(2, 0); !got.Continuation {
 		t.Fatalf("wide-rune continuation = %#v, want continuation", got)
+	}
+	owned := screen.RowCells(0)
+	owned[0] = core.BlankCell()
+	if got := source.Cell(0, 0).Rune; got != 'A' {
+		t.Fatalf("mutating RowCells result changed live screen cell to %q", got)
 	}
 	if got := vt.RuneWidth('界'); got != 2 {
 		t.Fatalf("RuneWidth(界) = %d, want 2", got)
@@ -29,7 +38,7 @@ func TestExternalScreenParserPreservesPublicTerminalModel(t *testing.T) {
 	// provide arbitrary PTY chunk boundaries.
 	screen.Write([]byte("\x1b[2;2H\x1b[3"))
 	screen.Write([]byte("1mX"))
-	cell := screen.Frame.At(1, 1)
+	cell := screen.Cell(1, 1)
 	if cell.Rune != 'X' || cell.Style.Foreground != 1 {
 		t.Fatalf("split ANSI write = %#v, want red X", cell)
 	}
@@ -132,9 +141,6 @@ func TestExternalSnapshotsAndHistoryRespectOwnershipContracts(t *testing.T) {
 	copyOfRow[0] = core.Cell{Rune: 'x'}
 	if got := before.Row(0)[0].Rune; got != 'a' {
 		t.Fatalf("owned history row mutation changed view to %q", got)
-	}
-	if borrowed := before.BorrowedRow(0); &borrowed[0] == &copyOfRow[0] {
-		t.Fatal("Row returned borrowed history storage instead of an owned copy")
 	}
 
 	appendHistoryRow(t, history, 'c', 12)

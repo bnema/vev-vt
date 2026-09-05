@@ -48,6 +48,33 @@ type Style struct {
 
 func DefaultStyle() Style { return Style{Foreground: -1, Background: -1} }
 
+// Canonical returns the unique representation of s under Equal. Fields that
+// are inactive for the selected color form are cleared. Canonical does not
+// treat the zero Style as the default style: indexed color zero remains
+// distinct from the unset colors returned by DefaultStyle.
+func (s Style) Canonical() Style {
+	if s.HasForegroundRGB {
+		s.Foreground = 0
+	} else {
+		s.ForegroundRGB = RGB{}
+	}
+	if s.HasBackgroundRGB {
+		s.Background = 0
+	} else {
+		s.BackgroundRGB = RGB{}
+	}
+	if s.HasUnderlineColorRGB {
+		s.HasUnderlineColor = false
+		s.UnderlineColor = 0
+	} else {
+		s.UnderlineColorRGB = RGB{}
+		if !s.HasUnderlineColor {
+			s.UnderlineColor = 0
+		}
+	}
+	return s
+}
+
 func (s Style) Equal(other Style) bool {
 	if s.Bold != other.Bold || s.Italic != other.Italic || s.Inverse != other.Inverse || s.Attrs != other.Attrs || s.UnderlineStyle != other.UnderlineStyle {
 		return false

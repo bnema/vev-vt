@@ -6,7 +6,6 @@ import (
 )
 
 type screenState struct {
-	frame               renderer.Frame
 	buffer              *buffer
 	row                 int
 	col                 int
@@ -92,8 +91,8 @@ func (s *Screen) colorSchemeReport() []byte {
 }
 
 func (s *Screen) reset() {
-	s.buffer = s.newBuffer(s.Frame.Width, s.Frame.Height)
-	s.Frame = s.buffer.frame
+	s.buffer = s.newBuffer(s.frame.Width, s.frame.Height)
+	s.frame = s.buffer.frame
 	s.Row, s.Col = 0, 0
 	s.Style = renderer.DefaultStyle()
 	s.escapeBuf = s.escapeBuf[:0]
@@ -117,10 +116,10 @@ func (s *Screen) reset() {
 }
 
 func (s *Screen) setScrollRegion(parts []int) {
-	if s.Frame.Height == 0 {
+	if s.frame.Height == 0 {
 		return
 	}
-	top, bottom := 1, s.Frame.Height
+	top, bottom := 1, s.frame.Height
 	if len(parts) > 0 && parts[0] > 0 {
 		top = parts[0]
 	}
@@ -130,8 +129,8 @@ func (s *Screen) setScrollRegion(parts []int) {
 	if top >= bottom {
 		s.resetScrollRegion()
 	} else {
-		s.scrollTop = clamp(top-1, 0, s.Frame.Height-1)
-		s.scrollBottom = clamp(bottom-1, 0, s.Frame.Height-1)
+		s.scrollTop = clamp(top-1, 0, s.frame.Height-1)
+		s.scrollBottom = clamp(bottom-1, 0, s.frame.Height-1)
 		if s.scrollTop >= s.scrollBottom {
 			s.resetScrollRegion()
 		}
@@ -141,8 +140,8 @@ func (s *Screen) setScrollRegion(parts []int) {
 
 func (s *Screen) resetScrollRegion() {
 	s.scrollTop = 0
-	if s.Frame.Height > 0 {
-		s.scrollBottom = s.Frame.Height - 1
+	if s.frame.Height > 0 {
+		s.scrollBottom = s.frame.Height - 1
 	} else {
 		s.scrollBottom = 0
 	}
@@ -200,7 +199,6 @@ func (s *Screen) setMode(private bool, parts []int, enabled bool) {
 func (s *Screen) enterAlternateScreen() {
 	if s.alternate == nil {
 		s.alternate = &screenState{
-			frame:               cloneFrame(s.Frame),
 			buffer:              s.buffer.clone(),
 			row:                 s.Row,
 			col:                 s.Col,
@@ -216,8 +214,8 @@ func (s *Screen) enterAlternateScreen() {
 	}
 	s.graphics = nil
 	s.kittyPendingDisplay = nil
-	s.buffer = s.newBuffer(s.Frame.Width, s.Frame.Height)
-	s.Frame = s.buffer.frame
+	s.buffer = s.newBuffer(s.frame.Width, s.frame.Height)
+	s.frame = s.buffer.frame
 	s.Row, s.Col = 0, 0
 	s.Style = renderer.DefaultStyle()
 	s.savedCursor = cursorState{}
@@ -231,13 +229,9 @@ func (s *Screen) exitAlternateScreen() {
 	}
 	state := s.alternate
 	s.buffer = state.buffer
-	if s.buffer == nil {
-		s.buffer = bufferFromFrame(cloneFrame(state.frame))
-		s.fillMissingRowIDs(s.buffer)
-	}
-	s.Frame = s.buffer.frame
-	s.Row = clamp(state.row, 0, s.Frame.Height-1)
-	s.Col = clamp(state.col, 0, s.Frame.Width-1)
+	s.frame = s.buffer.frame
+	s.Row = clamp(state.row, 0, s.frame.Height-1)
+	s.Col = clamp(state.col, 0, s.frame.Width-1)
 	s.Style = state.style
 	s.scrollTop = state.scrollTop
 	s.scrollBottom = state.scrollBottom

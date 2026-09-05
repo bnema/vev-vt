@@ -27,7 +27,7 @@ func TestWideCharSurvivesRotatedScroll(t *testing.T) {
 				assertContinuation(t, s, 1, 1)
 				assertBlank(t, s, 0, 2)
 				assertBlank(t, s, 1, 2)
-				if err := s.Frame.CheckInvariants(); err != nil {
+				if err := s.frame.CheckInvariants(); err != nil {
 					t.Fatalf("invariants: %v", err)
 				}
 			},
@@ -43,7 +43,7 @@ func TestWideCharSurvivesRotatedScroll(t *testing.T) {
 				assertCell(t, s, 0, 1, '世')
 				assertContinuation(t, s, 1, 1)
 				assertBlank(t, s, 0, 0)
-				if err := s.Frame.CheckInvariants(); err != nil {
+				if err := s.frame.CheckInvariants(); err != nil {
 					t.Fatalf("invariants: %v", err)
 				}
 			},
@@ -72,7 +72,7 @@ func TestLineOffsetInvariantAfterVTSequences(t *testing.T) {
 	for i, seq := range seqs {
 		s.Write(seq)
 		s.ClearDamage()
-		if err := s.Frame.CheckInvariants(); err != nil {
+		if err := s.frame.CheckInvariants(); err != nil {
 			t.Fatalf("after seq %d: invariants broken: %v", i, err)
 		}
 	}

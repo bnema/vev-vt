@@ -165,22 +165,23 @@ const (
 //     entirely blank full-width line may instead use a vertical-only move
 //     plus 2K when that encoding is cheaper. Both clears require the default
 //     pen (BCE: terminals fill cleared cells with the pen background).
-func (r *Renderer) emitSpan(out *bytes.Buffer, frame Frame, y, x, width int, st *drawState) {
+func (r *Renderer) emitSpan(out *bytes.Buffer, frame CellSource, y, x, width int, st *drawState) {
 	end := x + width
+	columns := frame.Columns()
 	// Trailing blank suffix is EL-eligible only when the span reaches the
 	// frame's right edge (EL clears to the end of the line, nothing less).
 	t := end
-	if end == frame.Width {
-		for t > x && isBlank(frame.At(t-1, y)) {
+	if end == columns {
+		for t > x && isBlank(frame.Cell(t-1, y)) {
 			t--
 		}
 	}
-	useEL := end == frame.Width && end-t >= elLen
+	useEL := end == columns && end-t >= elLen
 	if !useEL {
 		t = end
 	}
 
-	if useEL && t == x && x == 0 && width == frame.Width {
+	if useEL && t == x && x == 0 && width == columns {
 		// Entire line blank: compare "move to col 0 + EL" against
 		// "vertical-only move + 2K" (2K clears the whole line from any
 		// column, so a cheap same-column CUD/CUU can be reused).
@@ -195,7 +196,7 @@ func (r *Renderer) emitSpan(out *bytes.Buffer, frame Frame, y, x, width int, st 
 
 	st.moveTo(out, y, x)
 	for col := x; col < t; col++ {
-		cell := frame.At(col, y)
+		cell := frame.Cell(col, y)
 		// Continuation cells are the right half of a wide rune. Emit nothing:
 		// the terminal already advanced two columns for the left cell's rune.
 		if cell.Continuation {
@@ -222,7 +223,7 @@ func (r *Renderer) emitSpan(out *bytes.Buffer, frame Frame, y, x, width int, st 
 		out.WriteString("\x1b[K")
 		// EL does not move the cursor: it stays at the start of the blanks.
 		st.setCursor(y, t)
-	} else if end >= frame.Width {
+	} else if end >= columns {
 		st.invalidateCursor()
 	} else {
 		st.setCursor(y, end)
@@ -234,7 +235,7 @@ func (r *Renderer) emitSpan(out *bytes.Buffer, frame Frame, y, x, width int, st 
 	// malformed inputs the VT layer should never produce, but tracking must
 	// stay certain, so drop it. (t is never a continuation on the EL path —
 	// blanks are not continuations — so this check is exact for both paths.)
-	if frame.At(x, y).Continuation || (t < frame.Width && frame.At(t, y).Continuation) {
+	if frame.Cell(x, y).Continuation || (t < columns && frame.Cell(t, y).Continuation) {
 		st.invalidateCursor()
 	}
 }

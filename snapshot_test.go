@@ -49,7 +49,7 @@ func TestHistorySnapshotViewDoesNotSealTailAndCopiesIt(t *testing.T) {
 
 func TestHistoryFromBlobsNormalizesFullTailBeforeAppend(t *testing.T) {
 	fullTail, err := MarshalHistory(HistoryView{
-		chunks:    []*HistoryChunk{{rows: [][]renderer.Cell{historyRow("AAAA"), historyRow("BBBB")}, rowIDs: []RowID{1, 2}}},
+		chunks:    []*HistoryChunk{testHistoryChunk([][]renderer.Cell{historyRow("AAAA"), historyRow("BBBB")}, nil, []RowID{1, 2})},
 		rows:      2,
 		nextRowID: 3,
 	})
@@ -64,8 +64,8 @@ func TestHistoryFromBlobsNormalizesFullTailBeforeAppend(t *testing.T) {
 	require.Len(t, restored.tail, 1, "the appended row must be the mutable tail")
 }
 
-func TestHistoryFromBlobsRestoresCellAccountingAndEvictsToBothBudgets(t *testing.T) {
-	history := NewHistory(HistoryConfig{MaxRows: 4, MaxCells: 10, ChunkRows: 2})
+func TestHistoryFromBlobsRestoresAccountingAndEvictsToBothBudgets(t *testing.T) {
+	history := NewHistory(HistoryConfig{MaxRows: 4, MaxBytes: 1 << 20, ChunkRows: 2})
 	for _, text := range []string{"a", "b", "cc"} {
 		requireHistoryAppend(t, history, historyRow(text))
 	}
@@ -79,7 +79,8 @@ func TestHistoryFromBlobsRestoresCellAccountingAndEvictsToBothBudgets(t *testing
 	tail, err := MarshalHistoryTail(view)
 	require.NoError(t, err)
 
-	restored, err := HistoryFromBlobs(HistoryConfig{MaxRows: 4, MaxCells: 2, ChunkRows: 2}, sealed, tail)
+	const budget = 2*renderer.StoredCellLogicalBytes + renderer.RowDescriptorLogicalBytes + renderer.StyleRecordLogicalBytes
+	restored, err := HistoryFromBlobs(HistoryConfig{MaxRows: 4, MaxBytes: budget, ChunkRows: 2}, sealed, tail)
 	require.NoError(t, err)
 	require.Equal(t, []string{"cc"}, historyViewTexts(restored.View()))
 	require.Equal(t, 2, restored.Cells())

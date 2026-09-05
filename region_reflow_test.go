@@ -42,9 +42,9 @@ func TestResizeSeversSoftWrapsAtRegionalScrollEdges(t *testing.T) {
 
 			s.Resize(3, 6)
 
-			got := make([]string, s.Frame.Height)
-			for y := range s.Frame.Height {
-				got[y] = rowString(s.Frame.Row(y))
+			got := make([]string, s.frame.Height)
+			for y := range s.frame.Height {
+				got[y] = rowString(s.frame.Row(y))
 			}
 			require.Equal(t, tt.want, got)
 		})

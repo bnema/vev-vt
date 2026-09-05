@@ -13,7 +13,7 @@ mkdir -p "$tmp/consumer"
 cat >"$tmp/consumer/go.mod" <<EOF
 module example.com/vev-vt-consumer
 
-go 1.26
+go 1.27
 
 require github.com/bnema/vev-vt v0.0.0
 
@@ -33,7 +33,7 @@ import (
 func main() {
 	screen := vt.NewScreen(4, 1)
 	screen.Write([]byte("ok"))
-	output, err := ansi.New(ansi.Capabilities{}).Draw(screen.Frame.Clone(), []vt.Damage{vt.FullRedraw()})
+	output, err := ansi.New(ansi.Capabilities{}).Draw(screen, []vt.Damage{vt.FullRedraw()})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

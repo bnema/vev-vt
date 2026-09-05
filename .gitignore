@@ -3,6 +3,9 @@
 /coverage.out
 /testdata/generated/
 
+# Local agent review notes
+/.agent-reviews/
+
 # Editor and OS files
 *.swp
 .DS_Store

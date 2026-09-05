@@ -13,7 +13,7 @@ func TestOnBellFiresForLoneBEL(t *testing.T) {
 	s.OnBell = func() { rang++ }
 	s.Write([]byte("hi\ahi\a"))
 	require.Equal(t, 2, rang)
-	require.Equal(t, "hihi", strings.TrimRight(rowString(s.Frame.Row(0)), " "))
+	require.Equal(t, "hihi", strings.TrimRight(rowString(s.frame.Row(0)), " "))
 }
 
 func TestOnBellIgnoresOSCTerminator(t *testing.T) {
@@ -27,7 +27,7 @@ func TestOnBellIgnoresOSCTerminator(t *testing.T) {
 func TestBELWithoutCallbackIsDiscarded(t *testing.T) {
 	s := NewScreen(10, 2)
 	s.Write([]byte("a\ab")) // no OnBell set: must not panic
-	require.Equal(t, "ab", strings.TrimRight(rowString(s.Frame.Row(0)), " "))
+	require.Equal(t, "ab", strings.TrimRight(rowString(s.frame.Row(0)), " "))
 }
 
 func TestTerminalTitleRetainsOSC0AndOSC2(t *testing.T) {
@@ -54,7 +54,7 @@ func TestTerminalTitleRetainsOSC0AndOSC2(t *testing.T) {
 			require.Equal(t, tt.want, s.TerminalTitle())
 			require.Equal(t, 0, bells)
 			require.Empty(t, s.Damage())
-			require.Equal(t, strings.Repeat(" ", s.Frame.Width), rowString(s.Frame.Row(0)))
+			require.Equal(t, strings.Repeat(" ", s.frame.Width), rowString(s.frame.Row(0)))
 		})
 	}
 }
