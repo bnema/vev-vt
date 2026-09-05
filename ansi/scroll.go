@@ -7,7 +7,7 @@ import (
 
 func findSafeScroll(frame CellSource, damage []Damage) (Damage, bool) {
 	for _, d := range damage {
-		if d.Kind == DamageScrollUp && isSafeScroll(frame, d) {
+		if (d.Kind == DamageScrollUp || d.Kind == DamageScrollDown) && isSafeScroll(frame, d) {
 			return d, true
 		}
 	}
@@ -18,7 +18,7 @@ func isSafeScroll(frame CellSource, d Damage) bool {
 	return d.X == 0 && d.Width == frame.Columns() && d.Y >= 0 && d.Y <= frame.Rows() && d.Height > 0 && d.Height <= frame.Rows()-d.Y && d.Count > 0 && d.Count < d.Height
 }
 
-func emitScrollUp(out *bytes.Buffer, d Damage) {
+func emitScroll(out *bytes.Buffer, d Damage) {
 	out.WriteString("\x1b[0m")
 	// \x1b[%d;%dr — set scroll region
 	out.WriteString("\x1b[")
@@ -29,6 +29,15 @@ func emitScrollUp(out *bytes.Buffer, d Damage) {
 	n = strconv.AppendInt(b[:0], int64(d.Y+d.Height), 10)
 	out.Write(n)
 	out.WriteByte('r')
+	// SD scrolls down without moving content outside the chosen region.
+	if d.Kind == DamageScrollDown {
+		out.WriteString("\x1b[")
+		n = strconv.AppendInt(b[:0], int64(d.Count), 10)
+		out.Write(n)
+		out.WriteByte('T')
+		out.WriteString("\x1b[r")
+		return
+	}
 	// Position cursor at bottom of scroll region.
 	writeCursor(out, d.Y+d.Height-1, 0)
 	if d.Count == 1 {
@@ -49,10 +58,11 @@ func canApplyScrollAgainst(frame CellSource, scroll Damage, damage []Damage, com
 	case *Frame:
 		return canApplyDenseScrollAgainst(*frame, scroll, damage, committed)
 	}
-	for y := scroll.Y; y < scroll.Y+scroll.Height-scroll.Count; y++ {
+	start, end, offset := scrollRetainedRows(scroll)
+	for y := start; y < end; y++ {
 		for x := range scroll.Width {
 			column := scroll.X + x
-			committedCell, frameCell := committed.Cell(column, y+scroll.Count), frame.Cell(column, y)
+			committedCell, frameCell := committed.Cell(column, y+offset), frame.Cell(column, y)
 			if committedCell == frameCell || committedCell.Equal(frameCell) {
 				continue
 			}
@@ -65,10 +75,11 @@ func canApplyScrollAgainst(frame CellSource, scroll Damage, damage []Damage, com
 }
 
 func canApplyDenseScrollAgainst(frame Frame, scroll Damage, damage []Damage, committed Frame) bool {
-	for y := scroll.Y; y < scroll.Y+scroll.Height-scroll.Count; y++ {
+	start, end, offset := scrollRetainedRows(scroll)
+	for y := start; y < end; y++ {
 		for x := range scroll.Width {
 			column := scroll.X + x
-			committedCell, frameCell := committed.At(column, y+scroll.Count), frame.At(column, y)
+			committedCell, frameCell := committed.At(column, y+offset), frame.At(column, y)
 			if committedCell == frameCell || committedCell.Equal(frameCell) {
 				continue
 			}
@@ -78,6 +89,13 @@ func canApplyDenseScrollAgainst(frame Frame, scroll Damage, damage []Damage, com
 		}
 	}
 	return true
+}
+
+func scrollRetainedRows(scroll Damage) (start, end, offset int) {
+	if scroll.Kind == DamageScrollDown {
+		return scroll.Y + scroll.Count, scroll.Y + scroll.Height, -scroll.Count
+	}
+	return scroll.Y, scroll.Y + scroll.Height - scroll.Count, scroll.Count
 }
 
 func damageCoversCell(damage []Damage, x, y int) bool {

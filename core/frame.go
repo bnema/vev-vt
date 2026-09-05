@@ -261,10 +261,11 @@ func (f Frame) Set(x, y int, cell Cell) {
 	payloadID := f.internPayload(cell.Payload)
 	f.releasePayload(f.page.cells[index].payloadID)
 	oldID := f.page.cells[index].styleID
-	styleID := f.internStyle(cell.Style)
-	if oldID == styleID {
-		f.releaseStyle(styleID) // cancel internStyle's temporary reference
-	} else {
+	styleID := oldID
+	// Repainting a cell usually keeps its style. Compare the canonical value
+	// before hashing it and changing references in the page-local dictionary.
+	if f.page.styles[oldID].style != cell.Style.Canonical() {
+		styleID = f.internStyle(cell.Style)
 		f.releaseStyle(oldID)
 	}
 	flags := uint8(0)
