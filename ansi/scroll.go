@@ -52,6 +52,21 @@ func emitScroll(out *bytes.Buffer, d Damage) {
 }
 
 func canApplyScrollAgainst(frame CellSource, scroll Damage, damage []Damage, committed Frame) bool {
+	// Scrolling fills exposed rows with default-style blanks. Every target
+	// cell that differs from that fill must be repainted, in either direction.
+	exposed := scroll.Y + scroll.Height - scroll.Count
+	if scroll.Kind == DamageScrollDown {
+		exposed = scroll.Y
+	}
+	blank := BlankCell()
+	for y := exposed; y < exposed+scroll.Count; y++ {
+		for x := range scroll.Width {
+			column := scroll.X + x
+			if !damageCoversCell(damage, column, y) && !frame.Cell(column, y).Equal(blank) {
+				return false
+			}
+		}
+	}
 	switch frame := frame.(type) {
 	case Frame:
 		return canApplyDenseScrollAgainst(frame, scroll, damage, committed)

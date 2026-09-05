@@ -13,7 +13,15 @@ func TestSetStyleReuse(t *testing.T) {
 			for repeat := range 3 {
 				for x := range f.Width {
 					cell := Cell{Rune: rune('a' + repeat), Style: style}
+					// Inactive RGB fields differ without changing canonical style.
+					cell.Style.ForegroundRGB = RGB{R: uint8(repeat + 1)}
+					index := f.offset(x, 0)
+					oldID := f.page.cells[index].styleID
+					sameStyle := f.page.styles[oldID].style == style.Canonical()
 					f.Set(x, 0, cell)
+					if got := f.page.cells[index].styleID; sameStyle && got != oldID {
+						t.Fatalf("equivalent style changed ID from %d to %d", oldID, got)
+					}
 					if got := f.Cell(x, 0); !got.Equal(cell) {
 						t.Fatalf("cell = %+v, want %+v", got, cell)
 					}
