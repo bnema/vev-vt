@@ -7,11 +7,12 @@ type Span struct {
 	Width int
 }
 
-// Scroll identifies a safe full-width upward scroll.
+// Scroll identifies a safe full-width scroll.
 type Scroll struct {
 	Y      int
 	Height int
 	Count  int
+	Down   bool
 }
 
 // DeltaPlan describes how to advance a committed frame to the candidate frame.
@@ -66,7 +67,7 @@ func PlanDelta(frame CellSource, damage []Damage, committed Frame, reset bool) (
 	var plan DeltaPlan
 	var skip *Damage
 	if scroll, ok := findSafeScroll(frame, damage); ok && canApplyScrollAgainst(frame, scroll, damage, committed) {
-		plan.Scroll = Scroll{Y: scroll.Y, Height: scroll.Height, Count: scroll.Count}
+		plan.Scroll = Scroll{Y: scroll.Y, Height: scroll.Height, Count: scroll.Count, Down: scroll.Kind == DamageScrollDown}
 		skip = &scroll
 	} else if hasScrollDamage(damage) {
 		return newDeltaCandidate(frame, DeltaPlan{Snapshot: true}), nil
@@ -202,7 +203,11 @@ func (c DeltaCandidate) Commit(dst *Frame) {
 	}
 	if c.Plan.Scroll.Height != 0 {
 		scroll := c.Plan.Scroll
-		dst.ScrollUp(scroll.Y, scroll.Y+scroll.Height-1, scroll.Count)
+		if scroll.Down {
+			dst.ScrollDown(scroll.Y, scroll.Y+scroll.Height-1, scroll.Count)
+		} else {
+			dst.ScrollUp(scroll.Y, scroll.Y+scroll.Height-1, scroll.Count)
+		}
 	}
 	for _, span := range c.Plan.Spans {
 		for x := span.X; x < span.X+span.Width; x++ {

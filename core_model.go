@@ -33,6 +33,7 @@ const (
 	DamageText       = core.DamageText
 	DamageClear      = core.DamageClear
 	DamageScrollUp   = core.DamageScrollUp
+	DamageScrollDown = core.DamageScrollDown
 	DamageFullRedraw = core.DamageFullRedraw
 )
 

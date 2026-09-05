@@ -7,6 +7,7 @@ const (
 	DamageClear
 	DamageScrollUp
 	DamageFullRedraw
+	DamageScrollDown
 )
 
 type Damage struct {

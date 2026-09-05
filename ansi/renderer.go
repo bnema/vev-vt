@@ -122,7 +122,11 @@ func (r *Renderer) Prepare(frame CellSource, damage []Damage, reset bool) (Prepa
 	} else {
 		if plan.Scroll.Height != 0 {
 			scroll := plan.Scroll
-			emitScrollUp(buf, Damage{Kind: DamageScrollUp, X: 0, Y: scroll.Y, Width: columns, Height: scroll.Height, Count: scroll.Count})
+			kind := DamageScrollUp
+			if scroll.Down {
+				kind = DamageScrollDown
+			}
+			emitScroll(buf, Damage{Kind: kind, X: 0, Y: scroll.Y, Width: columns, Height: scroll.Height, Count: scroll.Count})
 		}
 		for _, span := range plan.Spans {
 			r.emitSpan(buf, frame, span.Y, span.X, span.Width, &st)
@@ -186,7 +190,7 @@ func needsFull(damage []Damage) bool {
 
 func hasScrollDamage(damage []Damage) bool {
 	for _, d := range damage {
-		if d.Kind == DamageScrollUp {
+		if d.Kind == DamageScrollUp || d.Kind == DamageScrollDown {
 			return true
 		}
 	}
