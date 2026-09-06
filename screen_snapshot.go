@@ -17,8 +17,6 @@ type CursorSnapshot struct {
 // ModeSnapshot is the renderer-relevant VT mode state captured with a screen.
 type ModeSnapshot struct {
 	AlternateScreen    bool
-	AutoWrap           bool
-	ApplicationCursor  bool
 	BracketedPaste     bool
 	SynchronizedUpdate bool
 	ColorSchemeMode    bool
@@ -29,14 +27,16 @@ type ModeSnapshot struct {
 // ScreenSnapshot is an owned immutable capture of the active terminal
 // viewport. It implements core.CellSource, and Row returns caller-owned storage.
 type ScreenSnapshot struct {
-	frame     renderer.Frame
-	bounds    []LineBound
-	rowIDs    []RowID
-	cursor    CursorSnapshot
-	modes     ModeSnapshot
-	title     string
-	graphics  *graphics.Snapshot
-	nextRowID RowID
+	frame             renderer.Frame
+	bounds            []LineBound
+	rowIDs            []RowID
+	cursor            CursorSnapshot
+	modes             ModeSnapshot
+	autoWrap          bool
+	applicationCursor bool
+	title             string
+	graphics          *graphics.Snapshot
+	nextRowID         RowID
 }
 
 // Snapshot captures the active visible viewport without mutating Screen,
@@ -53,10 +53,12 @@ func (s *Screen) Snapshot() ScreenSnapshot {
 		nextRowID++
 	}
 	return ScreenSnapshot{
-		frame:     s.frame.Clone(),
-		bounds:    s.LineBounds(),
-		rowIDs:    s.RowIDs(),
-		nextRowID: nextRowID,
+		frame:             s.frame.Clone(),
+		bounds:            s.LineBounds(),
+		rowIDs:            s.RowIDs(),
+		nextRowID:         nextRowID,
+		autoWrap:          s.AutoWrapMode(),
+		applicationCursor: s.ApplicationCursorMode(),
 		cursor: CursorSnapshot{
 			Row:      s.CursorRow(),
 			Col:      s.CursorCol(),
@@ -66,8 +68,6 @@ func (s *Screen) Snapshot() ScreenSnapshot {
 		},
 		modes: ModeSnapshot{
 			AlternateScreen:    s.AltScreenActive(),
-			AutoWrap:           s.AutoWrapMode(),
-			ApplicationCursor:  s.ApplicationCursorMode(),
 			BracketedPaste:     s.BracketedPasteMode(),
 			SynchronizedUpdate: s.SyncUpdateActive(),
 			ColorSchemeMode:    s.ColorSchemeMode(),
@@ -121,7 +121,16 @@ func (s ScreenSnapshot) NextRowID() RowID {
 
 func (s ScreenSnapshot) Cursor() CursorSnapshot { return s.cursor }
 func (s ScreenSnapshot) Modes() ModeSnapshot    { return s.modes }
-func (s ScreenSnapshot) Title() string          { return s.title }
+
+// AutoWrapMode reports whether DEC private mode 7 (DECAWM) was enabled in the
+// captured screen.
+func (s ScreenSnapshot) AutoWrapMode() bool { return s.autoWrap }
+
+// ApplicationCursorMode reports whether DEC private mode 1 (DECCKM) was enabled
+// in the captured screen.
+func (s ScreenSnapshot) ApplicationCursorMode() bool { return s.applicationCursor }
+
+func (s ScreenSnapshot) Title() string { return s.title }
 
 // Graphics returns the immutable graphics scene snapshot for the active
 // screen buffer, or nil when that buffer has not used Kitty graphics.

@@ -120,7 +120,7 @@ func TestScreenApplicationCursorMode(t *testing.T) {
 	}
 	s.Write([]byte("\x1b[?"))
 	s.Write([]byte("1h"))
-	if !s.ApplicationCursorMode() || !s.Snapshot().Modes().ApplicationCursor {
+	if !s.ApplicationCursorMode() || !s.Snapshot().ApplicationCursorMode() {
 		t.Fatal("split DECCKM enable was not tracked in screen and snapshot")
 	}
 	s.Write([]byte("\x1b[?1l"))
