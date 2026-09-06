@@ -32,7 +32,7 @@ func TestScreenSnapshotGeometryAndMetadata(t *testing.T) {
 			name: "normal viewport captures cursor modes and title",
 			screen: func() *Screen {
 				screen := NewScreen(6, 3)
-				screen.Write([]byte("\x1b]2;editor\x07\x1b[2;3H\x1b[?25l\x1b[2 q\x1b[?2004h\x1b[?2026h\x1b[?2031h\x1b[?1002h\x1b[?1006h"))
+				screen.Write([]byte("\x1b]2;editor\x07\x1b[2;3H\x1b[?25l\x1b[2 q\x1b[?1h\x1b[?2004h\x1b[?2026h\x1b[?2031h\x1b[?1002h\x1b[?1006h"))
 				return screen
 			},
 			wantColumns: 6,
@@ -40,6 +40,8 @@ func TestScreenSnapshotGeometryAndMetadata(t *testing.T) {
 			wantTitle:   "editor",
 			wantCursor:  CursorSnapshot{Row: 1, Col: 2, Visible: false, Style: 2, StyleSet: true},
 			wantModes: ModeSnapshot{
+				AutoWrap:           true,
+				ApplicationCursor:  true,
 				BracketedPaste:     true,
 				SynchronizedUpdate: true,
 				ColorSchemeMode:    true,
@@ -61,7 +63,7 @@ func TestScreenSnapshotGeometryAndMetadata(t *testing.T) {
 			},
 			wantTitle:  "collapsed",
 			wantCursor: CursorSnapshot{Visible: true},
-			wantModes:  ModeSnapshot{BracketedPaste: true},
+			wantModes:  ModeSnapshot{AutoWrap: true, BracketedPaste: true},
 			checkRows: func(t *testing.T, snapshot ScreenSnapshot) {
 				require.Nil(t, snapshot.Row(0))
 				require.Equal(t, LineBound{}, snapshot.Bound(0))
@@ -78,6 +80,7 @@ func TestScreenSnapshotGeometryAndMetadata(t *testing.T) {
 			wantRows:   2,
 			wantTitle:  "zero-columns",
 			wantCursor: CursorSnapshot{Visible: true},
+			wantModes:  ModeSnapshot{AutoWrap: true},
 			checkRows: func(t *testing.T, snapshot ScreenSnapshot) {
 				require.NotNil(t, snapshot.Row(0))
 				require.Empty(t, snapshot.Row(0))
@@ -97,6 +100,7 @@ func TestScreenSnapshotGeometryAndMetadata(t *testing.T) {
 			wantColumns: 2,
 			wantTitle:   "zero-rows",
 			wantCursor:  CursorSnapshot{Visible: true},
+			wantModes:   ModeSnapshot{AutoWrap: true},
 			checkRows: func(t *testing.T, snapshot ScreenSnapshot) {
 				require.Nil(t, snapshot.Row(0))
 				require.Equal(t, LineBound{}, snapshot.Bound(0))
@@ -195,6 +199,7 @@ func TestScreenSnapshotFidelity(t *testing.T) {
 				screen.buffer.boundaries[0] = LineBound{End: 3, Soft: true}
 				return screen, cells, []LineBound{{End: 3, Soft: true}, {}}
 			},
+			wantModes: ModeSnapshot{AutoWrap: true},
 		},
 		{
 			name: "active alternate screen is captured",
@@ -204,7 +209,7 @@ func TestScreenSnapshotFidelity(t *testing.T) {
 				cells := append([]renderer.Cell(nil), screen.frame.Row(0)...)
 				return screen, cells, screen.LineBounds()
 			},
-			wantModes: ModeSnapshot{AlternateScreen: true},
+			wantModes: ModeSnapshot{AlternateScreen: true, AutoWrap: true},
 		},
 	}
 

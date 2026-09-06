@@ -8,12 +8,13 @@ import (
 )
 
 type cursorState struct {
-	row        int
-	col        int
-	style      renderer.Style
-	originMode bool
-	insertMode bool
-	saved      bool
+	row          int
+	col          int
+	style        renderer.Style
+	originMode   bool
+	insertMode   bool
+	autoWrapMode bool
+	saved        bool
 }
 
 func (s *Screen) cursorReportRow() int {
@@ -74,7 +75,11 @@ func (s *Screen) applyCursorStyle(params string) {
 }
 
 func (s *Screen) saveCursor() {
-	s.savedCursor = cursorState{row: s.Row, col: s.Col, style: s.Style, originMode: s.originMode, insertMode: s.insertMode, saved: true}
+	s.savedCursor = cursorState{
+		row: s.Row, col: s.Col, style: s.Style,
+		originMode: s.originMode, insertMode: s.insertMode,
+		autoWrapMode: s.autoWrapMode, saved: true,
+	}
 }
 
 func (s *Screen) restoreCursor() {
@@ -86,4 +91,5 @@ func (s *Screen) restoreCursor() {
 	s.Style = s.savedCursor.style
 	s.originMode = s.savedCursor.originMode
 	s.insertMode = s.savedCursor.insertMode
+	s.autoWrapMode = s.savedCursor.autoWrapMode
 }

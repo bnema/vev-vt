@@ -17,6 +17,8 @@ type CursorSnapshot struct {
 // ModeSnapshot is the renderer-relevant VT mode state captured with a screen.
 type ModeSnapshot struct {
 	AlternateScreen    bool
+	AutoWrap           bool
+	ApplicationCursor  bool
 	BracketedPaste     bool
 	SynchronizedUpdate bool
 	ColorSchemeMode    bool
@@ -64,6 +66,8 @@ func (s *Screen) Snapshot() ScreenSnapshot {
 		},
 		modes: ModeSnapshot{
 			AlternateScreen:    s.AltScreenActive(),
+			AutoWrap:           s.AutoWrapMode(),
+			ApplicationCursor:  s.ApplicationCursorMode(),
 			BracketedPaste:     s.BracketedPasteMode(),
 			SynchronizedUpdate: s.SyncUpdateActive(),
 			ColorSchemeMode:    s.ColorSchemeMode(),

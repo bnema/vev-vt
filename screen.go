@@ -78,24 +78,26 @@ type Screen struct {
 	csiScratch             []int
 	sgrScratch             []int
 
-	scrollTop        int
-	scrollBottom     int
-	savedCursor      cursorState
-	alternate        *screenState
-	graphics         *screenGraphicsState
-	syncUpdateActive bool
-	progressState    int
-	cursorVisible    bool
-	cursorStyle      int
-	cursorStyleSet   bool
-	mouseMode        int
-	mouseSGR         bool
-	bracketedPaste   bool
-	originMode       bool
-	insertMode       bool
-	colorSchemeMode  bool
-	colorSchemeLight bool
-	colorSchemeSet   bool
+	scrollTop             int
+	scrollBottom          int
+	savedCursor           cursorState
+	alternate             *screenState
+	graphics              *screenGraphicsState
+	syncUpdateActive      bool
+	progressState         int
+	cursorVisible         bool
+	cursorStyle           int
+	cursorStyleSet        bool
+	mouseMode             int
+	mouseSGR              bool
+	bracketedPaste        bool
+	originMode            bool
+	insertMode            bool
+	autoWrapMode          bool
+	applicationCursorMode bool
+	colorSchemeMode       bool
+	colorSchemeLight      bool
+	colorSchemeSet        bool
 }
 
 func NewScreen(width, height int) *Screen {
@@ -104,6 +106,7 @@ func NewScreen(width, height int) *Screen {
 		damage:           []renderer.Damage{renderer.FullRedraw()},
 		damageGeneration: 1,
 		cursorVisible:    true,
+		autoWrapMode:     true,
 		geometry:         Geometry{Cols: width, Rows: height},
 	}
 	s.buffer = s.newBuffer(width, height)
