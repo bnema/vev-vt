@@ -4,7 +4,9 @@
 // alternate-screen state, cursor/reporting modes, and common xterm/VT control
 // sequences. Wide runes that fit are stored as a head cell plus a continuation
 // cell, and resize or edit operations repair row-boundary splits instead of
-// leaving orphaned halves.
+// leaving orphaned halves. Application cursor mode is tracked for hosts that
+// encode arrow keys; application keypad mode and keypad-key encoding are not
+// supported.
 //
 // Stateful values are single-owner and are not internally synchronized. The
 // owner must serialize Write, Resize, Snapshot, and History mutations. Write

@@ -27,6 +27,12 @@ func (s *Screen) SyncUpdateActive() bool { return s.syncUpdateActive }
 // by the child process.
 func (s *Screen) BracketedPasteMode() bool { return s.bracketedPaste }
 
+// AutoWrapMode reports whether DEC private mode 7 (DECAWM) is enabled.
+func (s *Screen) AutoWrapMode() bool { return s.autoWrapMode }
+
+// ApplicationCursorMode reports whether DEC private mode 1 (DECCKM) is enabled.
+func (s *Screen) ApplicationCursorMode() bool { return s.applicationCursorMode }
+
 // ColorSchemeMode reports whether DEC private mode 2031 is currently enabled.
 func (s *Screen) ColorSchemeMode() bool { return s.colorSchemeMode }
 
@@ -104,6 +110,8 @@ func (s *Screen) reset() {
 	s.graphics = nil
 	s.originMode = false
 	s.insertMode = false
+	s.autoWrapMode = true
+	s.applicationCursorMode = false
 	s.cursorVisible = true
 	s.cursorStyle = 0
 	s.cursorStyleSet = false
@@ -163,9 +171,16 @@ func (s *Screen) setMode(private bool, parts []int, enabled bool) {
 	}
 	for _, mode := range parts {
 		switch mode {
+		case 1:
+			s.applicationCursorMode = enabled
 		case 6:
 			s.originMode = enabled
 			s.homeCursor()
+		case 7:
+			s.autoWrapMode = enabled
+			if !enabled && s.frame.Width > 0 && s.Col >= s.frame.Width {
+				s.Col = s.frame.Width - 1
+			}
 		case 47, 1047, 1049:
 			if enabled {
 				s.enterAlternateScreen()
@@ -188,7 +203,7 @@ func (s *Screen) setMode(private bool, parts []int, enabled bool) {
 			s.mouseSGR = enabled
 		case 2004:
 			s.bracketedPaste = enabled
-		case 1, 1004, 1005:
+		case 1004, 1005:
 			// Trackable terminal modes that do not directly affect the current
 			// cell model yet. Consuming them prevents mode bytes from leaking.
 			continue

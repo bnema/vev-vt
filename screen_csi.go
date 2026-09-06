@@ -174,8 +174,12 @@ func firstPositive(parts []int, fallback int) int {
 func (s *Screen) modeReportState(private bool, mode int) int {
 	if private {
 		switch mode {
+		case 1:
+			return boolModeReportState(s.applicationCursorMode)
 		case 6:
 			return boolModeReportState(s.originMode)
+		case 7:
+			return boolModeReportState(s.autoWrapMode)
 		case 2026:
 			return boolModeReportState(s.syncUpdateActive)
 		case 2031:

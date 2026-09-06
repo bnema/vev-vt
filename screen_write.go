@@ -61,11 +61,16 @@ func (s *Screen) putPrintable(r rune) {
 	if s.frame.Width == 0 || s.frame.Height == 0 {
 		return
 	}
-	// Deferred wrap: cursor sits past the last column.
+	// Deferred wrap: cursor sits past the last column. Disabling DECAWM
+	// cancels a pending wrap and leaves subsequent output at the right margin.
 	if s.Col >= s.frame.Width {
-		s.buffer.soft(s.Row)
-		s.Col = 0
-		s.relinkWrap(s.index())
+		if s.autoWrapMode {
+			s.buffer.soft(s.Row)
+			s.Col = 0
+			s.relinkWrap(s.index())
+		} else {
+			s.Col = s.frame.Width - 1
+		}
 	}
 	if s.Row >= s.frame.Height {
 		s.Row = s.frame.Height - 1
@@ -74,9 +79,9 @@ func (s *Screen) putPrintable(r rune) {
 	// A wide rune must never straddle the right edge. If it does not fit on the
 	// current line, clear the abandoned last cell and wrap to the next line.
 	if w == 2 && s.Col+1 >= s.frame.Width {
-		if s.frame.Width < 2 {
-			// The screen is too narrow to ever hold a wide rune; store a narrow
-			// replacement so the cell's renderer width matches its layout.
+		if s.frame.Width < 2 || !s.autoWrapMode {
+			// A wide rune cannot be represented at the right margin without an
+			// orphaned continuation cell. Use the narrow replacement glyph.
 			r = '\uFFFD'
 			w = renderer.RuneWidth(r)
 		} else {
@@ -136,6 +141,9 @@ func (s *Screen) putPrintable(r rune) {
 	}
 	s.record(renderer.Damage{Kind: renderer.DamageText, X: lo, Y: s.Row, Width: hi - lo + 1, Height: 1, Count: 1})
 	s.Col += w
+	if !s.autoWrapMode && s.Col >= s.frame.Width {
+		s.Col = s.frame.Width - 1
+	}
 }
 
 // clearWidePairAt blanks both halves of a wide-character pair when the cell at
