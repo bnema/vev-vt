@@ -352,6 +352,8 @@
     let height = 0;
     let rowNodes = [];
     let rowText = [];
+    let previousRows = [];
+    let previousStyles = '';
     let resizeFrame = 0;
     let pointerFrame = 0;
     let pendingPointer = null;
@@ -416,27 +418,55 @@
           if (!rowNodes[row] || rowNodes[row].parentNode !== viewport) fail(`mounted row ${row} is unavailable`);
         }
       }
-      const built = update.rows.map(row => ({ row: row.row, ...buildRow(document, row, update.styles) }));
+      const styleKey = JSON.stringify(update.styles);
+      const reusable = update.width === width && update.height === height && styleKey === previousStyles;
+      const built = update.rows.map(row => {
+        const old = previousRows[row.row];
+        const node = rowNodes[row.row];
+        // Text-only updates preserve geometry and styling. Space runs use
+        // merged nodes and deliberately take the full rebuilding path.
+        const reuse = reusable && node?.parentNode === viewport && old &&
+          old.cells.length === row.cells.length && node.children.length === row.cells.length &&
+          row.cells.every((cell, index) => {
+            const before = old.cells[index];
+            return cell.column === before.column && cell.width === before.width && cell.style === before.style &&
+              !/^ +$/.test(cell.text) && !/^ +$/.test(before.text);
+          });
+        return reuse ? { row: row.row, node, text: row.cells.map(cell => cell.text).join(''), cells: row.cells } :
+          { row: row.row, ...buildRow(document, row, update.styles) };
+      });
+      for (const item of built) {
+        if (item.cells) {
+          item.cells.forEach((cell, index) => {
+            const child = item.node.children[index];
+            if (child.textContent !== cell.text) child.textContent = cell.text;
+          });
+        }
+      }
 
       if (update.snapshot) {
+        const reuseAll = built.every(item => item.cells);
         const fragment = document.createDocumentFragment();
         const nextNodes = new Array(update.height);
         const nextText = new Array(update.height);
         for (const item of built) {
           nextNodes[item.row] = item.node;
           nextText[item.row] = item.text;
-          fragment.append(item.node);
+          if (!reuseAll) fragment.append(item.node);
         }
-        viewport.replaceChildren(fragment, cursor);
+        if (!reuseAll) viewport.replaceChildren(fragment, cursor);
         rowNodes = nextNodes;
         rowText = nextText;
       } else {
         for (const item of built) {
-          rowNodes[item.row].replaceWith(item.node);
+          if (!item.cells) rowNodes[item.row].replaceWith(item.node);
           rowNodes[item.row] = item.node;
           rowText[item.row] = item.text;
         }
       }
+      if (update.snapshot || styleKey !== previousStyles) previousRows = new Array(update.height);
+      for (const row of update.rows) previousRows[row.row] = row;
+      previousStyles = styleKey;
       width = update.width;
       height = update.height;
       setOwnedProperty('--vev-cols', String(width));
@@ -618,6 +648,8 @@
         accessible.remove();
         rowNodes = [];
         rowText = [];
+        previousRows = [];
+        previousStyles = '';
         pendingPointer = null;
         width = 0;
         height = 0;

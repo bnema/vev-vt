@@ -38,6 +38,31 @@ test('applies the Go renderer contract fixture', async ({ page }) => {
   await expect(page.locator('.vev-terminal__cursor')).toBeHidden();
 });
 
+test('reuses text-only cells but rebuilds changed styles and space runs', async ({ page }) => {
+  await mount(page);
+  const fixture = JSON.parse(await fs.readFile(path.join(root, 'internal/htmlharness/testdata/snapshot.json'), 'utf8'));
+  const result = await page.evaluate(value => {
+    terminal.apply(value);
+    const original = document.querySelector('.vev-terminal__cell');
+    const next = structuredClone(value);
+    next.rows[0].cells[0].text = 'B';
+    terminal.apply(next);
+    const reused = original === document.querySelector('.vev-terminal__cell') && original.textContent === 'B';
+    const styled = structuredClone(next);
+    styled.styles[0].bold = !styled.styles[0].bold;
+    terminal.apply(styled);
+    const rebuiltStyle = original !== document.querySelector('.vev-terminal__cell');
+    const beforeSpace = document.querySelector('.vev-terminal__cell');
+    const spaces = structuredClone(styled);
+    spaces.rows[0].cells[0].text = ' ';
+    terminal.apply(spaces);
+    const rebuiltSpace = beforeSpace !== document.querySelector('.vev-terminal__cell');
+    terminal.apply({ ...next, snapshot: false });
+    return { reused, rebuiltStyle, rebuiltSpace, text: document.querySelector('.vev-terminal__cell').textContent };
+  }, fixture);
+  expect(result).toEqual({ reused: true, rebuiltStyle: true, rebuiltSpace: true, text: 'B' });
+});
+
 test('default colors inherit without redundant per-cell properties', async ({ page }) => {
   await mount(page);
   const fixture = JSON.parse(await fs.readFile(path.join(root, 'internal/htmlharness/testdata/snapshot.json'), 'utf8'));
