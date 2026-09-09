@@ -58,6 +58,75 @@ func TestPreparedJSONMatchesBrowserFixture(t *testing.T) {
 	require.JSONEq(t, string(fixture), string(prepared.JSON()))
 }
 
+func TestRendererAcceptsCellSourceWithoutFrameCopy(t *testing.T) {
+	frame := core.NewFrame(2, 1)
+	frame.Set(0, 0, core.Cell{Rune: 'A', Style: core.DefaultStyle()})
+	snapshot := frame.Clone()
+
+	renderer, err := New(Options{})
+	require.NoError(t, err)
+	prepared, err := renderer.Prepare(cellSourceFunc{
+		columns: snapshot.Columns(),
+		rows:    snapshot.Rows(),
+		cell:    snapshot.Cell,
+	}, nil, false, Cursor{})
+	require.NoError(t, err)
+	require.True(t, prepared.Update().Snapshot)
+	require.Equal(t, "A", prepared.Update().Rows[0].Cells[0].Text)
+	require.NoError(t, prepared.Commit())
+
+	_, err = renderer.Prepare(nil, nil, false, Cursor{})
+	require.ErrorContains(t, err, "nil cell source")
+}
+
+type cellSourceFunc struct {
+	columns int
+	rows    int
+	cell    func(x, y int) core.Cell
+}
+
+func (s cellSourceFunc) Columns() int                         { return s.columns }
+func (s cellSourceFunc) Rows() int                            { return s.rows }
+func (s cellSourceFunc) Cell(x, y int) core.Cell              { return s.cell(x, y) }
+func (s cellSourceFunc) At(x, y int) core.Cell                { return s.cell(x, y) }
+func (s cellSourceFunc) Row(y int) []core.Cell                { return nil }
+func (s cellSourceFunc) WriteRow(y, x int, c []core.Cell) int { return 0 }
+
+func TestRendererNormalizesWrapPendingCursor(t *testing.T) {
+	frame := core.NewFrame(3, 2)
+	renderer, err := New(Options{})
+	require.NoError(t, err)
+	prepared, err := renderer.Prepare(frame, nil, false, Cursor{Row: 0, Column: 3, Visible: true})
+	require.NoError(t, err)
+	require.Equal(t, 2, prepared.Update().Cursor.Column)
+	require.NoError(t, prepared.Commit())
+
+	_, err = renderer.Prepare(frame, nil, false, Cursor{Row: 0, Column: 4})
+	require.ErrorContains(t, err, "outside")
+}
+
+func TestRendererEnforcesExactGeneratedByteLimit(t *testing.T) {
+	frame := core.NewFrame(1, 1)
+	renderer, err := New(Options{})
+	require.NoError(t, err)
+	prepared, err := renderer.Prepare(frame, nil, true, Cursor{})
+	require.NoError(t, err)
+	size := len(prepared.JSON())
+	require.NoError(t, prepared.Commit())
+
+	tight, err := New(Options{Limits: Limits{MaxGeneratedBytes: size}})
+	require.NoError(t, err)
+	accepted, err := tight.Prepare(frame, nil, true, Cursor{})
+	require.NoError(t, err)
+	require.NoError(t, accepted.Commit())
+
+	strict, err := New(Options{Limits: Limits{MaxGeneratedBytes: size - 1}})
+	require.NoError(t, err)
+	_, err = strict.Prepare(frame, nil, true, Cursor{})
+	require.ErrorIs(t, err, ErrLimitExceeded)
+	require.ErrorContains(t, err, "generated update is")
+}
+
 func TestRendererUsesIncrementalDamageWithNormalCounts(t *testing.T) {
 	frame := core.NewFrame(2, 2)
 	renderer, err := New(Options{})

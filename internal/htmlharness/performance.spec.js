@@ -39,13 +39,15 @@ test('keeps sustained snapshot and row replacement work bounded', async ({ page,
       snapshots.push(performance.now() - start);
     }
 
-    const rowUpdate = {
-      ...first,
-      snapshot: false,
-      rows: [second.rows[20]]
-    };
     const rows = [];
     for (let index = 0; index < 50; index += 1) {
+      // Alternate both rows so every timed apply performs a real replacement
+      // instead of re-applying the same row through the no-op reuse path.
+      const rowUpdate = {
+        ...(index % 2 === 0 ? first : second),
+        snapshot: false,
+        rows: [(index % 2 === 0 ? second : first).rows[20]]
+      };
       const start = performance.now();
       terminal.apply(rowUpdate);
       await settle();

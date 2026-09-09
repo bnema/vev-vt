@@ -142,6 +142,7 @@
     seen.add(row);
     if (!Array.isArray(value.cells)) fail(`row ${row} cells must be an array`);
     let column = 0;
+    let bytes = 0;
     const cells = value.cells.map((candidate, index) => {
       const name = `row ${row} cell ${index}`;
       object(candidate, name);
@@ -159,11 +160,12 @@
       };
       textBudget.value += text.byteLength;
       if (textBudget.value > configured.maxUpdateBytes) fail('update text exceeds its aggregate byte limit');
+      bytes += text.byteLength;
       column += cellWidth;
       return cell;
     });
     if (column !== width) fail(`row coverage is ${column}, expected ${width}`);
-    return { row, cells };
+    return { row, cells, bytes };
   }
 
   /**
@@ -353,6 +355,8 @@
     let height = 0;
     let rowNodes = [];
     let rowText = [];
+    let rowBytes = [];
+    let retainedBytes = 0;
     let previousRows = [];
     let previousStyles = '';
     let resizeFrame = 0;
@@ -419,6 +423,16 @@
           if (!rowNodes[row] || rowNodes[row].parentNode !== viewport) fail(`mounted row ${row} is unavailable`);
         }
       }
+      // maxUpdateBytes bounds the text retained by the mounted terminal, not
+      // only the current delta: reject the projected retained total before
+      // building or mutating the DOM.
+      let projected = retainedBytes;
+      for (const row of update.rows) {
+        projected -= rowBytes[row.row] || 0;
+        projected += row.bytes;
+      }
+      if (update.snapshot) projected = update.rows.reduce((total, row) => total + row.bytes, 0);
+      if (projected > configured.maxUpdateBytes) fail('retained text exceeds its aggregate byte limit');
       const styleKey = JSON.stringify(update.styles);
       const reusable = update.width === width && update.height === height && styleKey === previousStyles;
       const built = update.rows.map(row => {
@@ -433,8 +447,8 @@
             return cell.column === before.column && cell.width === before.width && cell.style === before.style &&
               !/^ +$/.test(cell.text) && !/^ +$/.test(before.text);
           });
-        return reuse ? { row: row.row, node, text: row.cells.map(cell => cell.text).join(''), cells: row.cells } :
-          { row: row.row, ...buildRow(document, row, update.styles) };
+        return reuse ? { row: row.row, node, bytes: row.bytes, text: row.cells.map(cell => cell.text).join(''), cells: row.cells } :
+          { row: row.row, bytes: row.bytes, ...buildRow(document, row, update.styles) };
       });
       for (const item of built) {
         if (item.cells) {
@@ -450,18 +464,24 @@
         const fragment = document.createDocumentFragment();
         const nextNodes = new Array(update.height);
         const nextText = new Array(update.height);
+        const nextBytes = new Array(update.height).fill(0);
         for (const item of built) {
           nextNodes[item.row] = item.node;
           nextText[item.row] = item.text;
+          nextBytes[item.row] = item.bytes;
           if (!reuseAll) fragment.append(item.node);
         }
         if (!reuseAll) viewport.replaceChildren(fragment, cursor);
         rowNodes = nextNodes;
         rowText = nextText;
+        rowBytes = nextBytes;
+        retainedBytes = projected;
       } else {
         for (const item of built) {
           if (!item.cells) rowNodes[item.row].replaceWith(item.node);
           rowNodes[item.row] = item.node;
+          retainedBytes += item.bytes - (rowBytes[item.row] || 0);
+          rowBytes[item.row] = item.bytes;
           rowText[item.row] = item.text;
         }
       }
@@ -507,6 +527,15 @@
       const captured = pendingPointer;
       pendingPointer = null;
       if (captured) send(captured);
+    }
+
+    // A discrete pointer event must never be overtaken by an older deferred
+    // move: flush the pending move first so consumers observe event order.
+    function dispatchDiscretePointer(event, action, nativeEvent) {
+      const payload = pointerPayload(event, action);
+      if (!payload) return;
+      if (pendingPointer) flushPointer();
+      dispatch(payload, nativeEvent);
     }
 
     function scheduleResize() {
@@ -584,18 +613,20 @@
     input.addEventListener('blur', event => dispatch({ type: 'focus', focused: false }, event), { signal });
 
     viewport.addEventListener('pointerdown', event => {
-      const payload = pointerPayload(event, 'down');
-      if (!payload) return;
-      if (mouseCapture && viewport.setPointerCapture) viewport.setPointerCapture(event.pointerId);
-      dispatch(payload, event);
+      if (mouseCapture && viewport.setPointerCapture) {
+        try {
+          if (event.isPrimary !== false) viewport.setPointerCapture(event.pointerId);
+        } catch {
+          // Pointer capture is best-effort; ordering still holds.
+        }
+      }
+      dispatchDiscretePointer(event, 'down', event);
     }, { signal });
     viewport.addEventListener('pointerup', event => {
-      const payload = pointerPayload(event, 'up');
-      if (payload) dispatch(payload, event);
+      dispatchDiscretePointer(event, 'up', event);
     }, { signal });
     viewport.addEventListener('pointercancel', event => {
-      const payload = pointerPayload(event, 'cancel');
-      if (payload) dispatch(payload, event);
+      dispatchDiscretePointer(event, 'cancel', event);
     }, { signal });
     viewport.addEventListener('pointermove', event => {
       const payload = pointerPayload(event, 'move');
@@ -649,6 +680,8 @@
         accessible.remove();
         rowNodes = [];
         rowText = [];
+        rowBytes = [];
+        retainedBytes = 0;
         previousRows = [];
         previousStyles = '';
         pendingPointer = null;

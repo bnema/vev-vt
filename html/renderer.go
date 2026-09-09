@@ -18,6 +18,9 @@ type Renderer struct {
 	initialized bool
 }
 
+// CellSource is the read-only semantic grid consumed by HTML rendering.
+type CellSource = core.CellSource
+
 type transactionState uint8
 
 const (
@@ -51,16 +54,21 @@ func New(options Options) (*Renderer, error) {
 
 // Prepare validates and encodes a speculative update. The renderer advances
 // only after Commit. Abort preserves the previous committed shadow.
-func (r *Renderer) Prepare(frame core.Frame, damage []core.Damage, reset bool, cursor Cursor) (*PreparedDraw, error) {
+func (r *Renderer) Prepare(source CellSource, damage []core.Damage, reset bool, cursor Cursor) (*PreparedDraw, error) {
 	if r == nil {
 		return nil, fmt.Errorf("html: nil renderer")
 	}
 	if r.pending != nil {
 		return nil, ErrPendingDraw
 	}
+	frame, err := materializeCellSource(source)
+	if err != nil {
+		return nil, err
+	}
 	if err := r.validateFrame(frame); err != nil {
 		return nil, err
 	}
+	cursor = normalizeWrapPendingCursor(cursor, frame.Width)
 	if err := validateCursor(cursor, frame.Width, frame.Height); err != nil {
 		return nil, err
 	}
@@ -71,15 +79,9 @@ func (r *Renderer) Prepare(frame core.Frame, damage []core.Damage, reset bool, c
 	if err != nil {
 		return nil, err
 	}
-	if estimate, ok := estimatedUpdateBytes(update, r.limits.MaxGeneratedBytes); !ok {
-		return nil, fmt.Errorf("%w: estimated update is at least %d bytes, limit is %d", ErrLimitExceeded, estimate, r.limits.MaxGeneratedBytes)
-	}
-	encoded, err := json.Marshal(update)
+	encoded, err := encodeBoundedUpdate(update, r.limits.MaxGeneratedBytes)
 	if err != nil {
-		return nil, fmt.Errorf("html: encode update: %w", err)
-	}
-	if len(encoded) > r.limits.MaxGeneratedBytes {
-		return nil, fmt.Errorf("%w: generated update is %d bytes, limit is %d", ErrLimitExceeded, len(encoded), r.limits.MaxGeneratedBytes)
+		return nil, err
 	}
 
 	tx := &transaction{
@@ -154,6 +156,50 @@ func (r *Renderer) validateFrame(frame core.Frame) error {
 	return nil
 }
 
+// materializeCellSource reads a source into an owned frame. A core.Frame
+// takes the fast clone path; any other source is copied cell by cell.
+func materializeCellSource(source CellSource) (core.Frame, error) {
+	if source == nil {
+		return core.Frame{}, fmt.Errorf("html: nil cell source")
+	}
+	switch frame := source.(type) {
+	case core.Frame:
+		if err := frame.Validate(); err != nil {
+			return core.Frame{}, fmt.Errorf("html: validate frame: %w", err)
+		}
+		return frame.Clone(), nil
+	case *core.Frame:
+		if frame == nil {
+			return core.Frame{}, fmt.Errorf("html: nil cell source")
+		}
+		if err := frame.Validate(); err != nil {
+			return core.Frame{}, fmt.Errorf("html: validate frame: %w", err)
+		}
+		return frame.Clone(), nil
+	}
+	width, height := source.Columns(), source.Rows()
+	if width <= 0 || height <= 0 {
+		return core.Frame{}, fmt.Errorf("html: invalid cell source size %dx%d", width, height)
+	}
+	clone := core.NewFrame(width, height)
+	for y := range height {
+		for x := range width {
+			clone.Set(x, y, source.Cell(x, y))
+		}
+	}
+	return clone, nil
+}
+
+// normalizeWrapPendingCursor maps the deferred-wrap one-past-end column
+// produced after writing the last column with autowrap enabled onto the
+// last visible column. It leaves every in-bounds cursor untouched.
+func normalizeWrapPendingCursor(cursor Cursor, width int) Cursor {
+	if cursor.Column == width && cursor.Row >= 0 {
+		cursor.Column = width - 1
+	}
+	return cursor
+}
+
 func validateCursor(cursor Cursor, width, height int) error {
 	if cursor.Row < 0 || cursor.Row >= height || cursor.Column < 0 || cursor.Column >= width {
 		return fmt.Errorf("html: cursor (%d,%d) outside %dx%d frame", cursor.Column, cursor.Row, width, height)
@@ -210,33 +256,18 @@ func (r *Renderer) buildUpdate(frame core.Frame, snapshot bool, cursor Cursor) (
 	return update, nil
 }
 
-func estimatedUpdateBytes(update Update, limit int) (int, bool) {
-	estimate := 256
-	add := func(size int) bool {
-		if estimate > math.MaxInt-size {
-			estimate = math.MaxInt
-			return false
-		}
-		estimate += size
-		return estimate <= limit
+// encodeBoundedUpdate marshals one update and enforces MaxGeneratedBytes on
+// the exact encoded size. The previous conservative estimate could reject
+// compact updates well below the configured limit.
+func encodeBoundedUpdate(update Update, limit int) ([]byte, error) {
+	encoded, err := json.Marshal(update)
+	if err != nil {
+		return nil, fmt.Errorf("html: encode update: %w", err)
 	}
-	if len(update.Styles) > (math.MaxInt-estimate)/512 {
-		return math.MaxInt, false
+	if len(encoded) > limit {
+		return nil, fmt.Errorf("%w: generated update is %d bytes, limit is %d", ErrLimitExceeded, len(encoded), limit)
 	}
-	if !add(len(update.Styles) * 512) {
-		return estimate, false
-	}
-	for _, row := range update.Rows {
-		if !add(64) {
-			return estimate, false
-		}
-		for _, cell := range row.Cells {
-			if !add(96 + len(cell.Text)*6) {
-				return estimate, false
-			}
-		}
-	}
-	return estimate, true
+	return encoded, nil
 }
 
 func rowsEqual(left, right []core.Cell) bool {
