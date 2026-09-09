@@ -171,7 +171,7 @@ func damageRequiresSnapshot(damage []core.Damage, width, height int) bool {
 	for _, item := range damage {
 		switch item.Kind {
 		case core.DamageText, core.DamageClear:
-			if item.X < 0 || item.Y < 0 || item.Width <= 0 || item.Height <= 0 || item.X > width-item.Width || item.Y > height-item.Height || item.Count != 0 {
+			if item.X < 0 || item.Y < 0 || item.Width <= 0 || item.Height <= 0 || item.X > width-item.Width || item.Y > height-item.Height {
 				return true
 			}
 		case core.DamageScrollUp, core.DamageFullRedraw:

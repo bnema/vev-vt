@@ -52,7 +52,7 @@ func DefaultEventLimits() EventLimits {
 
 func normalizeEventLimits(limits EventLimits) (EventLimits, error) {
 	if limits.MaxEventBytes < 0 || limits.MaxTextBytes < 0 || limits.MaxPasteBytes < 0 || limits.MaxColumns < 0 || limits.MaxRows < 0 {
-		return EventLimits{}, fmt.Errorf("html/browser: event limits must not be negative")
+		return EventLimits{}, fmt.Errorf("%w: event limits must not be negative", ErrInvalidEventLimits)
 	}
 	defaults := DefaultEventLimits()
 	if limits.MaxEventBytes == 0 {
@@ -181,14 +181,14 @@ type envelope struct {
 type textWire struct {
 	SchemaVersion uint16    `json:"schemaVersion"`
 	Kind          EventKind `json:"type"`
-	Text          string    `json:"text"`
+	Text          *string   `json:"text"`
 }
 
 type keyWire struct {
 	SchemaVersion uint16    `json:"schemaVersion"`
 	Kind          EventKind `json:"type"`
-	Key           string    `json:"key"`
-	Code          string    `json:"code"`
+	Key           *string   `json:"key"`
+	Code          *string   `json:"code"`
 	Alt           bool      `json:"alt"`
 	Ctrl          bool      `json:"ctrl"`
 	Meta          bool      `json:"meta"`
@@ -200,13 +200,13 @@ type keyWire struct {
 type pointerWire struct {
 	SchemaVersion uint16    `json:"schemaVersion"`
 	Kind          EventKind `json:"type"`
-	Action        string    `json:"action"`
-	Button        int       `json:"button"`
-	Buttons       uint16    `json:"buttons"`
-	Row           int       `json:"row"`
-	Column        int       `json:"column"`
-	X             float64   `json:"x"`
-	Y             float64   `json:"y"`
+	Action        *string   `json:"action"`
+	Button        *int      `json:"button"`
+	Buttons       *uint16   `json:"buttons"`
+	Row           *int      `json:"row"`
+	Column        *int      `json:"column"`
+	X             *float64  `json:"x"`
+	Y             *float64  `json:"y"`
 	Alt           bool      `json:"alt"`
 	Ctrl          bool      `json:"ctrl"`
 	Meta          bool      `json:"meta"`
@@ -216,11 +216,11 @@ type pointerWire struct {
 type wheelWire struct {
 	SchemaVersion uint16    `json:"schemaVersion"`
 	Kind          EventKind `json:"type"`
-	DeltaX        float64   `json:"deltaX"`
-	DeltaY        float64   `json:"deltaY"`
-	DeltaMode     int       `json:"deltaMode"`
-	Row           int       `json:"row"`
-	Column        int       `json:"column"`
+	DeltaX        *float64  `json:"deltaX"`
+	DeltaY        *float64  `json:"deltaY"`
+	DeltaMode     *int      `json:"deltaMode"`
+	Row           *int      `json:"row"`
+	Column        *int      `json:"column"`
 	Alt           bool      `json:"alt"`
 	Ctrl          bool      `json:"ctrl"`
 	Meta          bool      `json:"meta"`
@@ -230,19 +230,19 @@ type wheelWire struct {
 type resizeWire struct {
 	SchemaVersion    uint16    `json:"schemaVersion"`
 	Kind             EventKind `json:"type"`
-	Columns          int       `json:"columns"`
-	Rows             int       `json:"rows"`
-	PixelWidth       float64   `json:"pixelWidth"`
-	PixelHeight      float64   `json:"pixelHeight"`
-	CellWidth        float64   `json:"cellWidth"`
-	CellHeight       float64   `json:"cellHeight"`
-	DevicePixelRatio float64   `json:"devicePixelRatio"`
+	Columns          *int      `json:"columns"`
+	Rows             *int      `json:"rows"`
+	PixelWidth       *float64  `json:"pixelWidth"`
+	PixelHeight      *float64  `json:"pixelHeight"`
+	CellWidth        *float64  `json:"cellWidth"`
+	CellHeight       *float64  `json:"cellHeight"`
+	DevicePixelRatio *float64  `json:"devicePixelRatio"`
 }
 
 type focusWire struct {
 	SchemaVersion uint16    `json:"schemaVersion"`
 	Kind          EventKind `json:"type"`
-	Focused       bool      `json:"focused"`
+	Focused       *bool     `json:"focused"`
 }
 
 // DecodeEvent strictly decodes one complete untrusted browser event.
@@ -272,63 +272,69 @@ func DecodeEvent(data []byte, requested EventLimits) (Event, error) {
 		if err := decodeStrict(data, &wire); err != nil {
 			return Event{}, err
 		}
-		if !utf8.ValidString(wire.Text) {
+		if wire.Text == nil {
+			return Event{}, fmt.Errorf("html/browser: event text is required")
+		}
+		if !utf8.ValidString(*wire.Text) {
 			return Event{}, fmt.Errorf("html/browser: event text is not valid UTF-8")
 		}
 		limit := limits.MaxTextBytes
 		if header.Kind == EventPaste {
 			limit = limits.MaxPasteBytes
 		}
-		if len(wire.Text) > limit {
-			return Event{}, fmt.Errorf("%w: %s has %d bytes, limit is %d", ErrEventLimit, header.Kind, len(wire.Text), limit)
+		if len(*wire.Text) > limit {
+			return Event{}, fmt.Errorf("%w: %s has %d bytes, limit is %d", ErrEventLimit, header.Kind, len(*wire.Text), limit)
 		}
 		if header.Kind == EventText {
-			event.Text = &TextEvent{Text: wire.Text}
+			event.Text = &TextEvent{Text: *wire.Text}
 		} else {
-			event.Paste = &PasteEvent{Text: wire.Text}
+			event.Paste = &PasteEvent{Text: *wire.Text}
 		}
 	case EventKey:
 		var wire keyWire
 		if err := decodeStrict(data, &wire); err != nil {
 			return Event{}, err
 		}
-		if wire.Key == "" || wire.Code == "" || len(wire.Key) > 128 || len(wire.Code) > 128 || wire.Location < 0 || wire.Location > 3 {
+		if wire.Key == nil || wire.Code == nil || *wire.Key == "" || *wire.Code == "" || len(*wire.Key) > 128 || len(*wire.Code) > 128 || wire.Location < 0 || wire.Location > 3 {
 			return Event{}, fmt.Errorf("html/browser: invalid key event")
 		}
-		event.Key = &KeyEvent{Key: wire.Key, Code: wire.Code, Modifiers: modifiers(wire.Alt, wire.Ctrl, wire.Meta, wire.Shift), Repeat: wire.Repeat, Location: wire.Location}
+		event.Key = &KeyEvent{Key: *wire.Key, Code: *wire.Code, Modifiers: modifiers(wire.Alt, wire.Ctrl, wire.Meta, wire.Shift), Repeat: wire.Repeat, Location: wire.Location}
 	case EventPointer:
 		var wire pointerWire
 		if err := decodeStrict(data, &wire); err != nil {
 			return Event{}, err
 		}
-		if !oneOf(wire.Action, "down", "up", "move", "cancel") || wire.Button < -1 || wire.Button > 4 || wire.Buttons > 31 || !validCell(wire.Row, wire.Column, limits) || !finiteBounded(wire.X) || !finiteBounded(wire.Y) {
+		if wire.Action == nil || wire.Button == nil || wire.Buttons == nil || wire.Row == nil || wire.Column == nil || wire.X == nil || wire.Y == nil || !oneOf(*wire.Action, "down", "up", "move", "cancel") || *wire.Button < -1 || *wire.Button > 4 || *wire.Buttons > 31 || !validCell(*wire.Row, *wire.Column, limits) || !finiteBounded(*wire.X) || !finiteBounded(*wire.Y) {
 			return Event{}, fmt.Errorf("html/browser: invalid pointer event")
 		}
-		event.Pointer = &PointerEvent{Action: wire.Action, Button: wire.Button, Buttons: wire.Buttons, Row: wire.Row, Column: wire.Column, X: wire.X, Y: wire.Y, Modifiers: modifiers(wire.Alt, wire.Ctrl, wire.Meta, wire.Shift)}
+		event.Pointer = &PointerEvent{Action: *wire.Action, Button: *wire.Button, Buttons: *wire.Buttons, Row: *wire.Row, Column: *wire.Column, X: *wire.X, Y: *wire.Y, Modifiers: modifiers(wire.Alt, wire.Ctrl, wire.Meta, wire.Shift)}
 	case EventWheel:
 		var wire wheelWire
 		if err := decodeStrict(data, &wire); err != nil {
 			return Event{}, err
 		}
-		if wire.DeltaMode < 0 || wire.DeltaMode > 2 || !validCell(wire.Row, wire.Column, limits) || !finiteBounded(wire.DeltaX) || !finiteBounded(wire.DeltaY) {
+		if wire.DeltaX == nil || wire.DeltaY == nil || wire.DeltaMode == nil || wire.Row == nil || wire.Column == nil || *wire.DeltaMode < 0 || *wire.DeltaMode > 2 || !validCell(*wire.Row, *wire.Column, limits) || !finiteBounded(*wire.DeltaX) || !finiteBounded(*wire.DeltaY) {
 			return Event{}, fmt.Errorf("html/browser: invalid wheel event")
 		}
-		event.Wheel = &WheelEvent{DeltaX: wire.DeltaX, DeltaY: wire.DeltaY, DeltaMode: wire.DeltaMode, Row: wire.Row, Column: wire.Column, Modifiers: modifiers(wire.Alt, wire.Ctrl, wire.Meta, wire.Shift)}
+		event.Wheel = &WheelEvent{DeltaX: *wire.DeltaX, DeltaY: *wire.DeltaY, DeltaMode: *wire.DeltaMode, Row: *wire.Row, Column: *wire.Column, Modifiers: modifiers(wire.Alt, wire.Ctrl, wire.Meta, wire.Shift)}
 	case EventResize:
 		var wire resizeWire
 		if err := decodeStrict(data, &wire); err != nil {
 			return Event{}, err
 		}
-		if wire.Columns <= 0 || wire.Columns > limits.MaxColumns || wire.Rows <= 0 || wire.Rows > limits.MaxRows || !positiveFinite(wire.PixelWidth) || !positiveFinite(wire.PixelHeight) || !positiveFinite(wire.CellWidth) || !positiveFinite(wire.CellHeight) || !positiveFinite(wire.DevicePixelRatio) {
+		if wire.Columns == nil || wire.Rows == nil || wire.PixelWidth == nil || wire.PixelHeight == nil || wire.CellWidth == nil || wire.CellHeight == nil || wire.DevicePixelRatio == nil || *wire.Columns <= 0 || *wire.Columns > limits.MaxColumns || *wire.Rows <= 0 || *wire.Rows > limits.MaxRows || !positiveFinite(*wire.PixelWidth) || !positiveFinite(*wire.PixelHeight) || !positiveFinite(*wire.CellWidth) || !positiveFinite(*wire.CellHeight) || !positiveFinite(*wire.DevicePixelRatio) {
 			return Event{}, fmt.Errorf("html/browser: invalid resize event")
 		}
-		event.Resize = &ResizeEvent{Columns: wire.Columns, Rows: wire.Rows, PixelWidth: wire.PixelWidth, PixelHeight: wire.PixelHeight, CellWidth: wire.CellWidth, CellHeight: wire.CellHeight, DevicePixelRatio: wire.DevicePixelRatio}
+		event.Resize = &ResizeEvent{Columns: *wire.Columns, Rows: *wire.Rows, PixelWidth: *wire.PixelWidth, PixelHeight: *wire.PixelHeight, CellWidth: *wire.CellWidth, CellHeight: *wire.CellHeight, DevicePixelRatio: *wire.DevicePixelRatio}
 	case EventFocus:
 		var wire focusWire
 		if err := decodeStrict(data, &wire); err != nil {
 			return Event{}, err
 		}
-		event.Focus = &FocusEvent{Focused: wire.Focused}
+		if wire.Focused == nil {
+			return Event{}, fmt.Errorf("html/browser: invalid focus event")
+		}
+		event.Focus = &FocusEvent{Focused: *wire.Focused}
 	default:
 		return Event{}, fmt.Errorf("html/browser: unknown event kind %q", header.Kind)
 	}

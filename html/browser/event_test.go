@@ -25,6 +25,14 @@ func TestDecodeEventValidatesTheClosedSchema(t *testing.T) {
 
 	_, err = DecodeEvent([]byte(`{"schemaVersion":1,"type":"resize","columns":80,"rows":24,"pixelWidth":800,"pixelHeight":480,"cellWidth":10,"cellHeight":20,"devicePixelRatio":1}`), EventLimits{})
 	require.NoError(t, err)
+
+	for _, data := range []string{
+		`{"schemaVersion":1,"type":"focus"}`,
+		`{"schemaVersion":1,"type":"wheel"}`,
+	} {
+		_, err = DecodeEvent([]byte(data), EventLimits{})
+		require.Error(t, err)
+	}
 }
 
 func TestDecodeEventAcceptsRuntimeEventKinds(t *testing.T) {
@@ -52,10 +60,11 @@ func TestDecodeEventAcceptsRuntimeEventKinds(t *testing.T) {
 
 func TestDefaultEventLimitsAcceptEscapedMaximumPaste(t *testing.T) {
 	limits := DefaultEventLimits()
+	text := strings.Repeat("\x00", limits.MaxPasteBytes)
 	data, err := json.Marshal(textWire{
 		SchemaVersion: EventSchemaVersion,
 		Kind:          EventPaste,
-		Text:          strings.Repeat("\x00", limits.MaxPasteBytes),
+		Text:          &text,
 	})
 	require.NoError(t, err)
 
@@ -68,6 +77,24 @@ func TestDefaultEventLimitsAcceptEscapedMaximumPaste(t *testing.T) {
 func TestNormalizeEventLimitsRejectsImpossibleEnvelope(t *testing.T) {
 	_, err := normalizeEventLimits(EventLimits{MaxEventBytes: 69, MaxTextBytes: 1, MaxPasteBytes: 1})
 	require.ErrorIs(t, err, ErrInvalidEventLimits)
+
+	_, err = normalizeEventLimits(EventLimits{MaxTextBytes: -1})
+	require.ErrorIs(t, err, ErrInvalidEventLimits)
+}
+
+func TestDecodeEventRejectsMissingRequiredFields(t *testing.T) {
+	tests := []string{
+		`{"schemaVersion":1,"type":"text"}`,
+		`{"schemaVersion":1,"type":"key","code":"ArrowUp"}`,
+		`{"schemaVersion":1,"type":"pointer","action":"down"}`,
+		`{"schemaVersion":1,"type":"wheel"}`,
+		`{"schemaVersion":1,"type":"resize","columns":80,"rows":24}`,
+		`{"schemaVersion":1,"type":"focus"}`,
+	}
+	for _, data := range tests {
+		_, err := DecodeEvent([]byte(data), EventLimits{})
+		require.Error(t, err, data)
+	}
 }
 
 func TestDecodeEventRejectsInvalidRuntimePayloads(t *testing.T) {

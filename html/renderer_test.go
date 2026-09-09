@@ -58,6 +58,21 @@ func TestPreparedJSONMatchesBrowserFixture(t *testing.T) {
 	require.JSONEq(t, string(fixture), string(prepared.JSON()))
 }
 
+func TestRendererUsesIncrementalDamageWithNormalCounts(t *testing.T) {
+	frame := core.NewFrame(2, 2)
+	renderer, err := New(Options{})
+	require.NoError(t, err)
+	first, err := renderer.Prepare(frame, nil, false, Cursor{})
+	require.NoError(t, err)
+	require.NoError(t, first.Commit())
+
+	frame.Set(0, 0, core.Cell{Rune: 'X', Style: core.DefaultStyle()})
+	prepared, err := renderer.Prepare(frame, []core.Damage{{Kind: core.DamageText, X: 0, Y: 0, Width: 1, Height: 1, Count: 1}}, false, Cursor{})
+	require.NoError(t, err)
+	require.False(t, prepared.Update().Snapshot)
+	require.NoError(t, prepared.Commit())
+}
+
 func TestRendererFindsChangesOutsideDamage(t *testing.T) {
 	frame := core.NewFrame(2, 2)
 	renderer, err := New(Options{})

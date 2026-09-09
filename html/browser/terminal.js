@@ -10,7 +10,7 @@
   /** @typedef {{schemaVersion: number, width: number, height: number, snapshot: boolean, rows: RowUpdate[], styles: TerminalStyle[], cursor: Cursor}} Update */
   /** @typedef {{emit: boolean, preventDefault: boolean}} CaptureDecision */
   /** @typedef {{schemaVersion?: number, type: string, [key: string]: unknown}} BrowserEvent */
-  /** @typedef {{maxCells?: number, maxRowsPerUpdate?: number, maxStyles?: number, maxTextBytes?: number, maxUpdateBytes?: number, maxPasteBytes?: number}} BrowserLimits */
+  /** @typedef {{maxCells?: number, maxRowsPerUpdate?: number, maxColumns?: number, maxStyles?: number, maxTextBytes?: number, maxUpdateBytes?: number, maxPasteBytes?: number}} BrowserLimits */
   /** @typedef {{foreground: RGB, background: RGB, cursor: RGB, selection: RGB, selectionText: RGB, palette: RGB[]}} TerminalTheme */
   /** @typedef {{label: string, decide?: (event: BrowserEvent) => CaptureDecision, send?: (event: BrowserEvent) => void, limits?: BrowserLimits}} MountOptions */
   /** @typedef {{apply(update: Update): void, focus(): void, setMouseCapture(enabled: boolean): void, setTheme(theme: TerminalTheme): void, destroy(): void}} Terminal */
@@ -19,6 +19,7 @@
   const DEFAULT_LIMITS = Object.freeze({
     maxCells: 1_000_000,
     maxRowsPerUpdate: 10_000,
+    maxColumns: 10_000,
     maxStyles: 65_536,
     maxTextBytes: 64 << 10,
     maxUpdateBytes: 64 << 20,
@@ -175,7 +176,7 @@
     object(value, 'update');
     keys(value, ['schemaVersion', 'width', 'height', 'snapshot', 'rows', 'styles', 'cursor'], 'update');
     if (value.schemaVersion !== SCHEMA_VERSION) fail(`unsupported update schema ${value.schemaVersion}`);
-    const width = integer(value.width, 1, configured.maxCells, 'update.width');
+    const width = integer(value.width, 1, configured.maxColumns, 'update.width');
     const height = integer(value.height, 1, configured.maxRowsPerUpdate, 'update.height');
     if (width > Math.floor(configured.maxCells / height)) fail('update exceeds the cell limit');
     const snapshot = boolean(value.snapshot, 'update.snapshot');
