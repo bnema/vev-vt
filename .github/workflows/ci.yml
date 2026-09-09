@@ -5,15 +5,25 @@ on:
     branches: [main]
     paths:
       - '**.go'
+      - '**.js'
+      - '**.css'
       - 'go.mod'
       - 'go.sum'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'internal/htmlharness/**'
       - '.golangci.yml'
       - '.github/workflows/**'
   pull_request:
     paths:
       - '**.go'
+      - '**.js'
+      - '**.css'
       - 'go.mod'
       - 'go.sum'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'internal/htmlharness/**'
       - '.golangci.yml'
       - '.github/workflows/**'
 
@@ -22,17 +32,43 @@ permissions:
 
 jobs:
   ci:
-    uses: bnema/gh-actions/.github/workflows/go-ci.yml@main
+    permissions:
+      contents: read
+      pull-requests: read
+    uses: bnema/gh-actions/.github/workflows/go-ci.yml@bdc22c9d0e0527bd1c369d4304034cdf2cde9ade # main
     with:
       go-version: stable
       test-flags: '-race -v ./...'
 
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium firefox webkit
+      - run: npm run test:browser
+      - if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: browser-evidence
+          path: test-results/
+          retention-days: 14
+
   quality:
-    needs: ci
+    needs: [ci, browser]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version: stable
       - name: Check production import direction
@@ -46,13 +82,28 @@ jobs:
             echo 'the ANSI package must consume the core model'
             exit 1
           fi
+          if ! go list -f '{{join .Imports "\n"}}' ./html | grep -q '/core'; then
+            echo 'the HTML package must consume the core model'
+            exit 1
+          fi
+          if ! go list -f '{{join .Imports "\n"}}' ./html/browser | grep -q '/html'; then
+            echo 'the browser adapter must consume the HTML package'
+            exit 1
+          fi
+          forbidden="$(go list -deps ./html/... | grep -E '^(github\.com/bnema/vev-vt$|github\.com/bnema/vev($|/)|net/http$|.*/websocket($|/))' || true)"
+          if [ -n "$forbidden" ]; then
+            echo "$forbidden"
+            exit 1
+          fi
       - name: VT fuzz smoke
         run: go test . -run '^$' -fuzz FuzzVTInputDoesNotPanic -fuzztime=10s
       - name: ANSI fuzz smoke
         run: go test . -run '^$' -fuzz FuzzANSIRenderingDoesNotPanic -fuzztime=10s
       - name: VTH3 fuzz smoke
         run: go test . -run '^$' -fuzz FuzzHistoryPreflightMatchesUnmarshal -fuzztime=10s
+      - name: HTML event fuzz smoke
+        run: go test ./html/browser -run '^$' -fuzz FuzzDecodeEvent -fuzztime=10s
       - name: Benchmark smoke
-        run: go test ./... -run '^$' -bench='(VT|History|Snapshot|ANSI)' -benchmem -benchtime=1x
+        run: go test ./... -run '^$' -bench='(VT|History|Snapshot|ANSI|Renderer)' -benchmem -benchtime=1x
       - name: External consumer smoke
         run: scripts/consumer-smoke.sh
