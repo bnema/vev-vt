@@ -38,6 +38,58 @@ test('applies the Go renderer contract fixture', async ({ page }) => {
   await expect(page.locator('.vev-terminal__cursor')).toBeHidden();
 });
 
+test('plain spaces retain grid boxes without per-cell clipping', async ({ page }) => {
+  await mount(page);
+  await page.evaluate(() => terminal.apply({
+    schemaVersion: 1, width: 5, height: 1, snapshot: true,
+    styles: [
+      { foreground: {kind:0}, background: {kind:0}, underlineColor: {kind:0} },
+      { foreground: {kind:0}, background: {kind:0}, underlineColor: {kind:0}, underline:true }
+    ],
+    rows: [{row:0, cells:[
+      {column:0,width:1,text:' ',style:0},
+      {column:1,width:1,text:'A',style:0},
+      {column:2,width:1,text:' ',style:1},
+      {column:3,width:1,text:' ',style:0},
+      {column:4,width:1,text:' ',style:0}
+    ]}],
+    cursor: {row:0,column:0,visible:false,style:0,styleSet:false}
+  }));
+  const cells = page.locator('.vev-terminal__cell');
+  await expect(cells).toHaveCount(4);
+  await expect(cells.nth(0)).toHaveCSS('overflow', 'visible');
+  await expect(cells.nth(1)).toHaveCSS('overflow', 'hidden');
+  await expect(cells.nth(2)).toHaveCSS('overflow', 'hidden');
+  expect(await cells.nth(0).evaluate(node => node.getBoundingClientRect().width)).toBeGreaterThan(0);
+  await expect(cells.nth(3)).toHaveAttribute('data-width', '2');
+  expect(await page.locator('.vev-terminal__accessible-output').textContent()).toBe(' A   ');
+});
+
+test('keeps wide blanks separate from adjacent space runs', async ({ page }) => {
+  await mount(page);
+  const geometry = await page.evaluate(() => {
+    terminal.apply({
+      schemaVersion: 1, width: 4, height: 1, snapshot: true,
+      styles: [{ foreground: {kind:0}, background: {kind:0}, underlineColor: {kind:0} }],
+      rows: [{row:0, cells:[
+        {column:0,width:1,text:' ',style:0},
+        {column:1,width:2,text:' ',style:0},
+        {column:3,width:1,text:' ',style:0}
+      ]}],
+      cursor: {row:0,column:0,visible:false,style:0,styleSet:false}
+    });
+    return [...document.querySelectorAll('.vev-terminal__cell')].map(node => {
+      const range = document.createRange();
+      range.selectNodeContents(node);
+      return {x: range.getBoundingClientRect().x, width: node.getBoundingClientRect().width};
+    });
+  });
+  expect(geometry).toHaveLength(3);
+  expect(geometry[1].x - geometry[0].x).toBeCloseTo(geometry[0].width, 1);
+  expect(geometry[2].x - geometry[1].x).toBeCloseTo(geometry[1].width, 1);
+  expect(await page.locator('.vev-terminal__accessible-output').textContent()).toBe('   ');
+});
+
 test('applies typed rows without interpreting terminal text as markup', async ({ page }) => {
   await mount(page);
   const hostile = '<img src=x onerror="globalThis.injected=true">';

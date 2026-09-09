@@ -233,8 +233,23 @@
     node.className = 'vev-terminal__row';
     node.dataset.row = String(row.row);
     let text = '';
-    for (const cell of row.cells) {
+    for (let index = 0; index < row.cells.length; index += 1) {
+      let cell = row.cells[index];
       const style = styles[cell.style];
+      // A run of spaces needs one grid item, not one item per column. Only
+      // merge plain spaces: arbitrary text still needs explicit cell widths.
+      if (cell.text === ' ' && cell.width === 1 && !style.underline && !style.strikethrough) {
+        let width = cell.width;
+        let spaces = cell.text;
+        while (index + 1 < row.cells.length) {
+          const next = row.cells[index + 1];
+          if (next.text !== ' ' || next.width !== 1 || next.style !== cell.style || next.column !== cell.column + width) break;
+          width += next.width;
+          spaces += next.text;
+          index += 1;
+        }
+        cell = { ...cell, width, text: spaces };
+      }
       const child = document.createElement('span');
       child.className = 'vev-terminal__cell';
       child.dataset.column = String(cell.column);
@@ -248,6 +263,11 @@
       child.style.setProperty('--vev-cell-underline', colorValue(style.underlineColor, foreground));
       addStyleClasses(child, style);
       child.textContent = cell.text;
+      // A plain space has no ink to clip. Avoid a compositor clip for every
+      // blank cell while retaining its grid box, selection and text content.
+      if (/^ +$/.test(cell.text) && !style.underline && !style.strikethrough) {
+        child.style.overflow = 'visible';
+      }
       node.append(child);
       text += cell.text;
     }
