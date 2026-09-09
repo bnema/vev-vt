@@ -235,6 +235,23 @@ test('emits text and synchronously decides key default prevention', async ({ pag
   expect(keyDispatchResult).toBeFalsy();
 });
 
+test('supports soft keyboard editing without unidentified keys or duplicate desktop edits', async ({ page }) => {
+  await mount(page);
+  const input = page.locator('.vev-terminal__input');
+  await input.focus();
+  await input.evaluate(node => {
+    node.dispatchEvent(new KeyboardEvent('keydown', { key: 'Unidentified', bubbles: true, cancelable: true }));
+    for (const inputType of ['deleteContentBackward', 'deleteContentForward', 'insertLineBreak']) {
+      node.dispatchEvent(new InputEvent('beforeinput', { inputType, data: null, bubbles: true, cancelable: true }));
+    }
+  });
+  await page.keyboard.press('Backspace');
+  await page.keyboard.press('Enter');
+  const keys = await page.evaluate(() => globalThis.events.filter(event => event.type === 'key').map(event => event.key));
+  expect(keys).toEqual(['Backspace', 'Delete', 'Enter', 'Backspace', 'Enter']);
+  expect(await input.evaluate(node => getComputedStyle(node).fontSize)).toBe('16px');
+});
+
 test('rejects oversized input without throwing from DOM callbacks', async ({ page }) => {
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));

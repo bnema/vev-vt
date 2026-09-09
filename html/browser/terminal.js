@@ -344,6 +344,7 @@
 
     let destroyed = false;
     let composing = false;
+    let editingKeyDown = null;
     let mouseCapture = false;
     let width = 0;
     let height = 0;
@@ -438,7 +439,8 @@
       height = update.height;
       setOwnedProperty('--vev-cols', String(width));
       setOwnedProperty('--vev-rows', String(height));
-      accessible.textContent = rowText.join('\n');
+      const accessibleText = rowText.join('\n');
+      if (accessible.textContent !== accessibleText) accessible.textContent = accessibleText;
       updateCursor(update.cursor);
       scheduleResize();
     }
@@ -496,7 +498,14 @@
     }
 
     input.addEventListener('beforeinput', event => {
-      if (composing || event.inputType === 'insertCompositionText' || event.inputType === 'insertFromPaste' || !event.data) return;
+      if (composing || event.isComposing || event.inputType === 'insertCompositionText' || event.inputType === 'insertFromPaste') return;
+      const editingKey = { deleteContentBackward: 'Backspace', deleteContentForward: 'Delete', insertLineBreak: 'Enter', insertParagraph: 'Enter' }[event.inputType];
+      if (editingKey) {
+        if (editingKeyDown === editingKey) return;
+        dispatch({ type: 'key', key: editingKey, code: editingKey, repeat: false, location: 0, alt: false, ctrl: false, meta: false, shift: false }, event);
+        return;
+      }
+      if (!event.data) return;
       if (encoder.encode(event.data).byteLength > configured.maxTextBytes) {
         event.preventDefault();
         return;
@@ -517,7 +526,9 @@
     input.addEventListener('keydown', event => {
       if (composing || event.isComposing) return;
       const key = event.key || 'Unidentified';
+      editingKeyDown = ['Backspace', 'Delete', 'Enter'].includes(key) ? key : null;
       const code = event.code || 'Unidentified';
+      if (key === 'Unidentified' || key === 'Process') return;
       const nonText = key.length !== 1 || event.ctrlKey || event.altKey || event.metaKey;
       if (!nonText) return;
       if (key.length > 128 || code.length > 128) {
@@ -526,6 +537,8 @@
       }
       dispatch({ type: 'key', key, code, repeat: event.repeat, location: event.location, ...modifierFields(event) }, event);
     }, { signal });
+    input.addEventListener('keyup', () => { editingKeyDown = null; }, { signal });
+    input.addEventListener('blur', () => { editingKeyDown = null; }, { signal });
     input.addEventListener('paste', event => {
       const text = event.clipboardData?.getData('text/plain') || '';
       if (encoder.encode(text).byteLength > configured.maxPasteBytes) {

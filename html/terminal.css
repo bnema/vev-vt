@@ -88,6 +88,8 @@
 .vev-terminal__cursor--bar { width: max(1px, calc(var(--vev-cell-width) * 0.12)); }
 .vev-terminal__cursor--underline { height: max(1px, calc(var(--vev-cell-height) * 0.12)); }
 
+.vev-terminal__input { font-size: 16px; }
+
 .vev-terminal__input,
 .vev-terminal__accessible-output {
   position: absolute;
