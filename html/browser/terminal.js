@@ -258,9 +258,11 @@
       let foreground = colorValue(style.foreground, 'var(--vev-fg)');
       let background = colorValue(style.background, 'var(--vev-bg)');
       if (style.inverse) [foreground, background] = [background, foreground];
-      child.style.setProperty('--vev-cell-fg', foreground);
-      child.style.setProperty('--vev-cell-bg', background);
-      child.style.setProperty('--vev-cell-underline', colorValue(style.underlineColor, foreground));
+      // Default colors already resolve through the stylesheet. Avoid three
+      // redundant custom properties per cell (and their style-resolution cost).
+      if (style.inverse || style.foreground.kind !== 0) child.style.setProperty('--vev-cell-fg', foreground);
+      if (style.inverse || style.background.kind !== 0) child.style.setProperty('--vev-cell-bg', background);
+      if (style.underlineColor.kind !== 0 || style.dim) child.style.setProperty('--vev-cell-underline', colorValue(style.underlineColor, foreground));
       addStyleClasses(child, style);
       child.textContent = cell.text;
       // A plain space has no ink to clip. Avoid a compositor clip for every

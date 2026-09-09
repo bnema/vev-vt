@@ -51,6 +51,7 @@
 }
 
 .vev-terminal__row {
+  contain: strict;
   display: grid;
   grid-template-columns: repeat(var(--vev-cols), var(--vev-cell-width));
   min-width: calc(var(--vev-cols) * var(--vev-cell-width));

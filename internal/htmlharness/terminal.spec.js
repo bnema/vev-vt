@@ -38,6 +38,21 @@ test('applies the Go renderer contract fixture', async ({ page }) => {
   await expect(page.locator('.vev-terminal__cursor')).toBeHidden();
 });
 
+test('default colors inherit without redundant per-cell properties', async ({ page }) => {
+  await mount(page);
+  const fixture = JSON.parse(await fs.readFile(path.join(root, 'internal/htmlharness/testdata/snapshot.json'), 'utf8'));
+  const result = await page.evaluate(value => {
+    const plain = { foreground: { kind: 0 }, background: { kind: 0 }, underlineColor: { kind: 0 } };
+    terminal.apply({ ...value, styles: [plain], rows: value.rows.map(row => ({ ...row, cells: row.cells.map(cell => ({ ...cell, style: 0 })) })) });
+    const cell = document.querySelector('.vev-terminal__cell');
+    const properties = ['--vev-cell-fg', '--vev-cell-bg', '--vev-cell-underline'].map(name => cell.style.getPropertyValue(name));
+    document.querySelector('#terminal').style.setProperty('--vev-fg', 'rgb(12, 34, 56)');
+    document.querySelector('#terminal').style.setProperty('--vev-bg', 'rgb(65, 43, 21)');
+    return { properties, foreground: getComputedStyle(cell).color, background: getComputedStyle(cell).backgroundColor };
+  }, fixture);
+  expect(result).toEqual({ properties: ['', '', ''], foreground: 'rgb(12, 34, 56)', background: 'rgb(65, 43, 21)' });
+});
+
 test('plain spaces retain grid boxes without per-cell clipping', async ({ page }) => {
   await mount(page);
   await page.evaluate(() => terminal.apply({
