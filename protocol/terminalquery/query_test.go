@@ -81,3 +81,34 @@ func TestProbeBoundsUnterminatedResponse(t *testing.T) {
 	require.False(t, p.Ready())
 	require.Equal(t, input, got)
 }
+
+func TestProbeRecognizesKittyKeyboardResponse(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		fragments []string
+		keyboard  bool
+		da1       bool
+		unrelated string
+	}{
+		{name: "supported", fragments: []string{"\x1b[?0u\x1b[?62;c"}, keyboard: true, da1: true},
+		{name: "supported with flags", fragments: []string{"\x1b[?15u"}, keyboard: true},
+		{name: "unsupported", fragments: []string{"\x1b[?62;22c"}, da1: true},
+		{name: "fragmented", fragments: []string{"a\x1b", "[?", "1", "u", "b"}, keyboard: true, unrelated: "ab"},
+		{name: "empty flags rejected", fragments: []string{"\x1b[?u"}, unrelated: "\x1b[?u"},
+		{name: "non digit rejected", fragments: []string{"\x1b[?1;2u"}, unrelated: "\x1b[?1;2u"},
+		{name: "no private marker rejected", fragments: []string{"\x1b[1u"}, unrelated: "\x1b[1u"},
+		{name: "truncated flushes", fragments: []string{"\x1b[?1"}, unrelated: "\x1b[?1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var p Probe
+			var got []byte
+			for _, f := range tc.fragments {
+				got = append(got, p.Feed([]byte(f))...)
+			}
+			got = append(got, p.Finish()...)
+			require.Equal(t, tc.keyboard, p.KittyKeyboard())
+			require.Equal(t, tc.da1, p.DA1())
+			require.Equal(t, tc.unrelated, string(got))
+		})
+	}
+}

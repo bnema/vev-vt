@@ -14,6 +14,10 @@ const (
 	// Kitty query so a graphics declaration requires both terminal identity and
 	// protocol support.
 	DeviceAttributesQuery = "\x1b[c"
+	// KittyKeyboardQuery asks for the current kitty keyboard enhancement
+	// flags. Send it before DeviceAttributesQuery: every terminal answers DA1,
+	// so a DA1 response without a keyboard response means no support.
+	KittyKeyboardQuery = "\x1b[?u"
 
 	maxProbeResponseBytes = 256
 )
@@ -26,6 +30,8 @@ type Probe struct {
 	pending []byte
 	kitty   bool
 	da1     bool
+	// keyboard is set once a KittyKeyboardQuery response was observed.
+	keyboard bool
 }
 
 // Feed consumes one terminal input fragment and returns unrelated input. The
@@ -61,6 +67,10 @@ func (p *Probe) Ready() bool { return p != nil && p.kitty && p.da1 }
 
 // KittyGraphics reports whether the Kitty graphics response was observed.
 func (p *Probe) KittyGraphics() bool { return p != nil && p.kitty }
+
+// KittyKeyboard reports whether a kitty keyboard protocol response was
+// observed. It is meaningful once DA1 is true.
+func (p *Probe) KittyKeyboard() bool { return p != nil && p.keyboard }
 
 // DA1 reports whether a primary device-attributes response was observed.
 func (p *Probe) DA1() bool { return p != nil && p.da1 }
@@ -129,6 +139,11 @@ func (p *Probe) scan(flush bool) []byte {
 		response := p.pending[:end]
 		if validDA1Response(response) {
 			p.da1 = true
+			p.pending = p.pending[end:]
+			continue
+		}
+		if validKittyKeyboardResponse(response) {
+			p.keyboard = true
 			p.pending = p.pending[end:]
 			continue
 		}
@@ -212,4 +227,17 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// validKittyKeyboardResponse accepts ESC [ ? <decimal flags> u.
+func validKittyKeyboardResponse(data []byte) bool {
+	if len(data) < 5 || !bytes.HasPrefix(data, []byte("\x1b[?")) || data[len(data)-1] != 'u' {
+		return false
+	}
+	for _, b := range data[3 : len(data)-1] {
+		if b < '0' || b > '9' {
+			return false
+		}
+	}
+	return true
 }

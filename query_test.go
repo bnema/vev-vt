@@ -33,7 +33,7 @@ func TestScreenQueryResponses(t *testing.T) {
 		{name: "color scheme DSR dark", input: "\x1b[?996n", want: ColorSchemeReportDark},
 		{name: "color scheme DSR light", input: "\x1b[?996n", want: ColorSchemeReportLight},
 		{name: "DECRQM unknown mode", input: "\x1b[?1337$p", want: "\x1b[?1337;0$y"},
-		{name: "kitty keyboard query unanswered", input: "\x1b[?u", want: ""},
+		{name: "kitty keyboard query reports flags", input: "\x1b[?u", want: "\x1b[?0u"},
 		{name: "XTVERSION unanswered", input: "\x1b[>0q", want: ""},
 		{name: "DA split across writes", input: "", want: "\x1b[?62;22c"},
 	}

@@ -22,6 +22,8 @@ type ModeSnapshot struct {
 	ColorSchemeMode    bool
 	MouseTracking      int
 	MouseSGR           bool
+	// KittyKeyboard is the active screen's kitty keyboard enhancement flags.
+	KittyKeyboard int
 }
 
 // ScreenSnapshot is an owned immutable capture of the active terminal
@@ -73,6 +75,7 @@ func (s *Screen) Snapshot() ScreenSnapshot {
 			ColorSchemeMode:    s.ColorSchemeMode(),
 			MouseTracking:      mouseTracking,
 			MouseSGR:           mouseSGR,
+			KittyKeyboard:      s.KittyKeyboardFlags(),
 		},
 		title:    s.TerminalTitle(),
 		graphics: s.GraphicsSnapshot(),
