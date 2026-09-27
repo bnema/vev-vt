@@ -156,7 +156,9 @@ func (s *Screen) applyCSI(params string, cmd byte) {
 	case 'u':
 		if params == "" {
 			s.restoreCursor()
+			return
 		}
+		s.applyKittyKeyboard(params)
 	case 'h':
 		s.setMode(private, parts, true)
 	case 'l':

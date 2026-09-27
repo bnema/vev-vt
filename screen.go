@@ -91,6 +91,7 @@ type Screen struct {
 	mouseMode             int
 	mouseSGR              bool
 	bracketedPaste        bool
+	kittyKeyboard         kittyKeyboardStack
 	originMode            bool
 	insertMode            bool
 	autoWrapMode          bool

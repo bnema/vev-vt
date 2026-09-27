@@ -17,6 +17,7 @@ type screenState struct {
 	kittyPendingDisplay *kittygraphics.Controls
 	originMode          bool
 	insertMode          bool
+	kittyKeyboard       kittyKeyboardStack
 }
 
 // SyncUpdateActive reports whether DEC private mode 2026 (synchronized update)
@@ -118,6 +119,7 @@ func (s *Screen) reset() {
 	s.mouseMode = 0
 	s.mouseSGR = false
 	s.bracketedPaste = false
+	s.kittyKeyboard = nil
 	s.colorSchemeMode = false
 	s.resetScrollRegion()
 	s.fullRedraw()
@@ -225,7 +227,10 @@ func (s *Screen) enterAlternateScreen() {
 			kittyPendingDisplay: s.kittyPendingDisplay,
 			originMode:          s.originMode,
 			insertMode:          s.insertMode,
+			kittyKeyboard:       s.kittyKeyboard,
 		}
+		// The main and alternate screens keep independent keyboard stacks.
+		s.kittyKeyboard = nil
 	}
 	s.graphics = nil
 	s.kittyPendingDisplay = nil
@@ -255,6 +260,7 @@ func (s *Screen) exitAlternateScreen() {
 	s.kittyPendingDisplay = state.kittyPendingDisplay
 	s.originMode = state.originMode
 	s.insertMode = state.insertMode
+	s.kittyKeyboard = state.kittyKeyboard
 	s.alternate = nil
 	s.fullRedraw()
 }
