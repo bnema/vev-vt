@@ -177,3 +177,5 @@ Go packages retain the module's standard-library-only dependency boundary apart
 from `vev-vt/core`.
 
 [Storage benchmarks and design decisions →](docs/storage-optimization.md)
+
+[Measuring and profiling performance changes →](docs/performance.md)
