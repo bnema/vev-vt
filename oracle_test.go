@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"flag"
 	"fmt"
 	"hash"
@@ -99,10 +100,8 @@ func (o *oracleRun) emit(concern, format string, args ...any) {
 	h.Write([]byte(line))
 	h.Write([]byte{'\n'})
 	if o.dump != nil {
-		o.dump.WriteString(concern)
-		o.dump.WriteString(": ")
-		o.dump.WriteString(line)
-		o.dump.WriteByte('\n')
+		// bufio.Writer keeps the first error; the deferred Flush reports it.
+		_, _ = fmt.Fprintf(o.dump, "%s: %s\n", concern, line)
 	}
 }
 
@@ -529,9 +528,12 @@ func runOracleScenario(t *testing.T, idx int) string {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer f.Close()
 		o.dump = bufio.NewWriter(f)
-		defer o.dump.Flush()
+		defer func() {
+			if err := errors.Join(o.dump.Flush(), f.Close()); err != nil {
+				t.Errorf("write oracle dump: %v", err)
+			}
+		}()
 	}
 	if sc.history != nil {
 		o.screen = vt.NewScreenWithHistory(sc.cols, sc.rows, *sc.history)
