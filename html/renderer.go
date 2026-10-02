@@ -9,10 +9,13 @@ import (
 )
 
 type Renderer struct {
-	limits      Limits
-	generation  uint64
-	pending     *transaction
-	committed   core.Frame
+	limits     Limits
+	generation uint64
+	pending    *transaction
+	committed  core.Frame
+	// spare is a frame page no update or transaction references. Prepare
+	// copies a core.Frame source into it; Commit and Abort hand a page back.
+	spare       core.Frame
 	cursor      Cursor
 	initialized bool
 	// Encoder scratch reused across updates; never referenced by an Update.
@@ -64,26 +67,13 @@ func (r *Renderer) Prepare(source CellSource, damage []core.Damage, reset bool, 
 	if r.pending != nil {
 		return nil, ErrPendingDraw
 	}
-	frame, err := materializeCellSource(source)
+	frame, err := r.materializeCellSource(source)
 	if err != nil {
 		return nil, err
 	}
-	scratch, err := r.validateFrame(frame)
+	update, encoded, err := r.prepareUpdate(frame, damage, reset, &cursor)
 	if err != nil {
-		return nil, err
-	}
-	cursor = normalizeWrapPendingCursor(cursor, frame.Width)
-	if err := validateCursor(cursor, frame.Width, frame.Height); err != nil {
-		return nil, err
-	}
-
-	snapshot := reset || !r.initialized || r.committed.Width != frame.Width || r.committed.Height != frame.Height || damageRequiresSnapshot(damage, frame.Width, frame.Height)
-	update, err := r.buildUpdate(frame, scratch, snapshot, cursor)
-	if err != nil {
-		return nil, err
-	}
-	encoded, err := encodeBoundedUpdate(update, r.limits.MaxGeneratedBytes)
-	if err != nil {
+		r.spare = frame
 		return nil, err
 	}
 
@@ -98,6 +88,27 @@ func (r *Renderer) Prepare(source CellSource, damage []core.Damage, reset bool, 
 	}
 	r.pending = tx
 	return &PreparedDraw{tx: tx}, nil
+}
+
+func (r *Renderer) prepareUpdate(frame core.Frame, damage []core.Damage, reset bool, cursor *Cursor) (Update, []byte, error) {
+	scratch, err := r.validateFrame(frame)
+	if err != nil {
+		return Update{}, nil, err
+	}
+	*cursor = normalizeWrapPendingCursor(*cursor, frame.Width)
+	if err := validateCursor(*cursor, frame.Width, frame.Height); err != nil {
+		return Update{}, nil, err
+	}
+	snapshot := reset || !r.initialized || r.committed.Width != frame.Width || r.committed.Height != frame.Height || damageRequiresSnapshot(damage, frame.Width, frame.Height)
+	update, err := r.buildUpdate(frame, scratch, snapshot, *cursor)
+	if err != nil {
+		return Update{}, nil, err
+	}
+	encoded, err := encodeBoundedUpdate(update, r.limits.MaxGeneratedBytes)
+	if err != nil {
+		return Update{}, nil, err
+	}
+	return update, encoded, nil
 }
 
 // validateFrame checks limits and cell invariants. It returns a one-row
@@ -162,9 +173,10 @@ func (r *Renderer) validateFrame(frame core.Frame) ([]core.Cell, error) {
 	return scratch, nil
 }
 
-// materializeCellSource reads a source into an owned frame. A core.Frame
-// takes the fast clone path; any other source is copied cell by cell.
-func materializeCellSource(source CellSource) (core.Frame, error) {
+// materializeCellSource reads a source into an owned frame. A core.Frame is
+// copied into the renderer's spare page; any other source is copied cell by
+// cell.
+func (r *Renderer) materializeCellSource(source CellSource) (core.Frame, error) {
 	if source == nil {
 		return core.Frame{}, fmt.Errorf("html: nil cell source")
 	}
@@ -173,7 +185,7 @@ func materializeCellSource(source CellSource) (core.Frame, error) {
 		if err := frame.Validate(); err != nil {
 			return core.Frame{}, fmt.Errorf("html: validate frame: %w", err)
 		}
-		return frame.Clone(), nil
+		return r.copyFrame(frame), nil
 	case *core.Frame:
 		if frame == nil {
 			return core.Frame{}, fmt.Errorf("html: nil cell source")
@@ -181,7 +193,7 @@ func materializeCellSource(source CellSource) (core.Frame, error) {
 		if err := frame.Validate(); err != nil {
 			return core.Frame{}, fmt.Errorf("html: validate frame: %w", err)
 		}
-		return frame.Clone(), nil
+		return r.copyFrame(*frame), nil
 	}
 	width, height := source.Columns(), source.Rows()
 	if width <= 0 || height <= 0 {
@@ -194,6 +206,18 @@ func materializeCellSource(source CellSource) (core.Frame, error) {
 		}
 	}
 	return clone, nil
+}
+
+// copyFrame copies a validated frame into the spare page, which the returned
+// frame then owns.
+func (r *Renderer) copyFrame(src core.Frame) core.Frame {
+	frame := r.spare
+	r.spare = core.Frame{}
+	frame.CopyFrom(src)
+	if frame.Width != src.Width || frame.Height != src.Height {
+		return src.Clone()
+	}
+	return frame
 }
 
 // normalizeWrapPendingCursor maps the deferred-wrap one-past-end column
@@ -245,20 +269,6 @@ func readRow(frame core.Frame, y int, buf []core.Cell) []core.Cell {
 	return row
 }
 
-// rowEqualsFrame reports whether row matches logical row y of frame, stopping
-// at the first difference without materializing the frame row.
-func rowEqualsFrame(row []core.Cell, frame core.Frame, y int) bool {
-	if len(row) != frame.Width {
-		return false
-	}
-	for x := range row {
-		if !row[x].Equal(frame.Cell(x, y)) {
-			return false
-		}
-	}
-	return true
-}
-
 func (r *Renderer) buildUpdate(frame core.Frame, scratch []core.Cell, snapshot bool, cursor Cursor) (Update, error) {
 	update := Update{
 		SchemaVersion: UpdateSchemaVersion,
@@ -287,15 +297,15 @@ func (r *Renderer) buildUpdate(frame core.Frame, scratch []core.Cell, snapshot b
 		// Keep scratch for frames up to the common 240x80 size only, so one
 		// huge snapshot does not pin its buffers for the renderer lifetime.
 		const maxRetainedCells = 240 * 80
-		if cap(ends) <= maxRetainedCells && cap(text) <= 4*maxRetainedCells {
+		if cap(ends) <= maxRetainedCells && cap(text) <= 4*maxRetainedCells && cap(rowStarts) <= 80 {
 			r.ends, r.text, r.rowStarts = ends, text, rowStarts
 		}
 	}()
 	for y := range frame.Height {
-		row := readRow(frame, y, scratch)
-		if !snapshot && rowEqualsFrame(row, r.committed, y) {
+		if !snapshot && core.RowsEqualAt(frame, y, r.committed, y) {
 			continue
 		}
+		row := readRow(frame, y, scratch)
 		if len(update.Rows) >= r.limits.MaxRowsPerUpdate {
 			return Update{}, fmt.Errorf("%w: update rows exceed limit %d", ErrLimitExceeded, r.limits.MaxRowsPerUpdate)
 		}
@@ -484,6 +494,7 @@ func (p *PreparedDraw) Commit() error {
 	if tx.generation != r.generation || r.pending != tx {
 		return ErrStaleDraw
 	}
+	r.spare = r.committed
 	r.committed = tx.frame
 	r.cursor = tx.cursor
 	r.initialized = true
@@ -505,6 +516,7 @@ func (p *PreparedDraw) Abort() error {
 	if tx.generation != r.generation || r.pending != tx {
 		return ErrStaleDraw
 	}
+	r.spare = tx.frame
 	r.pending = nil
 	tx.state = transactionAborted
 	return nil
@@ -518,6 +530,7 @@ func (r *Renderer) Reset() {
 	r.generation++
 	r.pending = nil
 	r.committed = core.Frame{}
+	r.spare = core.Frame{}
 	r.cursor = Cursor{}
 	r.initialized = false
 }

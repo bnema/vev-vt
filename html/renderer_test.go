@@ -6,6 +6,7 @@ import (
 	"math/rand"
 	"os"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/bnema/vev-vt/core"
 	"github.com/stretchr/testify/require"
@@ -215,20 +216,54 @@ func TestRendererRunsCoverEveryRowExactly(t *testing.T) {
 		require.NoError(t, err)
 		prepared, err := renderer.Prepare(frame, nil, false, Cursor{})
 		require.NoError(t, err, "iteration %d", iteration)
-		for _, row := range prepared.Update().Rows {
-			column := 0
-			for _, cell := range row.Cells {
-				require.Equal(t, column, cell.Column, "iteration %d row %d", iteration, row.Row)
-				if cell.Width > 2 || len(cell.Text) > 1 && cell.Text[0] < 0x80 {
-					require.Len(t, cell.Text, cell.Width)
-					for i := range len(cell.Text) {
-						require.True(t, cell.Text[i] >= 0x20 && cell.Text[i] < 0x7f, "iteration %d text %q", iteration, cell.Text)
-					}
-				}
-				column += cell.Width
-			}
-			require.Equal(t, width, column, "iteration %d row %d", iteration, row.Row)
+		requireRunsMatchFrame(t, prepared.Update(), frame, iteration)
+
+		// An incremental update after one changed cell decodes the same way,
+		// through the renderer's reused frame page.
+		require.NoError(t, prepared.Commit())
+		y := rng.Intn(height)
+		frame.Set(0, y, core.Cell{Rune: 'Z', Style: styles[1]})
+		if width > 1 && frame.Cell(1, y).Continuation {
+			frame.Set(1, y, core.Cell{Rune: ' '})
 		}
+		prepared, err = renderer.Prepare(frame, nil, false, Cursor{})
+		require.NoError(t, err, "iteration %d", iteration)
+		update := prepared.Update()
+		require.False(t, update.Snapshot)
+		require.Len(t, update.Rows, 1)
+		requireRunsMatchFrame(t, update, frame, iteration)
+	}
+}
+
+// requireRunsMatchFrame expands every entry back into cells and compares
+// each column's text, style and width with the source frame.
+func requireRunsMatchFrame(t *testing.T, update Update, frame core.Frame, iteration int) {
+	t.Helper()
+	for _, row := range update.Rows {
+		column := 0
+		for _, cell := range row.Cells {
+			require.Equal(t, column, cell.Column, "iteration %d row %d", iteration, row.Row)
+			source := frame.Cell(column, row.Row)
+			require.Equal(t, styleFromCore(source.Style), update.Styles[cell.Style], "iteration %d (%d,%d)", iteration, column, row.Row)
+			if r, _ := utf8.DecodeRuneInString(cell.Text); r >= 0x80 {
+				require.Equal(t, string(source.Rune), cell.Text, "iteration %d (%d,%d)", iteration, column, row.Row)
+				require.Equal(t, core.RuneWidth(source.Rune), cell.Width, "iteration %d (%d,%d)", iteration, column, row.Row)
+				column += cell.Width
+				continue
+			}
+			require.Len(t, cell.Text, cell.Width, "iteration %d text %q", iteration, cell.Text)
+			for i := range len(cell.Text) {
+				source := frame.Cell(column+i, row.Row)
+				want := source.Rune
+				if want == 0 {
+					want = ' '
+				}
+				require.Equal(t, string(want), cell.Text[i:i+1], "iteration %d (%d,%d)", iteration, column+i, row.Row)
+				require.Equal(t, styleFromCore(source.Style), update.Styles[cell.Style], "iteration %d (%d,%d)", iteration, column+i, row.Row)
+			}
+			column += cell.Width
+		}
+		require.Equal(t, frame.Width, column, "iteration %d row %d", iteration, row.Row)
 	}
 }
 

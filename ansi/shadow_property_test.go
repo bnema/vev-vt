@@ -35,6 +35,37 @@ func propertyCell(r *rand.Rand) Cell {
 	return c
 }
 
+// propertyWrite writes one random cell at (x, y). Some writes are a wide
+// pair, so span widening runs against the reused shadow buffers. A write that
+// lands on half of an existing pair blanks the other half to keep the frame
+// valid.
+func propertyWrite(r *rand.Rand, frame *Frame, w, h int) {
+	x, y := r.IntN(w), r.IntN(h)
+	clearPair := func(x int) {
+		if x < 0 || x >= w {
+			return
+		}
+		cell := frame.Cell(x, y)
+		if cell.Continuation && x > 0 {
+			frame.Set(x-1, y, Cell{Rune: ' '})
+			frame.Set(x, y, Cell{Rune: ' '})
+		} else if core.RuneWidth(cell.Rune) == 2 && x+1 < w {
+			frame.Set(x, y, Cell{Rune: ' '})
+			frame.Set(x+1, y, Cell{Rune: ' '})
+		}
+	}
+	if r.IntN(4) == 0 && x+1 < w {
+		clearPair(x)
+		clearPair(x + 1)
+		style := propertyStyles[r.IntN(len(propertyStyles))]
+		frame.Set(x, y, Cell{Rune: '界', Style: style})
+		frame.Set(x+1, y, Cell{Continuation: true, Style: style})
+		return
+	}
+	clearPair(x)
+	frame.Set(x, y, propertyCell(r))
+}
+
 func propertyRect(r *rand.Rand, w, h int, kind DamageKind) Damage {
 	d := Damage{Kind: kind, X: r.IntN(w), Y: r.IntN(h)}
 	d.Width = 1 + r.IntN(w-d.X)
@@ -99,7 +130,7 @@ func TestShadowMatchesCloneReference(t *testing.T) {
 					}
 				}
 				for range r.IntN(12) {
-					frame.Set(r.IntN(w), r.IntN(h), propertyCell(r))
+					propertyWrite(r, &frame, w, h)
 				}
 				damage := propertyDamage(r, w, h)
 				reset := r.IntN(15) == 0
@@ -132,7 +163,7 @@ func TestShadowMatchesCloneReference(t *testing.T) {
 				// Caller keeps mutating after Prepare, before Commit.
 				snapshotMutation := r.IntN(3) == 0
 				if snapshotMutation {
-					frame.Set(r.IntN(w), r.IntN(h), propertyCell(r))
+					propertyWrite(r, &frame, w, h)
 				}
 
 				switch k := r.IntN(10); {

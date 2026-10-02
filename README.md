@@ -100,7 +100,9 @@ optional compression during idle time.
 The HTML renderer compares every row with its committed shadow; damage values are
 non-authoritative hints. `Prepare` permits one outstanding draw and requires an
 explicit `Commit` or `Abort`. `Reset` invalidates retained prepared draws.
-Updates are immutable, schema-versioned JSON-compatible values. Complete-row
+Updates are immutable JSON-compatible values at schema version 2; browser
+events share that version, so a host must serve the matching `terminal.js`.
+Complete-row
 replacement preserves wide-cell atomicity, and scroll damage uses a safe
 snapshot fallback. Rows are encoded as text runs: adjacent printable ASCII
 cells with one style form a single entry, while wide and non-ASCII characters
