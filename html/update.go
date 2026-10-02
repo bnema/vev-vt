@@ -84,7 +84,8 @@ type Style struct {
 // either a text run of Width printable ASCII characters (blank cells are
 // spaces) sharing one style, or one non-ASCII character of width 1 or 2.
 // Wide-cell continuation markers are represented by the preceding cell's
-// width.
+// width. Text values of one update may share backing storage, so retaining
+// one keeps that update's text alive.
 type CellUpdate struct {
 	Column int    `json:"column"`
 	Width  int    `json:"width"`

@@ -112,7 +112,9 @@ provides a labeled input proxy, synchronized plain-text accessible output,
 typed CSS themes, IME-aware text input, keys, paste, pointer, wheel, resize, and
 focus events. A synchronous consumer callback decides default prevention.
 `applyAll` validates a queue of updates and merges them before touching the
-DOM, so a consumer that falls behind rebuilds each changed row once.
+DOM, so a consumer that falls behind rebuilds each changed row once. Text runs
+assume a monospace primary font whose ASCII advance is `1ch`, and
+`maxTextBytes` bounds one run, so keep it at least as large as the widest row.
 Consumers remain responsible for transport and mapping events to terminal bytes
 or application actions. Clipboard text is preserved unchanged, including
 control bytes, so consumers forwarding paste events to a PTY must apply their

@@ -308,14 +308,34 @@ test('applyAll coalesces queued updates into the same final DOM as sequential ap
     const rebuilt = [...document.querySelectorAll('.vev-terminal__row')].map((node, index) => node !== nodes[index]);
     terminal.applyAll([queue[0], snapshot, queue[2]]);
     const afterSnapshot = capture().text;
-    let invalid = '';
-    try { terminal.applyAll([queue[0], { ...queue[1], width: 5 }]); } catch (error) { invalid = error.message; }
-    return { sequential, merged, rebuilt, afterSnapshot, invalid, unchanged: capture().text === afterSnapshot };
+    const cursorAt = () => {
+      const node = document.querySelector('.vev-terminal__cursor');
+      return [node.style.top, node.style.left];
+    };
+    const cursorOnly = column => ({ schemaVersion: 2, width: 4, height: 3, snapshot: false, styles: [], rows: [], cursor: { ...cursor(column), row: 2 } });
+    terminal.apply(snapshot);
+    for (const update of [queue[0], cursorOnly(3)]) terminal.apply(update);
+    const cursorSequential = cursorAt();
+    terminal.apply(snapshot);
+    terminal.applyAll([queue[0], cursorOnly(3)]);
+    const cursorMerged = cursorAt();
+    terminal.applyAll([snapshot, cursorOnly(2), cursorOnly(1)]);
+    const cursorAfterSnapshot = cursorAt();
+    const before = capture();
+    const failures = [
+      [{ ...snapshot, width: 5, rows: snapshot.rows.map(r => ({ row: r.row, cells: [{ column: 0, width: 5, text: 'zzzzz', style: 0 }] })) }, queue[0]],
+      [queue[0], { ...cursorOnly(0), width: 5 }, snapshot]
+    ].map(batch => {
+      try { terminal.applyAll(batch); return ''; } catch (error) { return error.message; }
+    });
+    return { sequential, merged, rebuilt, afterSnapshot, cursorSequential, cursorMerged, cursorAfterSnapshot, failures, unchanged: JSON.stringify(capture()) === JSON.stringify(before) };
   });
   expect(result.merged).toEqual(result.sequential);
   expect(result.rebuilt).toEqual([true, true, true]);
   expect(result.afterSnapshot).toBe('A3  \nbbbb\ncccc');
-  expect(result.invalid).not.toBe('');
+  expect(result.cursorMerged).toEqual(result.cursorSequential);
+  expect(result.cursorAfterSnapshot[1]).toContain('1 *');
+  expect(result.failures.every(message => message.includes('dimensions do not match'))).toBe(true);
   expect(result.unchanged).toBe(true);
 });
 

@@ -203,49 +203,56 @@
   }
 
   /**
-   * Merge validated updates into the fewest equivalent ones. Each output
-   * update keeps the geometry, snapshot flag, and cursor semantics of the
-   * sequence it replaces; style ids are remapped to the styles still used.
+   * Merge validated updates into one equivalent update, or return null when
+   * the merged styles would exceed maxStyles (callers then apply in order).
+   * Every incremental update must match the geometry established by the
+   * mounted terminal or the latest snapshot, exactly as sequential apply
+   * requires, so a protocol error is reported before any DOM mutation.
+   * The merged update keeps the latest snapshot flag, geometry and cursor;
+   * rows are last-writer-wins and style ids are remapped.
    */
-  function coalesce(updates, maxStyles) {
-    const groups = [];
+  function coalesce(updates, mounted, maxStyles) {
+    let geometry = mounted;
     for (const update of updates) {
-      const last = groups[groups.length - 1];
-      if (update.snapshot) {
-        groups.length = 0;
-      } else if (last && last.width === update.width && last.height === update.height) {
-        for (const row of update.rows) last.rows.set(row.row, { row, styles: update.styles });
-        last.cursor = update.cursor;
-        continue;
-      }
-      const rows = new Map();
-      for (const row of update.rows) rows.set(row.row, { row, styles: update.styles });
-      groups.push({ width: update.width, height: update.height, snapshot: update.snapshot, cursor: update.cursor, rows, single: update });
+      if (update.snapshot) geometry = { width: update.width, height: update.height };
+      else if (!geometry || update.width !== geometry.width || update.height !== geometry.height) fail('incremental update dimensions do not match the mounted snapshot');
     }
-    return groups.flatMap(group => {
-      if (group.rows.size === group.single.rows.length && [...group.rows.values()].every(entry => entry.styles === group.single.styles)) return [group.single];
-      const styles = [];
-      const ids = new Map();
-      const rows = [...group.rows.keys()].sort((left, right) => left - right).map(key => {
-        const { row, styles: source } = group.rows.get(key);
-        return {
-          row: row.row,
-          bytes: row.bytes,
-          cells: row.cells.map(cell => {
-            const styleKey = JSON.stringify(source[cell.style]);
-            let id = ids.get(styleKey);
-            if (id === undefined) {
-              id = styles.length;
-              ids.set(styleKey, id);
-              styles.push(source[cell.style]);
-            }
-            return { ...cell, style: id };
-          })
-        };
+    if (updates.length === 1) return updates[0];
+    let start = 0;
+    for (let index = 0; index < updates.length; index += 1) if (updates[index].snapshot) start = index;
+    const tail = updates.slice(start);
+    const last = tail[tail.length - 1];
+    const rows = new Map();
+    for (const update of tail) for (const row of update.rows) rows.set(row.row, { row, styles: update.styles });
+    const styles = [];
+    const ids = new Map();
+    const remaps = new Map();
+    const merged = [];
+    for (const key of [...rows.keys()].sort((left, right) => left - right)) {
+      const { row, styles: source } = rows.get(key);
+      let remap = remaps.get(source);
+      if (!remap) {
+        remap = new Array(source.length);
+        remaps.set(source, remap);
+      }
+      const cells = row.cells.map(cell => {
+        let id = remap[cell.style];
+        if (id === undefined) {
+          const styleKey = JSON.stringify(source[cell.style]);
+          id = ids.get(styleKey);
+          if (id === undefined) {
+            id = styles.length;
+            ids.set(styleKey, id);
+            styles.push(source[cell.style]);
+          }
+          remap[cell.style] = id;
+        }
+        return id === cell.style ? cell : { ...cell, style: id };
       });
-      if (styles.length > maxStyles) fail('merged update styles exceed their limit');
-      return [{ schemaVersion: SCHEMA_VERSION, width: group.width, height: group.height, snapshot: group.snapshot, rows, styles, cursor: group.cursor }];
-    });
+      merged.push({ row: row.row, bytes: row.bytes, cells });
+    }
+    if (styles.length > maxStyles) return null;
+    return { schemaVersion: SCHEMA_VERSION, width: last.width, height: last.height, snapshot: tail[0].snapshot, rows: merged, styles, cursor: last.cursor };
   }
 
   function xtermColor(index) {
@@ -470,18 +477,25 @@
     }
 
     /**
-     * Validate a queue of updates, then apply the fewest equivalent updates:
-     * a snapshot supersedes everything before it and consecutive updates of
-     * the same geometry merge, last row wins. A consumer that falls behind
-     * rebuilds each changed row once instead of once per queued update.
+     * Validate a queue of updates and their geometry chain, then apply one
+     * merged update: a snapshot supersedes everything before it and later
+     * rows win. A consumer that falls behind rebuilds each changed row once
+     * instead of once per queued update. Invalid input throws before the DOM
+     * changes.
      * @param {Update[]} values
      */
     function applyAll(values) {
       alive();
       if (!Array.isArray(values)) fail('updates must be an array');
-      for (const update of coalesce(values.map(value => validateUpdate(value, configured)), configured.maxStyles)) {
-        applyValidated(update);
-      }
+      if (values.length === 0) return;
+      const updates = values.map(value => validateUpdate(value, configured));
+      const mounted = rowNodes.length === 0 ? null : { width, height };
+      const merged = coalesce(updates, mounted, configured.maxStyles);
+      if (merged) applyValidated(merged);
+      // Rare: the merged rows need more distinct styles than one update may
+      // carry. Each update is valid on its own and the geometry chain was
+      // checked above, so apply them in order.
+      else for (const update of updates) applyValidated(update);
     }
 
     function applyValidated(update) {

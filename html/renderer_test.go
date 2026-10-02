@@ -3,6 +3,7 @@ package html
 import (
 	"errors"
 	"math"
+	"math/rand"
 	"os"
 	"testing"
 
@@ -156,6 +157,79 @@ func TestRendererMergesASCIICellsIntoStyledTextRuns(t *testing.T) {
 		{Column: 8, Width: 4, Text: "~   ", Style: 0},
 	}, prepared.Update().Rows[0].Cells)
 	require.NoError(t, prepared.Commit())
+}
+
+func TestRendererIncrementalRunsSliceChangedRowsIndependently(t *testing.T) {
+	plain := core.DefaultStyle()
+	frame := core.NewFrame(4, 3)
+	renderer, err := New(Options{})
+	require.NoError(t, err)
+	first, err := renderer.Prepare(frame, nil, false, Cursor{})
+	require.NoError(t, err)
+	require.NoError(t, first.Commit())
+
+	frame.Set(0, 0, core.Cell{Rune: 'a', Style: plain})
+	frame.Set(1, 2, core.Cell{Rune: '界', Style: plain})
+	frame.Set(2, 2, core.Cell{Continuation: true, Style: plain})
+	prepared, err := renderer.Prepare(frame, nil, false, Cursor{})
+	require.NoError(t, err)
+	rows := prepared.Update().Rows
+	require.Len(t, rows, 2)
+	require.Equal(t, RowUpdate{Row: 0, Cells: []CellUpdate{{Column: 0, Width: 4, Text: "a   ", Style: 0}}}, rows[0])
+	require.Equal(t, RowUpdate{Row: 2, Cells: []CellUpdate{
+		{Column: 0, Width: 1, Text: " ", Style: 0},
+		{Column: 1, Width: 2, Text: "界", Style: 0},
+		{Column: 3, Width: 1, Text: " ", Style: 0},
+	}}, rows[1])
+	require.NoError(t, prepared.Commit())
+}
+
+// TestRendererRunsCoverEveryRowExactly checks the run invariants on random
+// frames: entries are contiguous, widths sum to the frame width, and every
+// entry wider than one cell is printable ASCII with one byte per column.
+func TestRendererRunsCoverEveryRowExactly(t *testing.T) {
+	rng := rand.New(rand.NewSource(1))
+	runes := []rune{0, 'a', 'b', ' ', '~', 'é', '✓', '界'}
+	styles := []core.Style{core.DefaultStyle(), func() core.Style { s := core.DefaultStyle(); s.Bold = true; return s }()}
+	for iteration := range 200 {
+		width, height := 1+rng.Intn(20), 1+rng.Intn(4)
+		frame := core.NewFrame(width, height)
+		for y := range height {
+			for x := 0; x < width; x++ {
+				r := runes[rng.Intn(len(runes))]
+				style := styles[rng.Intn(len(styles))]
+				if core.RuneWidth(r) == 2 {
+					if x+1 >= width {
+						r = 'w'
+					} else {
+						frame.Set(x, y, core.Cell{Rune: r, Style: style})
+						frame.Set(x+1, y, core.Cell{Continuation: true, Style: style})
+						x++
+						continue
+					}
+				}
+				frame.Set(x, y, core.Cell{Rune: r, Style: style})
+			}
+		}
+		renderer, err := New(Options{})
+		require.NoError(t, err)
+		prepared, err := renderer.Prepare(frame, nil, false, Cursor{})
+		require.NoError(t, err, "iteration %d", iteration)
+		for _, row := range prepared.Update().Rows {
+			column := 0
+			for _, cell := range row.Cells {
+				require.Equal(t, column, cell.Column, "iteration %d row %d", iteration, row.Row)
+				if cell.Width > 2 || len(cell.Text) > 1 && cell.Text[0] < 0x80 {
+					require.Len(t, cell.Text, cell.Width)
+					for i := range len(cell.Text) {
+						require.True(t, cell.Text[i] >= 0x20 && cell.Text[i] < 0x7f, "iteration %d text %q", iteration, cell.Text)
+					}
+				}
+				column += cell.Width
+			}
+			require.Equal(t, width, column, "iteration %d row %d", iteration, row.Row)
+		}
+	}
 }
 
 func TestRendererAcceptsMaxIntGeneratedBytesLimit(t *testing.T) {

@@ -15,6 +15,10 @@ type Renderer struct {
 	committed   core.Frame
 	cursor      Cursor
 	initialized bool
+	// Encoder scratch reused across updates; never referenced by an Update.
+	ends      []int
+	text      []byte
+	rowStarts []int
 }
 
 // CellSource is the read-only semantic grid consumed by HTML rendering.
@@ -269,12 +273,24 @@ func (r *Renderer) buildUpdate(frame core.Frame, scratch []core.Cell, snapshot b
 	// Every row appends its runs to cells and their text to text; ends[i]
 	// is the text offset after cells[i]. Rows and texts are sliced out once
 	// at the end, so an update costs one cell slice and one string.
-	var (
-		cells     []CellUpdate
-		ends      []int
-		text      []byte
-		rowStarts []int
-	)
+	// cells is owned by the update and sized for one full row (an
+	// incremental update usually changes one or a few rows). The other
+	// buffers are renderer scratch: the text is copied into one string.
+	cells := make([]CellUpdate, 0, frame.Width)
+	ends, text, rowStarts := r.ends[:0], r.text[:0], r.rowStarts[:0]
+	if cap(ends) < frame.Width {
+		ends = make([]int, 0, frame.Width)
+		text = make([]byte, 0, frame.Width)
+		rowStarts = make([]int, 0, 4)
+	}
+	defer func() {
+		// Keep scratch for frames up to the common 240x80 size only, so one
+		// huge snapshot does not pin its buffers for the renderer lifetime.
+		const maxRetainedCells = 240 * 80
+		if cap(ends) <= maxRetainedCells && cap(text) <= 4*maxRetainedCells {
+			r.ends, r.text, r.rowStarts = ends, text, rowStarts
+		}
+	}()
 	for y := range frame.Height {
 		row := readRow(frame, y, scratch)
 		if !snapshot && rowEqualsFrame(row, r.committed, y) {
