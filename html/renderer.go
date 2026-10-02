@@ -1,7 +1,6 @@
 package html
 
 import (
-	"encoding/json"
 	"fmt"
 	"math"
 	"unicode/utf8"
@@ -65,7 +64,8 @@ func (r *Renderer) Prepare(source CellSource, damage []core.Damage, reset bool, 
 	if err != nil {
 		return nil, err
 	}
-	if err := r.validateFrame(frame); err != nil {
+	scratch, err := r.validateFrame(frame)
+	if err != nil {
 		return nil, err
 	}
 	cursor = normalizeWrapPendingCursor(cursor, frame.Width)
@@ -74,8 +74,7 @@ func (r *Renderer) Prepare(source CellSource, damage []core.Damage, reset bool, 
 	}
 
 	snapshot := reset || !r.initialized || r.committed.Width != frame.Width || r.committed.Height != frame.Height || damageRequiresSnapshot(damage, frame.Width, frame.Height)
-	candidate := frame.Clone()
-	update, err := r.buildUpdate(candidate, snapshot, cursor)
+	update, err := r.buildUpdate(frame, scratch, snapshot, cursor)
 	if err != nil {
 		return nil, err
 	}
@@ -90,46 +89,49 @@ func (r *Renderer) Prepare(source CellSource, damage []core.Damage, reset bool, 
 		state:      transactionPending,
 		update:     update,
 		json:       encoded,
-		frame:      candidate,
+		frame:      frame,
 		cursor:     cursor,
 	}
 	r.pending = tx
 	return &PreparedDraw{tx: tx}, nil
 }
 
-func (r *Renderer) validateFrame(frame core.Frame) error {
+// validateFrame checks limits and cell invariants. It returns a one-row
+// scratch buffer that the caller may reuse for the rest of this Prepare.
+func (r *Renderer) validateFrame(frame core.Frame) ([]core.Cell, error) {
 	if frame.Width <= 0 || frame.Height <= 0 {
-		return fmt.Errorf("html: invalid frame size %dx%d", frame.Width, frame.Height)
+		return nil, fmt.Errorf("html: invalid frame size %dx%d", frame.Width, frame.Height)
 	}
 	if frame.Width > math.MaxInt/frame.Height {
-		return fmt.Errorf("%w: frame cell count overflows int", ErrLimitExceeded)
+		return nil, fmt.Errorf("%w: frame cell count overflows int", ErrLimitExceeded)
 	}
 	cells := frame.Width * frame.Height
 	if cells > r.limits.MaxCells {
-		return fmt.Errorf("%w: frame has %d cells, limit is %d", ErrLimitExceeded, cells, r.limits.MaxCells)
+		return nil, fmt.Errorf("%w: frame has %d cells, limit is %d", ErrLimitExceeded, cells, r.limits.MaxCells)
 	}
 	if frame.Height > r.limits.MaxRowsPerUpdate {
-		return fmt.Errorf("%w: frame has %d rows, limit is %d", ErrLimitExceeded, frame.Height, r.limits.MaxRowsPerUpdate)
+		return nil, fmt.Errorf("%w: frame has %d rows, limit is %d", ErrLimitExceeded, frame.Height, r.limits.MaxRowsPerUpdate)
 	}
 	if err := frame.Validate(); err != nil {
-		return fmt.Errorf("html: validate frame: %w", err)
+		return nil, fmt.Errorf("html: validate frame: %w", err)
 	}
+	scratch := make([]core.Cell, frame.Width)
 	for y := range frame.Height {
-		row := frame.Row(y)
+		row := readRow(frame, y, scratch)
 		for x := 0; x < frame.Width; x++ {
 			cell := row[x]
 			if err := validateCoreStyle(cell.Style); err != nil {
-				return fmt.Errorf("html: cell (%d,%d): %w", x, y, err)
+				return nil, fmt.Errorf("html: cell (%d,%d): %w", x, y, err)
 			}
 			if cell.Continuation {
 				if cell.Rune != 0 {
-					return fmt.Errorf("html: cell (%d,%d): wide continuation contains a rune", x, y)
+					return nil, fmt.Errorf("html: cell (%d,%d): wide continuation contains a rune", x, y)
 				}
 				if x == 0 || row[x-1].Continuation || core.RuneWidth(row[x-1].Rune) != 2 {
-					return fmt.Errorf("html: cell (%d,%d): orphan wide continuation", x, y)
+					return nil, fmt.Errorf("html: cell (%d,%d): orphan wide continuation", x, y)
 				}
 				if !cell.Style.Equal(row[x-1].Style) {
-					return fmt.Errorf("html: cell (%d,%d): wide continuation style differs from its head", x, y)
+					return nil, fmt.Errorf("html: cell (%d,%d): wide continuation style differs from its head", x, y)
 				}
 				continue
 			}
@@ -137,23 +139,23 @@ func (r *Renderer) validateFrame(frame core.Frame) error {
 				continue
 			}
 			if !utf8.ValidRune(cell.Rune) {
-				return fmt.Errorf("html: cell (%d,%d): invalid Unicode scalar", x, y)
+				return nil, fmt.Errorf("html: cell (%d,%d): invalid Unicode scalar", x, y)
 			}
 			width := core.RuneWidth(cell.Rune)
 			switch width {
 			case 1:
 			case 2:
 				if x+1 >= frame.Width || !row[x+1].Continuation {
-					return fmt.Errorf("html: cell (%d,%d): wide rune lacks continuation", x, y)
+					return nil, fmt.Errorf("html: cell (%d,%d): wide rune lacks continuation", x, y)
 				}
 			case 0:
-				return fmt.Errorf("html: cell (%d,%d): unsupported zero-width rune", x, y)
+				return nil, fmt.Errorf("html: cell (%d,%d): unsupported zero-width rune", x, y)
 			default:
-				return fmt.Errorf("html: cell (%d,%d): unsupported rune width %d", x, y, width)
+				return nil, fmt.Errorf("html: cell (%d,%d): unsupported rune width %d", x, y, width)
 			}
 		}
 	}
-	return nil
+	return scratch, nil
 }
 
 // materializeCellSource reads a source into an owned frame. A core.Frame
@@ -229,7 +231,31 @@ func damageRequiresSnapshot(damage []core.Damage, width, height int) bool {
 	return false
 }
 
-func (r *Renderer) buildUpdate(frame core.Frame, snapshot bool, cursor Cursor) (Update, error) {
+// readRow copies logical row y into buf and returns the filled prefix. It is
+// the allocation-free equivalent of core.Frame.Row.
+func readRow(frame core.Frame, y int, buf []core.Cell) []core.Cell {
+	row := buf[:frame.Width]
+	for x := range row {
+		row[x] = frame.Cell(x, y)
+	}
+	return row
+}
+
+// rowEqualsFrame reports whether row matches logical row y of frame, stopping
+// at the first difference without materializing the frame row.
+func rowEqualsFrame(row []core.Cell, frame core.Frame, y int) bool {
+	if len(row) != frame.Width {
+		return false
+	}
+	for x := range row {
+		if !row[x].Equal(frame.Cell(x, y)) {
+			return false
+		}
+	}
+	return true
+}
+
+func (r *Renderer) buildUpdate(frame core.Frame, scratch []core.Cell, snapshot bool, cursor Cursor) (Update, error) {
 	update := Update{
 		SchemaVersion: UpdateSchemaVersion,
 		Width:         frame.Width,
@@ -241,26 +267,27 @@ func (r *Renderer) buildUpdate(frame core.Frame, snapshot bool, cursor Cursor) (
 	}
 	styleIDs := make(map[Style]int)
 	for y := range frame.Height {
-		if !snapshot && rowsEqual(frame.Row(y), r.committed.Row(y)) {
+		row := readRow(frame, y, scratch)
+		if !snapshot && rowEqualsFrame(row, r.committed, y) {
 			continue
 		}
 		if len(update.Rows) >= r.limits.MaxRowsPerUpdate {
 			return Update{}, fmt.Errorf("%w: update rows exceed limit %d", ErrLimitExceeded, r.limits.MaxRowsPerUpdate)
 		}
-		row, err := encodeRow(y, frame.Row(y), &update.Styles, styleIDs, r.limits.MaxStyles)
+		encoded, err := encodeRow(y, row, &update.Styles, styleIDs, r.limits.MaxStyles)
 		if err != nil {
 			return Update{}, err
 		}
-		update.Rows = append(update.Rows, row)
+		update.Rows = append(update.Rows, encoded)
 	}
 	return update, nil
 }
 
-// encodeBoundedUpdate marshals one update and enforces MaxGeneratedBytes on
+// encodeBoundedUpdate encodes one update and enforces MaxGeneratedBytes on
 // the exact encoded size. The previous conservative estimate could reject
 // compact updates well below the configured limit.
 func encodeBoundedUpdate(update Update, limit int) ([]byte, error) {
-	encoded, err := json.Marshal(update)
+	encoded, err := appendUpdateJSON(make([]byte, 0, estimateUpdateJSONSize(update)), update)
 	if err != nil {
 		return nil, fmt.Errorf("html: encode update: %w", err)
 	}
@@ -270,17 +297,11 @@ func encodeBoundedUpdate(update Update, limit int) ([]byte, error) {
 	return encoded, nil
 }
 
-func rowsEqual(left, right []core.Cell) bool {
-	if len(left) != len(right) {
-		return false
-	}
-	for i := range left {
-		if !left[i].Equal(right[i]) {
-			return false
-		}
-	}
-	return true
-}
+// asciiText holds every ASCII byte so single-byte cell text can be sliced out
+// of it instead of allocating a new string per cell.
+const asciiText = "\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f" +
+	"\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f" +
+	" !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~\x7f"
 
 func encodeRow(y int, cells []core.Cell, styles *[]Style, styleIDs map[Style]int, maxStyles int) (RowUpdate, error) {
 	row := RowUpdate{Row: y, Cells: make([]CellUpdate, 0, len(cells))}
@@ -300,10 +321,15 @@ func encodeRow(y int, cells []core.Cell, styles *[]Style, styleIDs map[Style]int
 			*styles = append(*styles, style)
 		}
 		width := core.RuneWidth(cell.Rune)
-		text := string(cell.Rune)
-		if cell.Rune == 0 {
+		var text string
+		switch {
+		case cell.Rune == 0:
 			width = 1
 			text = " "
+		case cell.Rune < utf8.RuneSelf:
+			text = asciiText[cell.Rune : cell.Rune+1] // no allocation
+		default:
+			text = string(cell.Rune)
 		}
 		row.Cells = append(row.Cells, CellUpdate{Column: x, Width: width, Text: text, Style: styleID})
 	}
