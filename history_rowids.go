@@ -17,6 +17,9 @@ type rowIDSet struct {
 	scratch []RowID
 }
 
+// begin discards any IDs collected but not committed and reserves room for n.
+func (s *rowIDSet) begin(n int) { s.scratch = slices.Grow(s.scratch[:0], n) }
+
 // reserve makes room for n more collected IDs.
 func (s *rowIDSet) reserve(n int) { s.scratch = slices.Grow(s.scratch, n) }
 

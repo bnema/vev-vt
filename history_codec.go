@@ -280,7 +280,7 @@ func parseHistory(data []byte, populate bool) (HistoryView, historyDecodeStats, 
 			return invalid()
 		}
 		usedPayloads := make([]bool, npayloads)
-		seenIDs.reserve(int(rows))
+		seenIDs.begin(int(rows))
 		rowIDs := make([]RowID, rows)
 		bounds := make([]LineBound, rows)
 		for row := range rows {

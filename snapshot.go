@@ -179,6 +179,7 @@ func validateRestoredHistoryView(view HistoryView, seen *rowIDSet) bool {
 		return false
 	}
 	var maxID RowID
+	seen.begin(0)
 	for _, chunk := range view.chunks {
 		if chunk == nil || chunk.len() != len(chunk.rowIDs) || chunk.len() != len(chunk.bounds) {
 			return false

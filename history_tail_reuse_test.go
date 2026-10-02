@@ -74,11 +74,11 @@ func TestHistoryTailStorageIsRecycledAcrossSeals(t *testing.T) {
 	require.Empty(t, h.tail)
 	require.Zero(t, len(h.tailCells))
 	require.NotZero(t, cap(h.tailCells), "seal must keep tail storage for the next chunk")
-	first := h.tailCells[:1][0:1]
+	first := &h.tailCells[:1][0]
 	for i := 4; i < 8; i++ {
 		require.NoError(t, h.Append(historyRow(fmt.Sprintf("r%03d", i)), LineBound{End: 4}))
 	}
-	require.Same(t, &first[0], &h.tailCells[:1][0], "storage reallocated across seals")
+	require.Same(t, first, &h.tailCells[:1][0], "storage reallocated across seals")
 	// A reused backing array must not pin payload strings of sealed rows.
 	payload, err := renderer.NewCellPayload("é\u0301", "https://example.test")
 	require.NoError(t, err)
@@ -93,40 +93,125 @@ func TestHistoryTailStorageIsRecycledAcrossSeals(t *testing.T) {
 	require.NoError(t, h.chunks[len(h.chunks)-1].CheckInvariants())
 }
 
-// Accounting after style/payload set reuse must match a history that has never
-// sealed anything.
+// Eviction from a partial tail must not leave the evicted rows' payload
+// strings pinned in the recycled backing array's prefix.
+func TestHistoryTailEvictionClearsEvictedPrefix(t *testing.T) {
+	payload, err := renderer.NewCellPayload("é\u0301", "https://example.test")
+	require.NoError(t, err)
+	rowFor := func(i int) []renderer.Cell {
+		row := historyRow("abcd")
+		row[i%4].Payload = payload
+		return row
+	}
+	// The byte budget evicts from the tail (ChunkRows is large, so it never
+	// seals); the 400-cell preallocation leaves room for many evictions in
+	// one backing array before it would be reallocated.
+	h := NewHistory(HistoryConfig{MaxRows: 100, MaxBytes: 1500, ChunkRows: 100})
+	require.NoError(t, h.Append(rowFor(0), LineBound{End: 4}))
+	orig := h.tailCells[:cap(h.tailCells)] // full original backing array
+	evicted := 0
+	for i := 1; i < 40 && len(h.chunks) == 0; i++ {
+		before := h.Len()
+		require.NoError(t, h.Append(rowFor(i), LineBound{End: 4}))
+		if cap(h.tailCells) > len(orig) || len(h.tailCells) == 0 {
+			break
+		}
+		liveStart := len(orig) - cap(h.tailCells)
+		if &orig[liveStart] != &h.tailCells[:1][0] {
+			break // storage was reallocated; the old array is no longer ours
+		}
+		if h.Len() <= before {
+			evicted++
+		}
+		liveEnd := liveStart + len(h.tailCells)
+		for j, c := range orig {
+			if j < liveStart || j >= liveEnd {
+				require.True(t, c.Payload.Empty(), "cell %d outside live window [%d,%d) pins payload", j, liveStart, liveEnd)
+			}
+		}
+	}
+	require.GreaterOrEqual(t, evicted, 2, "test did not exercise tail eviction")
+}
+
+// checkHistoryAccounting compares the incrementally maintained LogicalBytes
+// with (1) the sum of the live chunks' own metadata and (2) an independent
+// recomputation: every live chunk is rebuilt from its decoded rows with a
+// fresh newHistoryChunks call (no recycled scratch state). Logical bytes depend
+// on the page layout, so the reference keeps each chunk's boundaries.
+func checkHistoryAccounting(t *testing.T, h *History) {
+	t.Helper()
+	view := h.View()
+	require.Equal(t, historyChunksLogicalBytes(view.chunks), h.LogicalBytes(), "rows=%d", h.Len())
+	require.Equal(t, h.Len(), view.Len())
+	var rebuilt uint64
+	for _, c := range view.chunks {
+		rows := make([][]renderer.Cell, c.len())
+		for i := range rows {
+			rows[i] = c.row(i)
+		}
+		rebuilt += historyChunksLogicalBytes(newHistoryChunks(rows, c.bounds, c.rowIDs))
+	}
+	require.Equal(t, rebuilt, h.LogicalBytes(), "independent rebuild rows=%d", h.Len())
+}
+
+// Accounting must stay exact after seals recycle the style and payload sets,
+// through eviction, SetLimits shrinking, payload rows, width changes and pages
+// with more than maxRetainedStyleScratch distinct styles.
 func TestHistoryLogicalBytesIndependentOfSetReuse(t *testing.T) {
 	payload, err := renderer.NewCellPayload("x", "https://example.test")
 	require.NoError(t, err)
-	rows := make([][]renderer.Cell, 40)
-	for i := range rows {
-		rows[i] = styledRow("abcd", i%7+1)
-		if i%3 == 0 {
-			rows[i][1].Payload = payload
+	payload2, err := renderer.NewCellPayload("y", "")
+	require.NoError(t, err)
+	manyStyles := func(i int) []renderer.Cell { // 1100 distinct styles in one row
+		row := make([]renderer.Cell, 1100)
+		for x := range row {
+			row[x] = renderer.Cell{Rune: 'z', Style: renderer.Style{HasForegroundRGB: true, ForegroundRGB: renderer.RGB{R: uint8(x), G: uint8(x >> 8), B: uint8(i)}}}
 		}
+		return row
 	}
-	reused := NewHistory(HistoryConfig{MaxRows: 100, MaxBytes: 1 << 20, ChunkRows: 5})
-	whole := NewHistory(HistoryConfig{MaxRows: 100, MaxBytes: 1 << 20, ChunkRows: 100})
-	for _, row := range rows {
-		require.NoError(t, reused.Append(row, LineBound{End: 4}))
-		require.NoError(t, whole.Append(row, LineBound{End: 4}))
+	rowFor := func(i int) []renderer.Cell {
+		switch {
+		case i%11 == 5:
+			return manyStyles(i)
+		case i%4 == 0:
+			row := styledRow("abcd", i%7+1)
+			row[1].Payload = payload
+			row[2].Payload = payload2
+			return row
+		case i%3 == 0:
+			return styledRow("abcdef", i%5+1) // width change forces a new page
+		}
+		return styledRow("abcd", i%7+1)
 	}
-	// Re-encode each retained chunk from scratch and compare accounting.
-	var fresh uint64
-	for _, c := range reused.View().chunks {
-		rebuilt := newHistoryChunks(c.rowsForTest(), c.bounds, c.rowIDs)
-		fresh += historyChunksLogicalBytes(rebuilt)
+	for _, tc := range []struct {
+		name string
+		cfg  HistoryConfig
+	}{
+		{"non-divisible chunks", HistoryConfig{MaxRows: 200, MaxBytes: 1 << 30, ChunkRows: 7}},
+		{"row eviction", HistoryConfig{MaxRows: 9, MaxBytes: 1 << 30, ChunkRows: 4}},
+		{"byte eviction", HistoryConfig{MaxRows: 200, MaxBytes: 30 << 10, ChunkRows: 5}},
+		{"tiny bytes", HistoryConfig{MaxRows: 200, MaxBytes: 1500, ChunkRows: 3}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := NewHistory(tc.cfg)
+			appendAt := func(i int) {
+				row := rowFor(i)
+				if err := h.Append(row, LineBound{End: len(row)}); err != nil {
+					require.ErrorIs(t, err, ErrHistoryRowTooLarge)
+				}
+				checkHistoryAccounting(t, h)
+			}
+			for i := range 60 {
+				appendAt(i)
+			}
+			shrunk := HistoryConfig{MaxRows: 5, MaxBytes: tc.cfg.MaxBytes, ChunkRows: 2}
+			require.NoError(t, h.SetLimits(shrunk))
+			checkHistoryAccounting(t, h)
+			for i := 60; i < 75; i++ {
+				appendAt(i)
+			}
+		})
 	}
-	require.Equal(t, fresh, reused.LogicalBytes())
-	require.Equal(t, rangeTexts(t, whole.View()), rangeTexts(t, reused.View()))
-}
-
-func (c *HistoryChunk) rowsForTest() [][]renderer.Cell {
-	rows := make([][]renderer.Cell, c.len())
-	for i := range rows {
-		rows[i] = c.row(i)
-	}
-	return rows
 }
 
 // rowIDSet must accept and reject exactly what a plain map would, including
@@ -191,4 +276,39 @@ func TestRestoreAcceptsOutOfOrderDistinctRowIDsAcrossBlobs(t *testing.T) {
 	require.Error(t, err)
 	_, err = HistoryFromBlobs(HistoryConfig{MaxRows: 16, ChunkRows: 2}, [][]byte{sealed[1], sealed[0], sealed[1]}, tail)
 	require.Error(t, err)
+}
+
+// A chunk with more than maxRetainedStyleScratch styles must not leave its
+// large scratch map pinned, whether it is the last or an earlier chunk.
+func TestHistoryStyleScratchDroppedAfterHighCardinalityChunk(t *testing.T) {
+	row := make([]renderer.Cell, 1100)
+	for x := range row {
+		row[x] = renderer.Cell{Rune: 'z', Style: renderer.Style{HasForegroundRGB: true, ForegroundRGB: renderer.RGB{R: uint8(x), G: uint8(x >> 8), B: 1}}}
+	}
+	h := NewHistory(HistoryConfig{MaxRows: 100, MaxBytes: 1 << 30, ChunkRows: 4})
+	for range 4 { // seals one high-cardinality chunk
+		require.NoError(t, h.Append(row, LineBound{End: len(row)}))
+	}
+	require.LessOrEqual(t, len(h.styleRowScratch), maxRetainedStyleScratch)
+	require.LessOrEqual(t, len(h.tailPageStyles), maxRetainedStyleScratch+1)
+	for range 3 {
+		require.NoError(t, h.Append(historyRow("abcd"), LineBound{End: 4}))
+	}
+	_ = h.View()
+	require.LessOrEqual(t, len(h.styleRowScratch), maxRetainedStyleScratch)
+}
+
+// Early false returns from validation must not leak collected IDs into a later
+// commit.
+func TestRowIDSetBeginDiscardsUncommittedIDs(t *testing.T) {
+	var set rowIDSet
+	set.begin(0)
+	set.collect(1)
+	set.collect(2) // abandoned without commit, as on an early invalid return
+	set.begin(0)
+	set.collect(2)
+	require.True(t, set.commit())
+	set.begin(0)
+	set.collect(1)
+	require.True(t, set.commit())
 }

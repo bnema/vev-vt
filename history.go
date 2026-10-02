@@ -71,8 +71,20 @@ func newHistoryChunks(rows [][]renderer.Cell, bounds []LineBound, rowIDs []RowID
 const maxRetainedStyleScratch = 1024
 
 // newHistoryChunksScratch is newHistoryChunks with an optional caller-owned
-// map reused (cleared) across chunks instead of allocating one per chunk.
-func newHistoryChunksScratch(rows [][]renderer.Cell, bounds []LineBound, rowIDs []RowID, lastStyleRow map[renderer.Style]int) []*HistoryChunk {
+// map (scratch may be nil) reused, cleared, across chunks instead of allocating
+// one per chunk. The map is replaced before any reuse if the previous chunk
+// grew it past maxRetainedStyleScratch, and dropped on return if the last one
+// did, so one high-cardinality chunk cannot pin a large map.
+func newHistoryChunksScratch(rows [][]renderer.Cell, bounds []LineBound, rowIDs []RowID, scratch *map[renderer.Style]int) []*HistoryChunk {
+	var local map[renderer.Style]int
+	if scratch == nil {
+		scratch = &local
+	}
+	defer func() {
+		if len(*scratch) > maxRetainedStyleScratch {
+			*scratch = nil
+		}
+	}()
 	bounds = growBounds(bounds, len(rows))
 	rowIDs = growRowIDs(rowIDs, len(rows))
 	var chunks []*HistoryChunk
@@ -84,11 +96,12 @@ func newHistoryChunksScratch(rows [][]renderer.Cell, bounds []LineBound, rowIDs 
 			end++
 		}
 		frame := renderer.NewFrame(width, end-start)
-		if lastStyleRow == nil {
-			lastStyleRow = make(map[renderer.Style]int)
+		if *scratch == nil || len(*scratch) > maxRetainedStyleScratch {
+			*scratch = make(map[renderer.Style]int)
 		} else {
-			clear(lastStyleRow)
+			clear(*scratch)
 		}
+		lastStyleRow := *scratch
 		defaultStyle := renderer.DefaultStyle()
 		for i := start; i < end; i++ {
 			frame.WriteRow(i-start, 0, rows[i])
@@ -555,6 +568,13 @@ func (h *History) sealTail() {
 	h.tailBytes = 0
 	h.tailPageWidth = 0
 	h.tailPageRows = 0
+	// Sets are cleared lazily by the next page; release oversized ones now.
+	if len(h.tailPageStyles) > maxRetainedStyleScratch {
+		h.tailPageStyles = nil
+	}
+	if len(h.tailPagePayloads) > maxRetainedStyleScratch {
+		h.tailPagePayloads = nil
+	}
 }
 
 // evictFor discards oldest rows until row can fit both retention budgets.
@@ -601,6 +621,9 @@ func (h *History) evictOldest() {
 	h.cells -= len(row)
 	h.tail[0] = nil
 	h.tail = h.tail[1:]
+	// The evicted prefix stays in the recycled backing array; clear it so its
+	// payload strings are not pinned until the next seal.
+	clear(row)
 	h.tailCells = h.tailCells[len(row):]
 	h.tailBounds = growBounds(h.tailBounds, len(h.tail)+1)[1:]
 	h.tailIDs = growRowIDs(h.tailIDs, len(h.tail)+1)[1:]
@@ -618,13 +641,7 @@ func (h *History) SealAndView() HistoryView {
 
 func (h *History) tailViewChunks() []*HistoryChunk {
 	if h.cachedTail == nil && len(h.tail) > 0 {
-		if len(h.styleRowScratch) > maxRetainedStyleScratch {
-			h.styleRowScratch = nil
-		}
-		if h.styleRowScratch == nil {
-			h.styleRowScratch = make(map[renderer.Style]int)
-		}
-		h.cachedTail = newHistoryChunksScratch(h.tail, h.tailBounds, h.tailIDs, h.styleRowScratch)
+		h.cachedTail = newHistoryChunksScratch(h.tail, h.tailBounds, h.tailIDs, &h.styleRowScratch)
 	}
 	return h.cachedTail
 }
