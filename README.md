@@ -102,13 +102,17 @@ non-authoritative hints. `Prepare` permits one outstanding draw and requires an
 explicit `Commit` or `Abort`. `Reset` invalidates retained prepared draws.
 Updates are immutable, schema-versioned JSON-compatible values. Complete-row
 replacement preserves wide-cell atomicity, and scroll damage uses a safe
-snapshot fallback. `html.DefaultLimits()` documents the default 1,000,000-cell,
+snapshot fallback. Rows are encoded as text runs: adjacent printable ASCII
+cells with one style form a single entry, while wide and non-ASCII characters
+stay single entries so column alignment never depends on fallback fonts. `html.DefaultLimits()` documents the default 1,000,000-cell,
 10,000-row, 64 MiB generated-update, and 65,536-style bounds.
 
 The browser adapter builds DOM nodes with `textContent` and fixed classes. It
 provides a labeled input proxy, synchronized plain-text accessible output,
 typed CSS themes, IME-aware text input, keys, paste, pointer, wheel, resize, and
 focus events. A synchronous consumer callback decides default prevention.
+`applyAll` validates a queue of updates and merges them before touching the
+DOM, so a consumer that falls behind rebuilds each changed row once.
 Consumers remain responsible for transport and mapping events to terminal bytes
 or application actions. Clipboard text is preserved unchanged, including
 control bytes, so consumers forwarding paste events to a PTY must apply their

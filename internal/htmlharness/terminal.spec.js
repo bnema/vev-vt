@@ -81,7 +81,7 @@ test('default colors inherit without redundant per-cell properties', async ({ pa
 test('plain spaces retain grid boxes without per-cell clipping', async ({ page }) => {
   await mount(page);
   await page.evaluate(() => terminal.apply({
-    schemaVersion: 1, width: 5, height: 1, snapshot: true,
+    schemaVersion: 2, width: 5, height: 1, snapshot: true,
     styles: [
       { foreground: {kind:0}, background: {kind:0}, underlineColor: {kind:0} },
       { foreground: {kind:0}, background: {kind:0}, underlineColor: {kind:0}, underline:true }
@@ -109,7 +109,7 @@ test('keeps wide blanks separate from adjacent space runs', async ({ page }) => 
   await mount(page);
   const geometry = await page.evaluate(() => {
     terminal.apply({
-      schemaVersion: 1, width: 4, height: 1, snapshot: true,
+      schemaVersion: 2, width: 4, height: 1, snapshot: true,
       styles: [{ foreground: {kind:0}, background: {kind:0}, underlineColor: {kind:0} }],
       rows: [{row:0, cells:[
         {column:0,width:1,text:' ',style:0},
@@ -134,7 +134,7 @@ test('applies typed rows without interpreting terminal text as markup', async ({
   await mount(page);
   const hostile = '<img src=x onerror="globalThis.injected=true">';
   const update = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     width: 3,
     height: 1,
     snapshot: true,
@@ -167,7 +167,7 @@ test('keeps explicit terminal columns under fallback fonts and zoom', async ({ p
     document.body.style.zoom = '125%';
     document.querySelector('#terminal').style.fontFamily = 'serif';
     terminal.apply({
-      schemaVersion: 1, width: 4, height: 1, snapshot: true,
+      schemaVersion: 2, width: 4, height: 1, snapshot: true,
       styles: [{
         bold: true, italic: true, dim: true, blink: true, strikethrough: true,
         underline: true, underlineStyle: 3,
@@ -195,7 +195,7 @@ test('keeps explicit terminal columns under fallback fonts and zoom', async ({ p
 test('rejects a malformed update before changing the DOM', async ({ page }) => {
   await mount(page);
   const snapshot = {
-    schemaVersion: 1, width: 1, height: 1, snapshot: true,
+    schemaVersion: 2, width: 1, height: 1, snapshot: true,
     styles: [{ foreground: { kind: 0 }, background: { kind: 0 }, underlineColor: { kind: 0 } }],
     rows: [{ row: 0, cells: [{ column: 0, width: 1, text: 'A', style: 0 }] }],
     cursor: { row: 0, column: 0, visible: false, style: 0, styleSet: false }
@@ -214,7 +214,7 @@ test('rejects a malformed update before changing the DOM', async ({ page }) => {
   await expect(page.locator('.vev-terminal__cell')).toHaveText('A');
   const staleVersion = await page.evaluate(value => {
     try {
-      terminal.apply({ ...value, schemaVersion: 2 });
+      terminal.apply({ ...value, schemaVersion: 3 });
       return '';
     } catch (error) {
       return error.message;
@@ -233,13 +233,99 @@ test('rejects a malformed update before changing the DOM', async ({ page }) => {
   expect(duplicateMount).toContain('already owns a terminal');
 });
 
+test('renders ASCII text runs on the column grid and rejects mismatched runs', async ({ page }) => {
+  await mount(page);
+  const result = await page.evaluate(() => {
+    const plain = { foreground: { kind: 0 }, background: { kind: 0 }, underlineColor: { kind: 0 } };
+    const bold = { ...plain, bold: true };
+    terminal.apply({
+      schemaVersion: 2, width: 12, height: 1, snapshot: true, styles: [plain, bold],
+      rows: [{ row: 0, cells: [
+        { column: 0, width: 5, text: 'hello', style: 0 },
+        { column: 5, width: 2, text: '界', style: 0 },
+        { column: 7, width: 3, text: 'ab ', style: 1 },
+        { column: 10, width: 2, text: '  ', style: 0 }
+      ] }],
+      cursor: { row: 0, column: 0, visible: false, style: 0, styleSet: false }
+    });
+    const cells = [...document.querySelectorAll('.vev-terminal__cell')];
+    const unit = cells[0].getBoundingClientRect().width / 5;
+    const geometry = cells.map(node => {
+      const box = node.getBoundingClientRect();
+      return [Math.round((box.x - cells[0].getBoundingClientRect().x) / unit), Math.round(box.width / unit)];
+    });
+    const reject = cells => {
+      try {
+        terminal.apply({
+          schemaVersion: 2, width: 4, height: 1, snapshot: true, styles: [plain],
+          rows: [{ row: 0, cells }], cursor: { row: 0, column: 0, visible: false, style: 0, styleSet: false }
+        });
+        return '';
+      } catch (error) {
+        return error.message;
+      }
+    };
+    return {
+      texts: cells.map(node => node.textContent),
+      geometry,
+      output: document.querySelector('.vev-terminal__accessible-output').textContent,
+      short: reject([{ column: 0, width: 4, text: 'abc', style: 0 }]),
+      wide: reject([{ column: 0, width: 4, text: '界界', style: 0 }])
+    };
+  });
+  expect(result.texts).toEqual(['hello', '界', 'ab ', '  ']);
+  expect(result.geometry).toEqual([[0, 5], [5, 2], [7, 3], [10, 2]]);
+  expect(result.output).toBe('hello界ab   ');
+  expect(result.short).toContain('text run does not match its width');
+  expect(result.wide).toContain('text run does not match its width');
+});
+
+test('applyAll coalesces queued updates into the same final DOM as sequential apply', async ({ page }) => {
+  await mount(page);
+  const result = await page.evaluate(() => {
+    const plain = { foreground: { kind: 0 }, background: { kind: 0 }, underlineColor: { kind: 0 } };
+    const bold = { ...plain, bold: true };
+    const red = { ...plain, foreground: { kind: 1, index: 1 } };
+    const cursor = column => ({ row: 0, column, visible: true, style: 0, styleSet: false });
+    const row = (index, text, style) => ({ row: index, cells: [{ column: 0, width: 4, text, style }] });
+    const snapshot = { schemaVersion: 2, width: 4, height: 3, snapshot: true, styles: [plain], rows: [row(0, 'aaaa', 0), row(1, 'bbbb', 0), row(2, 'cccc', 0)], cursor: cursor(0) };
+    const queue = [
+      { schemaVersion: 2, width: 4, height: 3, snapshot: false, styles: [bold], rows: [row(1, 'B1  ', 0)], cursor: cursor(1) },
+      { schemaVersion: 2, width: 4, height: 3, snapshot: false, styles: [red, plain], rows: [row(1, 'B2  ', 1), row(2, 'C2  ', 0)], cursor: cursor(2) },
+      { schemaVersion: 2, width: 4, height: 3, snapshot: false, styles: [bold], rows: [row(0, 'A3  ', 0)], cursor: cursor(3) }
+    ];
+    const capture = () => ({
+      html: document.querySelector('.vev-terminal__viewport').innerHTML,
+      text: document.querySelector('.vev-terminal__accessible-output').textContent
+    });
+    terminal.apply(snapshot);
+    for (const update of queue) terminal.apply(update);
+    const sequential = capture();
+    terminal.apply(snapshot);
+    const nodes = [...document.querySelectorAll('.vev-terminal__row')];
+    terminal.applyAll(queue);
+    const merged = capture();
+    const rebuilt = [...document.querySelectorAll('.vev-terminal__row')].map((node, index) => node !== nodes[index]);
+    terminal.applyAll([queue[0], snapshot, queue[2]]);
+    const afterSnapshot = capture().text;
+    let invalid = '';
+    try { terminal.applyAll([queue[0], { ...queue[1], width: 5 }]); } catch (error) { invalid = error.message; }
+    return { sequential, merged, rebuilt, afterSnapshot, invalid, unchanged: capture().text === afterSnapshot };
+  });
+  expect(result.merged).toEqual(result.sequential);
+  expect(result.rebuilt).toEqual([true, true, true]);
+  expect(result.afterSnapshot).toBe('A3  \nbbbb\ncccc');
+  expect(result.invalid).not.toBe('');
+  expect(result.unchanged).toBe(true);
+});
+
 test('rejects colors with a payload from another color kind', async ({ page }) => {
   await mount(page);
   const message = await page.evaluate(() => {
     const color = { kind: 1, index: 4, rgb: { r: 1, g: 2, b: 3 } };
     try {
       terminal.apply({
-        schemaVersion: 1, width: 1, height: 1, snapshot: true,
+        schemaVersion: 2, width: 1, height: 1, snapshot: true,
         styles: [{ foreground: color, background: { kind: 0 }, underlineColor: { kind: 0 } }],
         rows: [{ row: 0, cells: [{ column: 0, width: 1, text: 'A', style: 0 }] }],
         cursor: { row: 0, column: 0, visible: false, style: 0, styleSet: false }
@@ -323,7 +409,7 @@ test('rejects oversized input without throwing from DOM callbacks', async ({ pag
 test('emits one composed text event and bounded pointer, wheel, resize, and focus events', async ({ page }) => {
   await mount(page);
   const snapshot = {
-    schemaVersion: 1, width: 2, height: 1, snapshot: true,
+    schemaVersion: 2, width: 2, height: 1, snapshot: true,
     styles: [{ foreground: { kind: 0 }, background: { kind: 0 }, underlineColor: { kind: 0 } }],
     rows: [{ row: 0, cells: [
       { column: 0, width: 1, text: 'A', style: 0 },
@@ -392,7 +478,7 @@ test('applies dynamic terminal styles under a self-only CSP', async ({ page }) =
   await page.evaluate(() => {
     globalThis.terminal = VevTerminal.mount(document.querySelector('#terminal'), { label: 'CSP terminal' });
     terminal.apply({
-      schemaVersion: 1, width: 1, height: 1, snapshot: true,
+      schemaVersion: 2, width: 1, height: 1, snapshot: true,
       styles: [{
         foreground: { kind: 2, rgb: { r: 1, g: 2, b: 3 } },
         background: { kind: 1, index: 4 },
@@ -428,12 +514,12 @@ test('updates complete rows, applies typed themes, and destroys owned state', as
   await mount(page);
   const style = { foreground: { kind: 0 }, background: { kind: 0 }, underlineColor: { kind: 0 } };
   await page.evaluate(value => terminal.apply(value), {
-    schemaVersion: 1, width: 1, height: 1, snapshot: true, styles: [style],
+    schemaVersion: 2, width: 1, height: 1, snapshot: true, styles: [style],
     rows: [{ row: 0, cells: [{ column: 0, width: 1, text: 'A', style: 0 }] }],
     cursor: { row: 0, column: 0, visible: false, style: 0, styleSet: false }
   });
   await page.evaluate(value => terminal.apply(value), {
-    schemaVersion: 1, width: 1, height: 1, snapshot: false, styles: [style],
+    schemaVersion: 2, width: 1, height: 1, snapshot: false, styles: [style],
     rows: [{ row: 0, cells: [{ column: 0, width: 1, text: 'B', style: 0 }] }],
     cursor: { row: 0, column: 0, visible: false, style: 0, styleSet: false }
   });

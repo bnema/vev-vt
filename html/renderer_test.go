@@ -73,7 +73,7 @@ func TestRendererAcceptsCellSourceWithoutFrameCopy(t *testing.T) {
 	}, nil, false, Cursor{})
 	require.NoError(t, err)
 	require.True(t, prepared.Update().Snapshot)
-	require.Equal(t, "A", prepared.Update().Rows[0].Cells[0].Text)
+	require.Equal(t, []CellUpdate{{Column: 0, Width: 2, Text: "A ", Style: 0}}, prepared.Update().Rows[0].Cells)
 	require.NoError(t, prepared.Commit())
 
 	_, err = renderer.Prepare(nil, nil, false, Cursor{})
@@ -126,6 +126,36 @@ func TestRendererEnforcesExactGeneratedByteLimit(t *testing.T) {
 	_, err = strict.Prepare(frame, nil, true, Cursor{})
 	require.ErrorIs(t, err, ErrLimitExceeded)
 	require.ErrorContains(t, err, "generated update is")
+}
+
+func TestRendererMergesASCIICellsIntoStyledTextRuns(t *testing.T) {
+	plain := core.DefaultStyle()
+	bold := core.DefaultStyle()
+	bold.Bold = true
+	frame := core.NewFrame(12, 1)
+	for x, r := range "ab" {
+		frame.Set(x, 0, core.Cell{Rune: r, Style: plain})
+	}
+	// x=2 stays blank (Rune 0) and joins the plain run as a space.
+	frame.Set(3, 0, core.Cell{Rune: '界', Style: plain})
+	frame.Set(4, 0, core.Cell{Continuation: true, Style: plain})
+	frame.Set(5, 0, core.Cell{Rune: 'é', Style: plain})
+	frame.Set(6, 0, core.Cell{Rune: 'c', Style: bold})
+	frame.Set(7, 0, core.Cell{Rune: 'd', Style: bold})
+	frame.Set(8, 0, core.Cell{Rune: '~', Style: plain})
+
+	renderer, err := New(Options{})
+	require.NoError(t, err)
+	prepared, err := renderer.Prepare(frame, nil, false, Cursor{})
+	require.NoError(t, err)
+	require.Equal(t, []CellUpdate{
+		{Column: 0, Width: 3, Text: "ab ", Style: 0},
+		{Column: 3, Width: 2, Text: "界", Style: 0},
+		{Column: 5, Width: 1, Text: "é", Style: 0},
+		{Column: 6, Width: 2, Text: "cd", Style: 1},
+		{Column: 8, Width: 4, Text: "~   ", Style: 0},
+	}, prepared.Update().Rows[0].Cells)
+	require.NoError(t, prepared.Commit())
 }
 
 func TestRendererAcceptsMaxIntGeneratedBytesLimit(t *testing.T) {

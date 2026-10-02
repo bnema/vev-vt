@@ -266,6 +266,15 @@ func (r *Renderer) buildUpdate(frame core.Frame, scratch []core.Cell, snapshot b
 		Cursor:        cursor,
 	}
 	styleIDs := make(map[Style]int)
+	// Every row appends its runs to cells and their text to text; ends[i]
+	// is the text offset after cells[i]. Rows and texts are sliced out once
+	// at the end, so an update costs one cell slice and one string.
+	var (
+		cells     []CellUpdate
+		ends      []int
+		text      []byte
+		rowStarts []int
+	)
 	for y := range frame.Height {
 		row := readRow(frame, y, scratch)
 		if !snapshot && rowEqualsFrame(row, r.committed, y) {
@@ -274,11 +283,26 @@ func (r *Renderer) buildUpdate(frame core.Frame, scratch []core.Cell, snapshot b
 		if len(update.Rows) >= r.limits.MaxRowsPerUpdate {
 			return Update{}, fmt.Errorf("%w: update rows exceed limit %d", ErrLimitExceeded, r.limits.MaxRowsPerUpdate)
 		}
-		encoded, err := encodeRow(y, row, &update.Styles, styleIDs, r.limits.MaxStyles)
+		rowStarts = append(rowStarts, len(cells))
+		update.Rows = append(update.Rows, RowUpdate{Row: y})
+		var err error
+		cells, ends, text, err = encodeRow(row, cells, ends, text, &update.Styles, styleIDs, r.limits.MaxStyles)
 		if err != nil {
 			return Update{}, err
 		}
-		update.Rows = append(update.Rows, encoded)
+	}
+	all := string(text)
+	offset := 0
+	for i := range cells {
+		cells[i].Text = all[offset:ends[i]]
+		offset = ends[i]
+	}
+	for i := range update.Rows {
+		next := len(cells)
+		if i+1 < len(rowStarts) {
+			next = rowStarts[i+1]
+		}
+		update.Rows[i].Cells = cells[rowStarts[i]:next:next]
 	}
 	return update, nil
 }
@@ -300,16 +324,30 @@ func encodeBoundedUpdate(update Update, limit int) ([]byte, error) {
 	return encoded, nil
 }
 
-// asciiText holds every ASCII byte so single-byte cell text can be sliced out
-// of it instead of allocating a new string per cell.
-const asciiText = "\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f" +
-	"\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f" +
-	" !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~\x7f"
+// runText returns the single-column printable ASCII text of cell, treating a
+// blank cell as a space, or false when the cell cannot join a text run.
+func runText(cell core.Cell) (byte, bool) {
+	switch {
+	case cell.Continuation:
+		return 0, false
+	case cell.Rune == 0:
+		return ' ', true
+	case cell.Rune >= 0x20 && cell.Rune < 0x7f:
+		return byte(cell.Rune), true
+	default:
+		return 0, false
+	}
+}
 
-func encodeRow(y int, cells []core.Cell, styles *[]Style, styleIDs map[Style]int, maxStyles int) (RowUpdate, error) {
-	row := RowUpdate{Row: y, Cells: make([]CellUpdate, 0, len(cells))}
-	for x := 0; x < len(cells); x++ {
-		cell := cells[x]
+// encodeRow appends one CellUpdate per text run of a row to cells, its text
+// to text, and the text end offset to ends. Adjacent printable ASCII or blank
+// cells with equal styles merge into one run whose Width equals its byte
+// length. Every other cell (wide or non-ASCII) stays a single entry, so
+// browsers never rely on a fallback font's advance for column alignment.
+// Text fields are filled by the caller.
+func encodeRow(row []core.Cell, cells []CellUpdate, ends []int, text []byte, styles *[]Style, styleIDs map[Style]int, maxStyles int) ([]CellUpdate, []int, []byte, error) {
+	for x := 0; x < len(row); x++ {
+		cell := row[x]
 		if cell.Continuation {
 			continue
 		}
@@ -317,26 +355,31 @@ func encodeRow(y int, cells []core.Cell, styles *[]Style, styleIDs map[Style]int
 		styleID, ok := styleIDs[style]
 		if !ok {
 			if len(*styles) >= maxStyles {
-				return RowUpdate{}, fmt.Errorf("%w: update styles exceed limit %d", ErrLimitExceeded, maxStyles)
+				return cells, ends, text, fmt.Errorf("%w: update styles exceed limit %d", ErrLimitExceeded, maxStyles)
 			}
 			styleID = len(*styles)
 			styleIDs[style] = styleID
 			*styles = append(*styles, style)
 		}
-		width := core.RuneWidth(cell.Rune)
-		var text string
-		switch {
-		case cell.Rune == 0:
-			width = 1
-			text = " "
-		case cell.Rune < utf8.RuneSelf:
-			text = asciiText[cell.Rune : cell.Rune+1] // no allocation
-		default:
-			text = string(cell.Rune)
+		if first, ok := runText(cell); ok {
+			start := x
+			text = append(text, first)
+			for x+1 < len(row) && row[x+1].Style.Equal(cell.Style) {
+				next, ok := runText(row[x+1])
+				if !ok {
+					break
+				}
+				text = append(text, next)
+				x++
+			}
+			cells = append(cells, CellUpdate{Column: start, Width: x - start + 1, Style: styleID})
+		} else {
+			text = utf8.AppendRune(text, cell.Rune)
+			cells = append(cells, CellUpdate{Column: x, Width: core.RuneWidth(cell.Rune), Style: styleID})
 		}
-		row.Cells = append(row.Cells, CellUpdate{Column: x, Width: width, Text: text, Style: styleID})
+		ends = append(ends, len(text))
 	}
-	return row, nil
+	return cells, ends, text, nil
 }
 
 func validateCoreStyle(style core.Style) error {

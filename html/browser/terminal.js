@@ -13,9 +13,9 @@
   /** @typedef {{maxCells?: number, maxRowsPerUpdate?: number, maxColumns?: number, maxStyles?: number, maxTextBytes?: number, maxUpdateBytes?: number, maxPasteBytes?: number}} BrowserLimits */
   /** @typedef {{foreground: RGB, background: RGB, cursor: RGB, selection: RGB, selectionText: RGB, palette: RGB[]}} TerminalTheme */
   /** @typedef {{label: string, decide?: (event: BrowserEvent) => CaptureDecision, send?: (event: BrowserEvent) => void, limits?: BrowserLimits}} MountOptions */
-  /** @typedef {{apply(update: Update): void, focus(): void, setMouseCapture(enabled: boolean): void, setTheme(theme: TerminalTheme): void, destroy(): void}} Terminal */
+  /** @typedef {{apply(update: Update): void, applyAll(updates: Update[]): void, focus(): void, setMouseCapture(enabled: boolean): void, setTheme(theme: TerminalTheme): void, destroy(): void}} Terminal */
 
-  const SCHEMA_VERSION = 1;
+  const SCHEMA_VERSION = 2;
   const DEFAULT_LIMITS = Object.freeze({
     maxCells: 1_000_000,
     maxRowsPerUpdate: 10_000,
@@ -26,6 +26,7 @@
     maxPasteBytes: 1 << 20
   });
   const encoder = new TextEncoder();
+  const PRINTABLE_ASCII = /^[\x20-\x7e]*$/;
 
   function fail(message) {
     throw new TypeError(`VevTerminal: ${message}`);
@@ -56,7 +57,7 @@
   /** @returns {{value: string, byteLength: number}} */
   function boundedString(value, limit, name) {
     if (typeof value !== 'string') fail(`${name} must be a string`);
-    const byteLength = encoder.encode(value).byteLength;
+    const byteLength = PRINTABLE_ASCII.test(value) ? value.length : encoder.encode(value).byteLength;
     if (byteLength > limit) fail(`${name} exceeds its byte limit`);
     return { value, byteLength };
   }
@@ -148,10 +149,13 @@
       object(candidate, name);
       keys(candidate, ['column', 'width', 'text', 'style'], name);
       const current = integer(candidate.column, 0, width - 1, `${name}.column`);
-      const cellWidth = integer(candidate.width, 1, 2, `${name}.width`);
+      const cellWidth = integer(candidate.width, 1, configured.maxColumns, `${name}.width`);
       if (current !== column) fail(`row coverage is not contiguous at row ${row} column ${column}`);
       if (current + cellWidth > width) fail(`row coverage exceeds width at row ${row}`);
       const text = boundedString(candidate.text, configured.maxTextBytes, `${name}.text`);
+      // Entries wider than one wide character are text runs: printable ASCII,
+      // one character per column, so grid columns and font advance agree.
+      if (cellWidth > 2 && (text.value.length !== cellWidth || !PRINTABLE_ASCII.test(text.value))) fail(`${name} text run does not match its width`);
       const cell = {
         column: current,
         width: cellWidth,
@@ -196,6 +200,52 @@
       rows.forEach((row, index) => { if (row.row !== index) fail('snapshot rows are incomplete'); });
     }
     return { schemaVersion: SCHEMA_VERSION, width, height, snapshot, rows, styles, cursor: validateCursor(value.cursor, width, height) };
+  }
+
+  /**
+   * Merge validated updates into the fewest equivalent ones. Each output
+   * update keeps the geometry, snapshot flag, and cursor semantics of the
+   * sequence it replaces; style ids are remapped to the styles still used.
+   */
+  function coalesce(updates, maxStyles) {
+    const groups = [];
+    for (const update of updates) {
+      const last = groups[groups.length - 1];
+      if (update.snapshot) {
+        groups.length = 0;
+      } else if (last && last.width === update.width && last.height === update.height) {
+        for (const row of update.rows) last.rows.set(row.row, { row, styles: update.styles });
+        last.cursor = update.cursor;
+        continue;
+      }
+      const rows = new Map();
+      for (const row of update.rows) rows.set(row.row, { row, styles: update.styles });
+      groups.push({ width: update.width, height: update.height, snapshot: update.snapshot, cursor: update.cursor, rows, single: update });
+    }
+    return groups.flatMap(group => {
+      if (group.rows.size === group.single.rows.length && [...group.rows.values()].every(entry => entry.styles === group.single.styles)) return [group.single];
+      const styles = [];
+      const ids = new Map();
+      const rows = [...group.rows.keys()].sort((left, right) => left - right).map(key => {
+        const { row, styles: source } = group.rows.get(key);
+        return {
+          row: row.row,
+          bytes: row.bytes,
+          cells: row.cells.map(cell => {
+            const styleKey = JSON.stringify(source[cell.style]);
+            let id = ids.get(styleKey);
+            if (id === undefined) {
+              id = styles.length;
+              ids.set(styleKey, id);
+              styles.push(source[cell.style]);
+            }
+            return { ...cell, style: id };
+          })
+        };
+      });
+      if (styles.length > maxStyles) fail('merged update styles exceed their limit');
+      return [{ schemaVersion: SCHEMA_VERSION, width: group.width, height: group.height, snapshot: group.snapshot, rows, styles, cursor: group.cursor }];
+    });
   }
 
   function xtermColor(index) {
@@ -416,7 +466,25 @@
     /** @param {Update} value */
     function apply(value) {
       alive();
-      const update = validateUpdate(value, configured);
+      applyValidated(validateUpdate(value, configured));
+    }
+
+    /**
+     * Validate a queue of updates, then apply the fewest equivalent updates:
+     * a snapshot supersedes everything before it and consecutive updates of
+     * the same geometry merge, last row wins. A consumer that falls behind
+     * rebuilds each changed row once instead of once per queued update.
+     * @param {Update[]} values
+     */
+    function applyAll(values) {
+      alive();
+      if (!Array.isArray(values)) fail('updates must be an array');
+      for (const update of coalesce(values.map(value => validateUpdate(value, configured)), configured.maxStyles)) {
+        applyValidated(update);
+      }
+    }
+
+    function applyValidated(update) {
       if (!update.snapshot && (update.width !== width || update.height !== height || rowNodes.length === 0)) fail('incremental update dimensions do not match the mounted snapshot');
       if (!update.snapshot) {
         for (let row = 0; row < height; row += 1) {
@@ -649,6 +717,7 @@
 
     return Object.freeze({
       apply,
+      applyAll,
       focus() { alive(); input.focus(); },
       setMouseCapture(enabled) {
         alive();

@@ -9,26 +9,26 @@ import (
 )
 
 func TestDecodeEventValidatesTheClosedSchema(t *testing.T) {
-	event, err := DecodeEvent([]byte(`{"schemaVersion":1,"type":"text","text":"é"}`), EventLimits{})
+	event, err := DecodeEvent([]byte(`{"schemaVersion":2,"type":"text","text":"é"}`), EventLimits{})
 	require.NoError(t, err)
 	require.Equal(t, EventText, event.Kind)
 	require.Equal(t, "é", event.Text.Text)
 
-	_, err = DecodeEvent([]byte(`{"schemaVersion":1,"type":"text","text":"x","unknown":true}`), EventLimits{})
+	_, err = DecodeEvent([]byte(`{"schemaVersion":2,"type":"text","text":"x","unknown":true}`), EventLimits{})
 	require.Error(t, err)
 
-	_, err = DecodeEvent([]byte(`{"schemaVersion":1,"type":"paste","text":"toolong"}`), EventLimits{MaxPasteBytes: 3})
+	_, err = DecodeEvent([]byte(`{"schemaVersion":2,"type":"paste","text":"toolong"}`), EventLimits{MaxPasteBytes: 3})
 	require.ErrorIs(t, err, ErrEventLimit)
 
 	_, err = DecodeEvent([]byte{'{', '"', 'x', '"', ':', '"', 0xff, '"', '}'}, EventLimits{})
 	require.ErrorContains(t, err, "not valid UTF-8")
 
-	_, err = DecodeEvent([]byte(`{"schemaVersion":1,"type":"resize","columns":80,"rows":24,"pixelWidth":800,"pixelHeight":480,"cellWidth":10,"cellHeight":20,"devicePixelRatio":1}`), EventLimits{})
+	_, err = DecodeEvent([]byte(`{"schemaVersion":2,"type":"resize","columns":80,"rows":24,"pixelWidth":800,"pixelHeight":480,"cellWidth":10,"cellHeight":20,"devicePixelRatio":1}`), EventLimits{})
 	require.NoError(t, err)
 
 	for _, data := range []string{
-		`{"schemaVersion":1,"type":"focus"}`,
-		`{"schemaVersion":1,"type":"wheel"}`,
+		`{"schemaVersion":2,"type":"focus"}`,
+		`{"schemaVersion":2,"type":"wheel"}`,
 	} {
 		_, err = DecodeEvent([]byte(data), EventLimits{})
 		require.Error(t, err)
@@ -40,11 +40,11 @@ func TestDecodeEventAcceptsRuntimeEventKinds(t *testing.T) {
 		kind EventKind
 		json string
 	}{
-		{EventKey, `{"schemaVersion":1,"type":"key","key":"ArrowUp","code":"ArrowUp","alt":false,"ctrl":false,"meta":false,"shift":false,"repeat":false,"location":0}`},
-		{EventPaste, `{"schemaVersion":1,"type":"paste","text":"hello"}`},
-		{EventPointer, `{"schemaVersion":1,"type":"pointer","action":"down","button":0,"buttons":1,"row":0,"column":0,"x":1,"y":2,"alt":false,"ctrl":false,"meta":false,"shift":false}`},
-		{EventWheel, `{"schemaVersion":1,"type":"wheel","deltaX":1,"deltaY":2,"deltaMode":0,"row":0,"column":0,"alt":false,"ctrl":false,"meta":false,"shift":false}`},
-		{EventFocus, `{"schemaVersion":1,"type":"focus","focused":true}`},
+		{EventKey, `{"schemaVersion":2,"type":"key","key":"ArrowUp","code":"ArrowUp","alt":false,"ctrl":false,"meta":false,"shift":false,"repeat":false,"location":0}`},
+		{EventPaste, `{"schemaVersion":2,"type":"paste","text":"hello"}`},
+		{EventPointer, `{"schemaVersion":2,"type":"pointer","action":"down","button":0,"buttons":1,"row":0,"column":0,"x":1,"y":2,"alt":false,"ctrl":false,"meta":false,"shift":false}`},
+		{EventWheel, `{"schemaVersion":2,"type":"wheel","deltaX":1,"deltaY":2,"deltaMode":0,"row":0,"column":0,"alt":false,"ctrl":false,"meta":false,"shift":false}`},
+		{EventFocus, `{"schemaVersion":2,"type":"focus","focused":true}`},
 	}
 	for _, test := range tests {
 		t.Run(string(test.kind), func(t *testing.T) {
@@ -84,12 +84,12 @@ func TestNormalizeEventLimitsRejectsImpossibleEnvelope(t *testing.T) {
 
 func TestDecodeEventRejectsMissingRequiredFields(t *testing.T) {
 	tests := []string{
-		`{"schemaVersion":1,"type":"text"}`,
-		`{"schemaVersion":1,"type":"key","code":"ArrowUp"}`,
-		`{"schemaVersion":1,"type":"pointer","action":"down"}`,
-		`{"schemaVersion":1,"type":"wheel"}`,
-		`{"schemaVersion":1,"type":"resize","columns":80,"rows":24}`,
-		`{"schemaVersion":1,"type":"focus"}`,
+		`{"schemaVersion":2,"type":"text"}`,
+		`{"schemaVersion":2,"type":"key","code":"ArrowUp"}`,
+		`{"schemaVersion":2,"type":"pointer","action":"down"}`,
+		`{"schemaVersion":2,"type":"wheel"}`,
+		`{"schemaVersion":2,"type":"resize","columns":80,"rows":24}`,
+		`{"schemaVersion":2,"type":"focus"}`,
 	}
 	for _, data := range tests {
 		_, err := DecodeEvent([]byte(data), EventLimits{})
@@ -99,13 +99,13 @@ func TestDecodeEventRejectsMissingRequiredFields(t *testing.T) {
 
 func TestDecodeEventRejectsInvalidRuntimePayloads(t *testing.T) {
 	tests := map[string]string{
-		"schema":                `{"schemaVersion":2,"type":"focus","focused":true}`,
-		"pointer button":        `{"schemaVersion":1,"type":"pointer","action":"down","button":5,"buttons":1,"row":0,"column":0,"x":1,"y":2}`,
-		"pointer buttons":       `{"schemaVersion":1,"type":"pointer","action":"down","button":0,"buttons":32,"row":0,"column":0,"x":1,"y":2}`,
-		"wheel mode":            `{"schemaVersion":1,"type":"wheel","deltaX":1,"deltaY":2,"deltaMode":3,"row":0,"column":0}`,
-		"resize dimension":      `{"schemaVersion":1,"type":"resize","columns":0,"rows":24,"pixelWidth":800,"pixelHeight":480,"cellWidth":10,"cellHeight":20,"devicePixelRatio":1}`,
-		"non-finite coordinate": `{"schemaVersion":1,"type":"pointer","action":"move","button":-1,"buttons":0,"row":0,"column":0,"x":1e999,"y":2}`,
-		"trailing value":        `{"schemaVersion":1,"type":"focus","focused":true} {}`,
+		"schema":                `{"schemaVersion":3,"type":"focus","focused":true}`,
+		"pointer button":        `{"schemaVersion":2,"type":"pointer","action":"down","button":5,"buttons":1,"row":0,"column":0,"x":1,"y":2}`,
+		"pointer buttons":       `{"schemaVersion":2,"type":"pointer","action":"down","button":0,"buttons":32,"row":0,"column":0,"x":1,"y":2}`,
+		"wheel mode":            `{"schemaVersion":2,"type":"wheel","deltaX":1,"deltaY":2,"deltaMode":3,"row":0,"column":0}`,
+		"resize dimension":      `{"schemaVersion":2,"type":"resize","columns":0,"rows":24,"pixelWidth":800,"pixelHeight":480,"cellWidth":10,"cellHeight":20,"devicePixelRatio":1}`,
+		"non-finite coordinate": `{"schemaVersion":2,"type":"pointer","action":"move","button":-1,"buttons":0,"row":0,"column":0,"x":1e999,"y":2}`,
+		"trailing value":        `{"schemaVersion":2,"type":"focus","focused":true} {}`,
 	}
 	for name, data := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -116,10 +116,10 @@ func TestDecodeEventRejectsInvalidRuntimePayloads(t *testing.T) {
 }
 
 func FuzzDecodeEvent(f *testing.F) {
-	f.Add([]byte(`{"schemaVersion":1,"type":"focus","focused":true}`))
-	f.Add([]byte(`{"schemaVersion":1,"type":"text","text":"hello"}`))
+	f.Add([]byte(`{"schemaVersion":2,"type":"focus","focused":true}`))
+	f.Add([]byte(`{"schemaVersion":2,"type":"text","text":"hello"}`))
 	f.Add([]byte(`not json`))
-	f.Add([]byte(`{"schemaVersion":1,"type":"text","text":"` + strings.Repeat("x", 4<<10) + `"}`))
+	f.Add([]byte(`{"schemaVersion":2,"type":"text","text":"` + strings.Repeat("x", 4<<10) + `"}`))
 	f.Fuzz(func(t *testing.T, data []byte) {
 		event, err := DecodeEvent(data, EventLimits{MaxEventBytes: 4 << 10, MaxTextBytes: 512, MaxPasteBytes: 512})
 		if len(data) > 4<<10 {

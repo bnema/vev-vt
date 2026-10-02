@@ -54,13 +54,6 @@ func FuzzAppendJSONString(f *testing.F) {
 	})
 }
 
-func TestAsciiTextIndexesEveryByte(t *testing.T) {
-	require.Len(t, asciiText, 128)
-	for i := 0; i < 128; i++ {
-		require.Equal(t, byte(i), asciiText[i])
-	}
-}
-
 func randomColor(rng *rand.Rand) Color {
 	switch rng.Intn(3) {
 	case 0:

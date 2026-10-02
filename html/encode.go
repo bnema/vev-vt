@@ -223,6 +223,9 @@ func estimateUpdateJSONSize(update Update) int {
 	size := 256 + 256*len(update.Styles)
 	for i := range update.Rows {
 		size += 32 + 48*len(update.Rows[i].Cells)
+		for j := range update.Rows[i].Cells {
+			size += len(update.Rows[i].Cells[j].Text)
+		}
 	}
 	return size
 }
