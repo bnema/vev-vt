@@ -42,12 +42,20 @@ type styleSlot struct {
 }
 
 type cellPage struct {
-	cells        []storedCell
-	rows         []uint32
-	styles       []styleSlot
-	styleIndex   map[Style]uint32
-	freeStyles   []uint32
-	styleCount   uint32
+	cells      []storedCell
+	rows       []uint32
+	styles     []styleSlot
+	styleIndex map[Style]uint32
+	freeStyles []uint32
+	styleCount uint32
+	// styleCache remembers the most recent raw Style passed to internStyle and
+	// the live slot it resolved to. It is a pure accelerator: it is cleared
+	// whenever that slot is freed, and a fresh page starts with it invalid.
+	// Clone copies it along with the style slots it refers to, so a clone stays
+	// reflect.DeepEqual to its source.
+	styleCache   Style
+	styleCacheID uint32
+	styleCacheOK bool
 	payloads     []payloadSlot
 	payloadIndex map[CellPayload]uint32
 	freePayloads []uint32
@@ -101,6 +109,9 @@ func (f Frame) Clone() Frame {
 			styleIndex:   maps.Clone(f.page.styleIndex),
 			freeStyles:   append([]uint32(nil), f.page.freeStyles...),
 			styleCount:   f.page.styleCount,
+			styleCache:   f.page.styleCache,
+			styleCacheID: f.page.styleCacheID,
+			styleCacheOK: f.page.styleCacheOK,
 			payloads:     append([]payloadSlot(nil), f.page.payloads...),
 			payloadIndex: maps.Clone(f.page.payloadIndex),
 			freePayloads: append([]uint32(nil), f.page.freePayloads...),
@@ -262,9 +273,10 @@ func (f Frame) Set(x, y int, cell Cell) {
 	f.releasePayload(f.page.cells[index].payloadID)
 	oldID := f.page.cells[index].styleID
 	styleID := oldID
-	// Repainting a cell usually keeps its style. Compare the canonical value
-	// before hashing it and changing references in the page-local dictionary.
-	if f.page.styles[oldID].style != cell.Style.Canonical() {
+	// Repainting a cell usually keeps its style. Stored styles are canonical,
+	// so a raw match proves the canonical form matches too; this skips
+	// canonicalization and the dictionary for the common case.
+	if f.page.styles[oldID].style != cell.Style {
 		styleID = f.internStyle(cell.Style)
 		f.releaseStyle(oldID)
 	}
@@ -344,36 +356,66 @@ func (f Frame) offset(x, y int) int {
 }
 
 func (f Frame) blankPhysicalRow(offset uint32) {
-	for x := range f.Width {
-		index := int(offset) + x
-		f.releasePayload(f.page.cells[index].payloadID)
-		oldID := f.page.cells[index].styleID
-		if oldID != 0 {
+	row := f.page.cells[offset : int(offset)+f.Width]
+	for i := range row {
+		cell := &row[i]
+		if cell.payloadID != 0 {
+			f.releasePayload(cell.payloadID)
+		}
+		if oldID := cell.styleID; oldID != 0 {
 			f.page.styles[0].refs++
 			f.releaseStyle(oldID)
 		}
-		f.page.cells[index] = storedCell{rune: ' '}
+	}
+	if len(row) == 0 {
+		return
+	}
+	row[0] = storedCell{rune: ' '}
+	for filled := 1; filled < len(row); filled *= 2 {
+		copy(row[filled:], row[:filled])
 	}
 }
 
-func (f Frame) internStyle(style Style) uint32 {
-	style = style.Canonical()
-	if id, ok := f.page.styleIndex[style]; ok {
-		f.page.styles[id].refs++
-		return id
+// internStyle returns the page-local ID for style and acquires one reference.
+func (f Frame) internStyle(raw Style) uint32 {
+	p := f.page
+	if p.styleCacheOK && raw == p.styleCache {
+		p.styles[p.styleCacheID].refs++
+		return p.styleCacheID
 	}
-	var id uint32
-	if n := len(f.page.freeStyles); n != 0 {
-		id = f.page.freeStyles[n-1]
-		f.page.freeStyles = f.page.freeStyles[:n-1]
-		f.page.styles[id] = styleSlot{style: style, refs: 1, used: true}
+	style := raw.Canonical()
+	id, ok := p.styleIndex[style]
+	if ok {
+		p.styles[id].refs++
 	} else {
-		id = uint32(len(f.page.styles))
-		f.page.styles = append(f.page.styles, styleSlot{style: style, refs: 1, used: true})
+		if n := len(p.freeStyles); n != 0 {
+			id = p.freeStyles[n-1]
+			p.freeStyles = p.freeStyles[:n-1]
+			p.styles[id] = styleSlot{style: style, refs: 1, used: true}
+		} else {
+			id = uint32(len(p.styles))
+			if len(p.styles) == cap(p.styles) {
+				p.styles = f.growStyles()
+			}
+			p.styles = append(p.styles, styleSlot{style: style, refs: 1, used: true})
+		}
+		p.styleIndex[style] = id
+		p.styleCount++
 	}
-	f.page.styleIndex[style] = id
-	f.page.styleCount++
+	p.styleCache, p.styleCacheID, p.styleCacheOK = raw, id, true
 	return id
+}
+
+// growStyles doubles style capacity instead of Go's gentler large-slice growth,
+// roughly halving total bytes allocated by high-cardinality frames. Capacity
+// never exceeds the one-style-per-cell bound, so small frames stay small.
+func (f Frame) growStyles() []styleSlot {
+	old := f.page.styles
+	limit := len(f.page.cells) + 1
+	newCap := min(max(2*cap(old), 4), max(limit, len(old)+1))
+	grown := make([]styleSlot, len(old), newCap)
+	copy(grown, old)
+	return grown
 }
 
 func (f Frame) releaseStyle(id uint32) {
@@ -381,6 +423,9 @@ func (f Frame) releaseStyle(id uint32) {
 	slot.refs--
 	if id == 0 || slot.refs != 0 {
 		return
+	}
+	if f.page.styleCacheID == id {
+		f.page.styleCacheOK = false
 	}
 	delete(f.page.styleIndex, slot.style)
 	*slot = styleSlot{}
