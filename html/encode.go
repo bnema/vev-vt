@@ -1,7 +1,9 @@
 package html
 
 import (
+	"encoding/json"
 	"fmt"
+	"reflect"
 	"strconv"
 	"unicode/utf8"
 )
@@ -155,7 +157,11 @@ func appendColorJSON(dst []byte, color Color) ([]byte, error) {
 		dst = strconv.AppendUint(dst, uint64(color.RGB.B), 10)
 		return append(dst, "}}"...), nil
 	default:
-		return nil, fmt.Errorf("html: invalid color kind %d", color.Kind)
+		// Same error value encoding/json produced via Color.MarshalJSON.
+		return nil, &json.MarshalerError{
+			Type: reflect.TypeFor[*Color](),
+			Err:  fmt.Errorf("html: invalid color kind %d", color.Kind),
+		}
 	}
 }
 
@@ -163,8 +169,8 @@ const hexDigits = "0123456789abcdef"
 
 // appendJSONString appends s as a JSON string using encoding/json's default
 // escaping: quotes, backslashes, control characters, <, >, & and U+2028/2029
-// are escaped, and invalid UTF-8 becomes a literal U+FFFD (as encoding/json
-// does on this toolchain). Cell text is always valid UTF-8 here.
+// are escaped, and each invalid UTF-8 byte becomes U+FFFD written as the
+// literal character, byte-identical to encoding/json on this toolchain.
 func appendJSONString(dst []byte, s string) []byte {
 	dst = append(dst, '"')
 	start := 0

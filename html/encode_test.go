@@ -3,6 +3,7 @@ package html
 import (
 	"encoding/json"
 	"math/rand"
+	"reflect"
 	"testing"
 
 	"github.com/bnema/vev-vt/core"
@@ -24,17 +25,13 @@ func TestAppendJSONStringMatchesEncodingJSON(t *testing.T) {
 	}
 }
 
-// Invalid UTF-8 never reaches the encoder (cells are validated), and the
-// escaped form of U+FFFD differs between encoding/json implementations, so
-// compare decoded values only.
-func TestAppendJSONStringInvalidUTF8DecodesLikeEncodingJSON(t *testing.T) {
-	for _, text := range []string{"\xff", "a\xc3", "\xed\xa0\x80"} {
+// Invalid UTF-8 never reaches the encoder (cells are validated), but the
+// escaping must still match encoding/json byte for byte.
+func TestAppendJSONStringInvalidUTF8MatchesEncodingJSON(t *testing.T) {
+	for _, text := range []string{"\xff", "a\xc3", "\xed\xa0\x80", "\xe2\x80", "ok\xf0\x9f"} {
 		want, err := json.Marshal(text)
 		require.NoError(t, err)
-		var wantDecoded, gotDecoded string
-		require.NoError(t, json.Unmarshal(want, &wantDecoded))
-		require.NoError(t, json.Unmarshal(appendJSONString(nil, text), &gotDecoded))
-		require.Equal(t, wantDecoded, gotDecoded)
+		require.Equal(t, string(want), string(appendJSONString(nil, text)), "%q", text)
 	}
 }
 
@@ -103,9 +100,9 @@ func TestAppendUpdateJSONMatchesEncodingJSON(t *testing.T) {
 func TestAppendUpdateJSONRejectsInvalidColorKind(t *testing.T) {
 	update := Update{Styles: []Style{{Foreground: Color{Kind: 9}}}}
 	_, err := appendUpdateJSON(nil, update)
-	require.ErrorContains(t, err, "invalid color kind")
-	_, err = json.Marshal(update)
-	require.Error(t, err)
+	_, want := json.Marshal(update)
+	require.Error(t, want)
+	require.EqualError(t, err, want.Error())
 }
 
 func TestPreparedJSONMatchesEncodingJSONOfUpdate(t *testing.T) {
@@ -117,10 +114,10 @@ func TestPreparedJSONMatchesEncodingJSONOfUpdate(t *testing.T) {
 	frame.Set(0, 0, core.Cell{Rune: '<', Style: style})
 	frame.Set(1, 0, core.Cell{Rune: '界', Style: core.DefaultStyle()})
 	frame.Set(2, 0, core.Cell{Continuation: true, Style: core.DefaultStyle()})
-	frame.Set(4, 1, core.Cell{Rune: '"', Style: style})
-	frame.Set(5, 1, core.Cell{Rune: '😀', Style: core.DefaultStyle()})
-	// width-2 rune at the last column is invalid; keep it narrow.
-	frame.Set(5, 1, core.Cell{Rune: '&', Style: core.DefaultStyle()})
+	frame.Set(3, 0, core.Cell{Rune: '😀', Style: core.DefaultStyle()})
+	frame.Set(4, 0, core.Cell{Continuation: true, Style: core.DefaultStyle()})
+	frame.Set(5, 0, core.Cell{Rune: '&', Style: core.DefaultStyle()})
+	frame.Set(0, 1, core.Cell{Rune: '"', Style: style})
 
 	renderer, err := New(Options{})
 	require.NoError(t, err)
@@ -129,4 +126,90 @@ func TestPreparedJSONMatchesEncodingJSONOfUpdate(t *testing.T) {
 	want, err := json.Marshal(prepared.tx.update)
 	require.NoError(t, err)
 	require.Equal(t, string(want), string(prepared.JSON()))
+	require.Contains(t, string(prepared.JSON()), "😀")
+}
+
+// fillAll sets every field reachable from v to a distinctive non-zero value
+// (negative for signed integers) so a field added to the update types without
+// a matching encoder change shows up as a JSON mismatch.
+func fillAll(t *testing.T, v reflect.Value, colorKind ColorKind, counter *int) {
+	t.Helper()
+	*counter++
+	n := *counter
+	if v.Type() == reflect.TypeOf(Color{}) {
+		v.FieldByName("Kind").SetUint(uint64(colorKind))
+		v.FieldByName("Index").SetUint(uint64(100 + n%100))
+		fillAll(t, v.FieldByName("RGB"), colorKind, counter)
+		return
+	}
+	switch v.Kind() {
+	case reflect.Bool:
+		v.SetBool(true)
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		v.SetInt(-int64(n) - 1)
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		v.SetUint(uint64(1 + n%120))
+	case reflect.String:
+		v.SetString("t<&>\"\\界\u2028" + string(rune('a'+n%26)))
+	case reflect.Slice:
+		v.Set(reflect.MakeSlice(v.Type(), 2, 2))
+		for i := range 2 {
+			fillAll(t, v.Index(i), colorKind, counter)
+		}
+	case reflect.Struct:
+		for i := range v.NumField() {
+			require.True(t, v.Field(i).CanSet(), "%s.%s must be settable", v.Type(), v.Type().Field(i).Name)
+			fillAll(t, v.Field(i), colorKind, counter)
+		}
+	default:
+		t.Fatalf("fillAll: unsupported kind %s in %s", v.Kind(), v.Type())
+	}
+}
+
+func requireNoZeroFields(t *testing.T, v reflect.Value) {
+	t.Helper()
+	switch v.Kind() {
+	case reflect.Struct:
+		for i := range v.NumField() {
+			requireNoZeroFields(t, v.Field(i))
+		}
+	case reflect.Slice:
+		require.NotZero(t, v.Len())
+		for i := range v.Len() {
+			requireNoZeroFields(t, v.Index(i))
+		}
+	default:
+		require.False(t, v.IsZero(), "zero %s left in filled value", v.Type())
+	}
+}
+
+// TestEncoderCoversEveryUpdateField fails when a field is added to (or removed
+// from) the update types without updating appendUpdateJSON and this test.
+func TestEncoderCoversEveryUpdateField(t *testing.T) {
+	for typ, fields := range map[reflect.Type]int{
+		reflect.TypeOf(Update{}):     7,
+		reflect.TypeOf(RowUpdate{}):  2,
+		reflect.TypeOf(CellUpdate{}): 4,
+		reflect.TypeOf(Style{}):      11,
+		reflect.TypeOf(Cursor{}):     5,
+		reflect.TypeOf(RGB{}):        3,
+		reflect.TypeOf(Color{}):      3,
+	} {
+		require.Equal(t, fields, typ.NumField(), "%s field count changed: update appendUpdateJSON", typ)
+	}
+
+	for _, kind := range []ColorKind{ColorDefault, ColorIndexed, ColorRGB} {
+		var update Update
+		counter := 0
+		fillAll(t, reflect.ValueOf(&update).Elem(), kind, &counter)
+		update.Cursor.Style = 6 // keep within the documented DECSCUSR range
+		if kind != ColorDefault {
+			requireNoZeroFields(t, reflect.ValueOf(update))
+		}
+		want, err := json.Marshal(update)
+		require.NoError(t, err)
+		got, err := appendUpdateJSON(nil, update)
+		require.NoError(t, err)
+		require.Equal(t, string(want), string(got), "color kind %d", kind)
+	}
 }
