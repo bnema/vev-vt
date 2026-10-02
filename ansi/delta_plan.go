@@ -1,5 +1,7 @@
 package ansi
 
+import "github.com/bnema/vev-vt/core"
+
 // Span identifies a changed horizontal range in a logical frame row.
 type Span struct {
 	Y     int
@@ -31,35 +33,45 @@ type DeltaCandidate struct {
 	frame Frame
 }
 
-func newDeltaCandidate(frame CellSource, plan DeltaPlan) DeltaCandidate {
+// newDeltaCandidate builds a candidate whose snapshot, when the plan has work to
+// commit, is copied into scratch (reusing its storage) or into a fresh frame
+// when scratch is nil.
+func newDeltaCandidate(frame CellSource, plan DeltaPlan, scratch *Frame) DeltaCandidate {
 	candidate := DeltaCandidate{Plan: plan}
 	if plan.Snapshot || plan.Scroll.Height != 0 || len(plan.Spans) != 0 {
-		candidate.frame = cloneCellSource(frame)
+		candidate.frame = snapshotCellSource(scratch, frame)
 	}
 	return candidate
 }
 
-// PlanDelta prepares a non-mutating update from committed to frame.
+// PlanDelta prepares a non-mutating update from committed to frame. The
+// returned candidate owns an independent snapshot of frame.
 func PlanDelta(frame CellSource, damage []Damage, committed Frame, reset bool) (DeltaCandidate, error) {
+	return planDelta(frame, damage, committed, reset, nil)
+}
+
+// planDelta implements PlanDelta. A non-nil scratch receives the candidate's
+// snapshot in place of a fresh allocation; the caller then owns its lifetime.
+func planDelta(frame CellSource, damage []Damage, committed Frame, reset bool, scratch *Frame) (DeltaCandidate, error) {
 	if err := validateCellSource(frame); err != nil {
 		return DeltaCandidate{}, err
 	}
 
 	if reset || frame.Columns() != committed.Columns() || frame.Rows() != committed.Rows() {
-		return newDeltaCandidate(frame, DeltaPlan{Snapshot: true}), nil
+		return newDeltaCandidate(frame, DeltaPlan{Snapshot: true}, scratch), nil
 	}
 	if err := committed.Validate(); err != nil {
 		return DeltaCandidate{}, err
 	}
 
 	if len(damage) == 1 && (damage[0].Kind == DamageText || damage[0].Kind == DamageClear) {
-		return newDeltaCandidate(frame, planSingleDamage(frame, damage[0])), nil
+		return newDeltaCandidate(frame, planSingleDamage(frame, damage[0]), scratch), nil
 	}
 
 	if needsFull(damage) {
 		dirty, full := buildDirtyLinePlan(frame, committed)
 		if len(dirty) > 0 || full {
-			return newDeltaCandidate(frame, DeltaPlan{Snapshot: true, Spans: dirty}), nil
+			return newDeltaCandidate(frame, DeltaPlan{Snapshot: true, Spans: dirty}, scratch), nil
 		}
 		return DeltaCandidate{}, nil
 	}
@@ -70,7 +82,7 @@ func PlanDelta(frame CellSource, damage []Damage, committed Frame, reset bool) (
 		plan.Scroll = Scroll{Y: scroll.Y, Height: scroll.Height, Count: scroll.Count, Down: scroll.Kind == DamageScrollDown}
 		skip = &scroll
 	} else if hasScrollDamage(damage) {
-		return newDeltaCandidate(frame, DeltaPlan{Snapshot: true}), nil
+		return newDeltaCandidate(frame, DeltaPlan{Snapshot: true}, scratch), nil
 	}
 
 	var spans []Span
@@ -81,16 +93,16 @@ func PlanDelta(frame CellSource, damage []Damage, committed Frame, reset bool) (
 		spans, full = buildDamagePlan(frame, damage, skip)
 	}
 	if full {
-		return newDeltaCandidate(frame, DeltaPlan{Snapshot: true}), nil
+		return newDeltaCandidate(frame, DeltaPlan{Snapshot: true}, scratch), nil
 	}
 	if deltaCostsSnapshot(frame, spans, plan.Scroll.Height != 0) {
 		if plan.Scroll.Height != 0 {
-			return newDeltaCandidate(frame, DeltaPlan{Snapshot: true}), nil
+			return newDeltaCandidate(frame, DeltaPlan{Snapshot: true}, scratch), nil
 		}
-		return newDeltaCandidate(frame, DeltaPlan{Snapshot: true, Spans: spans}), nil
+		return newDeltaCandidate(frame, DeltaPlan{Snapshot: true, Spans: spans}, scratch), nil
 	}
 	plan.Spans = spans
-	return newDeltaCandidate(frame, plan), nil
+	return newDeltaCandidate(frame, plan, scratch), nil
 }
 
 func planSingleDamage(frame CellSource, d Damage) DeltaPlan {
@@ -107,12 +119,17 @@ func planSingleDamage(frame CellSource, d Damage) DeltaPlan {
 
 func buildDirtyLinePlan(frame, committed CellSource) ([]Span, bool) {
 	var spans []Span
+	fast, fastOK := compactFrames(frame, committed)
 	for y := range frame.Rows() {
 		dirty := false
-		for x := range frame.Columns() {
-			if !frame.Cell(x, y).Equal(committed.Cell(x, y)) {
-				dirty = true
-				break
+		if fastOK {
+			dirty = !core.RowsEqual(fast.a, fast.b, y)
+		} else {
+			for x := range frame.Columns() {
+				if !frame.Cell(x, y).Equal(committed.Cell(x, y)) {
+					dirty = true
+					break
+				}
 			}
 		}
 		if dirty {
@@ -198,7 +215,9 @@ func (c DeltaCandidate) Commit(dst *Frame) {
 		return
 	}
 	if c.Plan.Snapshot || dst.Width != c.frame.Width || dst.Height != c.frame.Height {
-		replaceFrame(dst, c.frame)
+		// dst may be shared with the caller, so give it a fresh page rather
+		// than overwriting storage other Frame values might still reference.
+		dst.Replace(c.frame)
 		return
 	}
 	if c.Plan.Scroll.Height != 0 {
@@ -216,6 +235,8 @@ func (c DeltaCandidate) Commit(dst *Frame) {
 	}
 }
 
+// replaceFrame overwrites dst's own storage with a copy of src, reusing
+// capacity. It is for frames the renderer owns exclusively.
 func replaceFrame(dst *Frame, src Frame) {
-	dst.Replace(src)
+	dst.CopyFrom(src)
 }

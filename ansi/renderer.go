@@ -24,6 +24,12 @@ type Renderer struct {
 	height       int
 	hasCommitted bool
 	committed    Frame
+	// scratch receives the snapshot of the frame being prepared. It never
+	// aliases committed or caller storage: a snapshot commit swaps the two so
+	// both buffers are reused across draws without allocating.
+	scratch Frame
+	// generation identifies the latest prepared draw that owns scratch.
+	generation uint64
 }
 
 // PreparedDraw owns encoded output and its transactional delta until Commit.
@@ -32,6 +38,7 @@ type PreparedDraw struct {
 	renderer   *Renderer
 	candidate  DeltaCandidate
 	data       []byte
+	generation uint64
 	commitOnce *sync.Once
 }
 
@@ -48,7 +55,7 @@ func (r *Renderer) Reset() {
 	r.width = 0
 	r.height = 0
 	r.hasCommitted = false
-	r.committed = Frame{}
+	// The frame buffers are kept for reuse; hasCommitted gates their content.
 }
 
 // Bytes returns the prepared ANSI output. The returned bytes remain valid after
@@ -62,41 +69,56 @@ func (p *PreparedDraw) Commit() {
 		return
 	}
 	p.commitOnce.Do(func() {
-		committed := p.renderer.committedFrame()
-		if p.candidate.Plan.Snapshot {
-			// PreparedDraw privately owns this snapshot. Its shared Once makes
-			// transfer safe even when the caller retains copies of the draw.
-			committed = p.candidate.frame
-		} else {
-			p.candidate.Commit(&committed)
+		r := p.renderer
+		plan := p.candidate.Plan
+		if !plan.Snapshot && plan.Scroll.Height == 0 && len(plan.Spans) == 0 {
+			return
 		}
-		p.renderer.setCommittedFrame(committed)
+		if p.generation != r.generation {
+			// A later Prepare reused the scratch frame this draw's snapshot
+			// lives in, so it was discarded.
+			return
+		}
+		if plan.Snapshot || !r.hasCommitted {
+			// The snapshot lives in the renderer's scratch buffer; promote it
+			// and recycle the previous committed buffer as the next scratch.
+			r.committed, r.scratch = p.candidate.frame, r.committed
+		} else {
+			p.candidate.Commit(&r.committed)
+		}
+		r.width = r.committed.Width
+		r.height = r.committed.Height
+		r.hasCommitted = true
 	})
 }
 
 // Prepare plans and encodes a transactional draw. The renderer advances only
 // when the returned draw is committed. Keep at most one prepared draw
-// outstanding; commit or discard it before calling Prepare again.
+// outstanding; commit or discard it before calling Prepare again. A draw
+// superseded by a later Prepare is discarded and its Commit does nothing.
+//
+// The renderer copies frame into reusable private storage, so the caller may
+// keep mutating frame between draws.
 func (r *Renderer) Prepare(frame CellSource, damage []Damage, reset bool) (PreparedDraw, error) {
 	var candidate DeltaCandidate
 	var err error
 	if err = validateCellSource(frame); err != nil {
 		return PreparedDraw{}, err
 	}
+	// Any earlier prepared draw loses its claim on the scratch snapshot, even
+	// if this Prepare fails after partially rewriting it.
+	r.generation++
 	columns, rows := frame.Columns(), frame.Rows()
 	if !reset && r.hasCommitted && r.width == columns && r.height == rows && len(damage) == 1 && (damage[0].Kind == DamageText || damage[0].Kind == DamageClear) {
 		plan := planSingleDamage(frame, damage[0])
-		candidate = DeltaCandidate{Plan: plan}
-		if plan.Snapshot || plan.Scroll.Height != 0 || len(plan.Spans) != 0 {
-			candidate.frame = cloneCellSource(frame)
-		}
+		candidate = newDeltaCandidate(frame, plan, &r.scratch)
 	} else {
-		candidate, err = PlanDelta(frame, damage, r.committedFrame(), reset || !r.hasCommitted)
+		candidate, err = planDelta(frame, damage, r.committedFrame(), reset || !r.hasCommitted, &r.scratch)
 	}
 	if err != nil {
 		return PreparedDraw{}, err
 	}
-	prepared := PreparedDraw{renderer: r, candidate: candidate, commitOnce: new(sync.Once)}
+	prepared := PreparedDraw{renderer: r, candidate: candidate, generation: r.generation, commitOnce: new(sync.Once)}
 	plan := candidate.Plan
 	if !plan.Snapshot && plan.Scroll.Height == 0 && len(plan.Spans) == 0 {
 		return prepared, nil
