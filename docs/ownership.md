@@ -19,7 +19,9 @@ should use these methods rather than assuming a particular memory layout.
 Rows returned by public extraction methods are copies. For a writable
 `core.Frame`, use `Set`, `WriteRow`, `FillRow`, `CopyRow` and the scroll operations.
 A plain Go assignment of a `Frame` shares its storage; use `Clone()` when you need
-an independent grid.
+an independent grid. `CopyFrom` reuses the destination's storage, so every
+`Frame` assigned from it sees the overwrite: call it only on a frame you own
+exclusively. `core.RowsEqualAt` compares rows of two frames without copying.
 
 ## Callbacks
 

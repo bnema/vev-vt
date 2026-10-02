@@ -5,12 +5,14 @@ import "maps"
 // CopyFrom makes f an independent structural copy of src, like Replace, but
 // reuses f's existing page storage (cells, row descriptors, style and payload
 // tables and dictionaries) when f already owns a page. It therefore performs no
-// allocation once f's page has grown to src's size.
+// allocation once f's page has grown to src's size. A page more than four times
+// larger than src is replaced by a clone, so shrinking a terminal releases the
+// old storage.
 //
 // Page-local style and payload IDs and physical row rotation are copied
-// verbatim, exactly as Clone does. Every Frame value sharing f's page observes
-// the overwrite. An invalid or empty source leaves f unchanged. Copying a frame
-// onto itself only normalizes the dimensions.
+// verbatim, exactly as Clone does. When the page is reused, every Frame value
+// sharing f's page observes the overwrite. An invalid or empty source leaves f
+// unchanged. Copying a frame onto itself only normalizes the dimensions.
 func (f *Frame) CopyFrom(src Frame) {
 	if f == nil {
 		return
@@ -18,15 +20,16 @@ func (f *Frame) CopyFrom(src Frame) {
 	if err := src.validateStorage(); err != nil || src.Width <= 0 || src.Height <= 0 {
 		return
 	}
-	if f.page == nil {
+	if f.page == src.page {
+		f.Width, f.Height = src.Width, src.Height
+		return
+	}
+	if f.page == nil || cap(f.page.cells) > 4*len(src.page.cells) {
 		*f = src.Clone()
 		return
 	}
 	f.Width, f.Height = src.Width, src.Height
 	dst, from := f.page, src.page
-	if dst == from {
-		return
-	}
 	dst.cells = append(dst.cells[:0], from.cells...)
 	dst.rows = append(dst.rows[:0], from.rows...)
 	dst.styles = append(dst.styles[:0], from.styles...)
@@ -45,16 +48,12 @@ func (f *Frame) CopyFrom(src Frame) {
 	dst.payloads = append(dst.payloads[:0], from.payloads...)
 	dst.freePayloads = append(dst.freePayloads[:0], from.freePayloads...)
 	dst.payloadBytes = from.payloadBytes
-	if len(from.payloadIndex) == 0 {
-		clear(dst.payloadIndex)
+	if dst.payloadIndex == nil && len(from.payloadIndex) > 0 {
+		dst.payloadIndex = make(map[CellPayload]uint32, len(from.payloadIndex))
 	} else {
-		if dst.payloadIndex == nil {
-			dst.payloadIndex = make(map[CellPayload]uint32, len(from.payloadIndex))
-		} else {
-			clear(dst.payloadIndex)
-		}
-		maps.Copy(dst.payloadIndex, from.payloadIndex)
+		clear(dst.payloadIndex)
 	}
+	maps.Copy(dst.payloadIndex, from.payloadIndex)
 }
 
 // RowsEqualAt reports whether logical row ya of a and logical row yb of b hold

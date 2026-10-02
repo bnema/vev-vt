@@ -407,8 +407,6 @@ func TestScreenWriteReentrantFromCallbackKeepsOuterStreamIntact(t *testing.T) {
 	})
 }
 
-// The Screen borrows the caller's Write buffer while parsing; nothing it
-// retains may alias that buffer once Write returns.
 // Base64 payloads padded with CR/LF decode into a buffer sized for the raw
 // input. The scene must not retain that slack beyond its accounted bytes,
 // otherwise untrusted output could hold memory past MaxEncodedBytes.
@@ -434,6 +432,8 @@ func TestScreenKittyNewlinePaddedPayloadRetainsOnlyAccountedBytes(t *testing.T) 
 	runtime.KeepAlive(screen)
 }
 
+// The Screen borrows the caller's Write buffer while parsing; nothing it
+// retains may alias that buffer once Write returns.
 func TestScreenKittyGraphicsDoesNotAliasCallerWriteBuffer(t *testing.T) {
 	scribble := func(b []byte) {
 		for i := range b {

@@ -122,7 +122,21 @@ func TestCopyFromDoesNotAllocateOnceSized(t *testing.T) {
 	}
 }
 
-func TestRowsEqual(t *testing.T) {
+func TestCopyFromReleasesStorageWhenSourceShrinks(t *testing.T) {
+	dst := copyTestFrame(t, 240, 80, 'a')
+	small := copyTestFrame(t, 20, 5, 'b')
+	dst.CopyFrom(small)
+	if got := cap(dst.page.cells); got > 4*len(small.page.cells) {
+		t.Fatalf("CopyFrom kept %d cells for a %d-cell source", got, len(small.page.cells))
+	}
+	for y := range small.Height {
+		if !RowsEqualAt(dst, y, small, y) {
+			t.Fatalf("row %d differs after shrinking copy", y)
+		}
+	}
+}
+
+func TestRowsEqualAt(t *testing.T) {
 	a := copyTestFrame(t, 10, 4, 'a')
 	b := a.Clone()
 	for y := range a.Height {
@@ -195,13 +209,22 @@ func TestRowsEqual(t *testing.T) {
 		t.Fatal("equivalent styles reported different")
 	}
 
+	// A row compares equal at a different index after scrolling.
+	shifted := a.Clone()
+	shifted.ScrollUp(0, a.Height-1, 1)
+	for y := range a.Height - 1 {
+		if !RowsEqualAt(a, y+1, shifted, y) {
+			t.Fatalf("row %d of a != row %d of scrolled copy", y+1, y)
+		}
+	}
+
 	// Mismatched shape or range is unequal and never panics.
 	if RowsEqualAt(a, 0, NewFrame(a.Width+1, a.Height), 0) || RowsEqualAt(a, -1, b, -1) || RowsEqualAt(a, a.Height, b, a.Height) || RowsEqualAt(Frame{}, 0, Frame{}, 0) {
 		t.Fatal("invalid comparison reported equal")
 	}
 }
 
-func TestRowsEqualDoesNotAllocate(t *testing.T) {
+func TestRowsEqualAtDoesNotAllocate(t *testing.T) {
 	a := copyTestFrame(t, 80, 4, 'a')
 	b := a.Clone()
 	if n := testing.AllocsPerRun(20, func() { RowsEqualAt(a, 2, b, 2) }); n != 0 {
@@ -280,21 +303,6 @@ func TestCopyFromDropsStaleStyleCache(t *testing.T) {
 	}
 	if err := dst.CheckInvariants(); err != nil {
 		t.Fatal(err)
-	}
-}
-
-func TestRowsEqualAt(t *testing.T) {
-	a := copyTestFrame(t, 10, 5, 'a')
-	b := a.Clone()
-	// b row y+1 shifted: compare a row y+1 against b row y after scrolling b.
-	b.ScrollUp(0, 4, 1)
-	for y := range 4 {
-		if !RowsEqualAt(a, y+1, b, y) {
-			t.Fatalf("row %d of a != row %d of scrolled b", y+1, y)
-		}
-	}
-	if RowsEqualAt(a, 0, b, 0) || RowsEqualAt(a, 0, b, 5) || RowsEqualAt(a, -1, b, 0) {
-		t.Fatal("unequal or out-of-range rows reported equal")
 	}
 }
 

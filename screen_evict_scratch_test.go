@@ -7,7 +7,8 @@ import (
 )
 
 // OnLineEvicted callers may retain the slice: successive evictions must not
-// share the Screen's internal scratch row.
+// share the Screen's internal scratch row. The oracle checks the same rule
+// across scenarios but is skipped under -short; this is the -short guard.
 func TestOnLineEvictedRowsAreIndependentCopies(t *testing.T) {
 	s := NewScreen(4, 2)
 	var rows [][]renderer.Cell
