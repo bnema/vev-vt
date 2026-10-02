@@ -32,6 +32,10 @@ func (f *Frame) CopyFrom(src Frame) {
 	dst.styles = append(dst.styles[:0], from.styles...)
 	dst.freeStyles = append(dst.freeStyles[:0], from.freeStyles...)
 	dst.styleCount = from.styleCount
+	// The cache refers to a slot in the style table copied above, so copying it
+	// keeps it valid. Leaving the destination's old cache would point at a slot
+	// that may now hold a different style.
+	dst.styleCache, dst.styleCacheID, dst.styleCacheOK = from.styleCache, from.styleCacheID, from.styleCacheOK
 	if dst.styleIndex == nil {
 		dst.styleIndex = make(map[Style]uint32, len(from.styleIndex))
 	} else {
@@ -60,13 +64,18 @@ func (f *Frame) CopyFrom(src Frame) {
 // require the two frames to share ID tables. Frames of different width, an
 // out-of-range row, or inconsistent storage compare unequal.
 func RowsEqual(a, b Frame, y int) bool {
+	return RowsEqualAt(a, y, b, y)
+}
+
+// RowsEqualAt is RowsEqual for logical row ya of a against logical row yb of b.
+func RowsEqualAt(a Frame, ya int, b Frame, yb int) bool {
 	if a.Width != b.Width || a.Width <= 0 || a.page == nil || b.page == nil ||
-		y < 0 || y >= a.Height || y >= b.Height ||
-		y >= len(a.page.rows) || y >= len(b.page.rows) {
+		ya < 0 || ya >= a.Height || yb < 0 || yb >= b.Height ||
+		ya >= len(a.page.rows) || yb >= len(b.page.rows) {
 		return false
 	}
 	width := a.Width
-	offA, offB := int(a.page.rows[y]), int(b.page.rows[y])
+	offA, offB := int(a.page.rows[ya]), int(b.page.rows[yb])
 	if offA+width > len(a.page.cells) || offB+width > len(b.page.cells) {
 		return false
 	}

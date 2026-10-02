@@ -1,9 +1,15 @@
 package core
 
 import (
+	"fmt"
 	"reflect"
 	"testing"
 )
+
+// cellPageFieldCount is the number of cellPage fields CopyFrom handles. Adding
+// a field to cellPage fails TestCopyFromHandlesEveryPageField until CopyFrom
+// (and this count) are updated.
+const cellPageFieldCount = 13
 
 func copyTestPayload(t *testing.T, grapheme, link string) CellPayload {
 	t.Helper()
@@ -200,5 +206,94 @@ func TestRowsEqualDoesNotAllocate(t *testing.T) {
 	b := a.Clone()
 	if n := testing.AllocsPerRun(20, func() { RowsEqual(a, b, 2) }); n != 0 {
 		t.Fatalf("RowsEqual allocated %v times", n)
+	}
+}
+
+func TestCopyFromHandlesEveryPageField(t *testing.T) {
+	typ := reflect.TypeOf(cellPage{})
+	if typ.NumField() != cellPageFieldCount {
+		t.Fatalf("cellPage has %d fields, CopyFrom handles %d: update CopyFrom and cellPageFieldCount", typ.NumField(), cellPageFieldCount)
+	}
+
+	// Build a source that populates every field, and a destination whose every
+	// field holds different, stale state.
+	src := copyTestFrame(t, 9, 5, 'a')
+	src.Set(0, 0, Cell{Rune: 'a', Style: Style{Bold: true, Foreground: 7, Background: -1}})
+	dst := copyTestFrame(t, 9, 5, 'k')
+	dst.Set(4, 4, Cell{Rune: 'f', Style: Style{Italic: true, Foreground: 1, Background: -1}})
+	dst.Set(4, 4, Cell{Rune: 'f', Style: DefaultStyle()}) // frees a style slot
+	dst.CopyFrom(src)
+
+	sp, dp := reflect.ValueOf(*src.page), reflect.ValueOf(*dst.page)
+	populated := 0
+	for i := range typ.NumField() {
+		name := typ.Field(i).Name
+		a, b := sp.Field(i), dp.Field(i)
+		if !a.IsZero() {
+			populated++
+		}
+		if (a.Kind() == reflect.Slice || a.Kind() == reflect.Map) && a.Len() == 0 && b.Len() == 0 {
+			continue // nil and empty are equivalent
+		}
+		// Printing works on unexported fields and treats nil and empty alike;
+		// fmt sorts map keys, so the rendering is deterministic.
+		if got, want := fmt.Sprintf("%#v", b), fmt.Sprintf("%#v", a); got != want {
+			t.Errorf("cellPage.%s = %s, want %s", name, got, want)
+		}
+	}
+	if populated < typ.NumField()-2 { // freeStyles/freePayloads may legitimately be empty
+		t.Errorf("source populates only %d of %d page fields; strengthen the test", populated, typ.NumField())
+	}
+}
+
+func TestCopyFromDropsStaleStyleCache(t *testing.T) {
+	styleA := Style{Bold: true, Foreground: 1, Background: -1}
+	styleB := Style{Italic: true, Foreground: 2, Background: -1}
+
+	// dst: style A lives in slot k and is cached by the last Set.
+	dst := NewFrame(4, 2)
+	dst.Set(0, 0, Cell{Rune: 'a', Style: styleA})
+	k := dst.page.styleCacheID
+	if !dst.page.styleCacheOK || dst.page.styles[k].style != styleA {
+		t.Fatalf("setup: cache = (%v,%d)", dst.page.styleCacheOK, k)
+	}
+
+	// src: a different style occupies the same slot k, and no cache.
+	src := NewFrame(4, 2)
+	src.Set(0, 0, Cell{Rune: 'b', Style: styleB})
+	src.page.styleCacheOK = false
+	if src.page.styleIndex[styleB] != k {
+		t.Fatalf("setup: style B in slot %d, want %d", src.page.styleIndex[styleB], k)
+	}
+
+	dst.CopyFrom(src)
+	if dst.page.styleCacheOK && dst.page.styles[dst.page.styleCacheID].style != dst.page.styleCache {
+		t.Fatal("CopyFrom left a stale style cache")
+	}
+	cell := Cell{Rune: 'c', Style: styleA}
+	dst.Set(1, 1, cell)
+	if got := dst.Cell(1, 1); !got.Equal(cell) {
+		t.Fatalf("cell = %+v, want %+v", got, cell)
+	}
+	if got := dst.Cell(0, 0); got.Style != styleB {
+		t.Fatalf("copied cell style = %+v, want %+v", got.Style, styleB)
+	}
+	if err := dst.CheckInvariants(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRowsEqualAt(t *testing.T) {
+	a := copyTestFrame(t, 10, 5, 'a')
+	b := a.Clone()
+	// b row y+1 shifted: compare a row y+1 against b row y after scrolling b.
+	b.ScrollUp(0, 4, 1)
+	for y := range 4 {
+		if !RowsEqualAt(a, y+1, b, y) {
+			t.Fatalf("row %d of a != row %d of scrolled b", y+1, y)
+		}
+	}
+	if RowsEqualAt(a, 0, b, 0) || RowsEqualAt(a, 0, b, 5) || RowsEqualAt(a, -1, b, 0) {
+		t.Fatal("unequal or out-of-range rows reported equal")
 	}
 }
