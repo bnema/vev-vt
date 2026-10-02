@@ -228,3 +228,84 @@ func TestRendererInvalidatesCopiedDrawOnReset(t *testing.T) {
 	require.True(t, next.Update().Snapshot)
 	require.NoError(t, next.Commit())
 }
+
+func TestPreparedDrawIsIndependentOfLaterPrepares(t *testing.T) {
+	frame := core.NewFrame(4, 3)
+	frame.Set(0, 0, core.Cell{Rune: 'A', Style: core.DefaultStyle()})
+	renderer, err := New(Options{})
+	require.NoError(t, err)
+
+	first, err := renderer.Prepare(frame, nil, false, Cursor{})
+	require.NoError(t, err)
+	firstUpdate, firstJSON := first.Update(), first.JSON()
+	require.NoError(t, first.Commit())
+
+	// The caller mutates its frame in place; neither the earlier draw nor the
+	// committed shadow may observe it.
+	frame.Set(1, 1, core.Cell{Rune: 'B', Style: core.DefaultStyle()})
+	second, err := renderer.Prepare(frame, nil, false, Cursor{})
+	require.NoError(t, err)
+	require.Equal(t, []int{1}, rowIndexes(second.Update()))
+	secondUpdate, secondJSON := second.Update(), second.JSON()
+	require.NoError(t, second.Commit())
+
+	frame.Set(2, 2, core.Cell{Rune: 'C', Style: core.DefaultStyle()})
+	third, err := renderer.Prepare(frame, nil, false, Cursor{})
+	require.NoError(t, err)
+	require.Equal(t, []int{2}, rowIndexes(third.Update()))
+	require.NoError(t, third.Commit())
+
+	require.Equal(t, firstUpdate, first.Update())
+	require.Equal(t, firstJSON, first.JSON())
+	require.Equal(t, secondUpdate, second.Update())
+	require.Equal(t, secondJSON, second.JSON())
+}
+
+func TestAbortThenPrepareKeepsCommittedShadow(t *testing.T) {
+	frame := core.NewFrame(3, 2)
+	renderer, err := New(Options{})
+	require.NoError(t, err)
+	first, err := renderer.Prepare(frame, nil, false, Cursor{})
+	require.NoError(t, err)
+	require.NoError(t, first.Commit())
+
+	frame.Set(0, 1, core.Cell{Rune: 'X', Style: core.DefaultStyle()})
+	aborted, err := renderer.Prepare(frame, nil, false, Cursor{})
+	require.NoError(t, err)
+	abortedJSON := aborted.JSON()
+	require.NoError(t, aborted.Abort())
+
+	retry, err := renderer.Prepare(frame, nil, false, Cursor{})
+	require.NoError(t, err)
+	require.False(t, retry.Update().Snapshot)
+	require.Equal(t, []int{1}, rowIndexes(retry.Update()))
+	require.Equal(t, abortedJSON, retry.JSON())
+	require.NoError(t, retry.Commit())
+
+	steady, err := renderer.Prepare(frame, nil, false, Cursor{})
+	require.NoError(t, err)
+	require.Empty(t, steady.Update().Rows)
+}
+
+func TestPrepareDoesNotAliasCallerFrame(t *testing.T) {
+	frame := core.NewFrame(2, 1)
+	renderer, err := New(Options{})
+	require.NoError(t, err)
+	prepared, err := renderer.Prepare(frame, nil, false, Cursor{})
+	require.NoError(t, err)
+	require.NoError(t, prepared.Commit())
+
+	// Mutating the caller frame after Commit must be seen as a change.
+	frame.Set(0, 0, core.Cell{Rune: 'Q', Style: core.DefaultStyle()})
+	next, err := renderer.Prepare(frame, nil, false, Cursor{})
+	require.NoError(t, err)
+	require.Equal(t, []int{0}, rowIndexes(next.Update()))
+}
+
+func rowIndexes(update Update) []int {
+	rows := make([]int, 0, len(update.Rows))
+	for _, row := range update.Rows {
+		rows = append(rows, row.Row)
+	}
+	return rows
+}
