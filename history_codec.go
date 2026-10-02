@@ -234,7 +234,7 @@ func parseHistory(data []byte, populate bool) (HistoryView, historyDecodeStats, 
 		return invalid()
 	}
 	stats := historyDecodeStats{chunks: uint64(chunkCount)}
-	seenIDs := make(map[RowID]struct{})
+	var seenIDs rowIDSet
 	var maxID RowID
 	var chunks []*HistoryChunk
 	if populate {
@@ -280,6 +280,7 @@ func parseHistory(data []byte, populate bool) (HistoryView, historyDecodeStats, 
 			return invalid()
 		}
 		usedPayloads := make([]bool, npayloads)
+		seenIDs.begin(int(rows))
 		rowIDs := make([]RowID, rows)
 		bounds := make([]LineBound, rows)
 		for row := range rows {
@@ -288,12 +289,13 @@ func parseHistory(data []byte, populate bool) (HistoryView, historyDecodeStats, 
 			if !ok || !bok || id == 0 || id >= math.MaxUint64-1 || !validHistoryBound(bound, int(width)) {
 				return invalid()
 			}
-			if _, duplicate := seenIDs[RowID(id)]; duplicate {
-				return invalid()
-			}
-			seenIDs[RowID(id)] = struct{}{}
+			seenIDs.collect(RowID(id))
 			maxID = max(maxID, RowID(id))
 			rowIDs[row], bounds[row] = RowID(id), bound
+		}
+		// Reject duplicate IDs before decoding any cells, as the map did.
+		if !seenIDs.commit() {
+			return invalid()
 		}
 		lastStyleRow := make([]int, nstyles)
 		for i := range lastStyleRow {

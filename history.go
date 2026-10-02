@@ -39,6 +39,7 @@ type History struct {
 	styleScratch      map[renderer.Style]struct{}
 	payloadScratch    map[renderer.CellPayload]struct{}
 	tailPagePayloads  map[renderer.CellPayload]struct{}
+	styleRowScratch   map[renderer.Style]int
 	rows              int
 	cells             int
 	logicalBytes      uint64
@@ -62,6 +63,28 @@ type HistoryChunk struct {
 }
 
 func newHistoryChunks(rows [][]renderer.Cell, bounds []LineBound, rowIDs []RowID) []*HistoryChunk {
+	return newHistoryChunksScratch(rows, bounds, rowIDs, nil)
+}
+
+// maxRetainedStyleScratch bounds the style-set capacity kept between uses so
+// one pathological high-cardinality page cannot pin a large map forever.
+const maxRetainedStyleScratch = 1024
+
+// newHistoryChunksScratch is newHistoryChunks with an optional caller-owned
+// map (scratch may be nil) reused, cleared, across chunks instead of allocating
+// one per chunk. The map is replaced before any reuse if the previous chunk
+// grew it past maxRetainedStyleScratch, and dropped on return if the last one
+// did, so one high-cardinality chunk cannot pin a large map.
+func newHistoryChunksScratch(rows [][]renderer.Cell, bounds []LineBound, rowIDs []RowID, scratch *map[renderer.Style]int) []*HistoryChunk {
+	var local map[renderer.Style]int
+	if scratch == nil {
+		scratch = &local
+	}
+	defer func() {
+		if len(*scratch) > maxRetainedStyleScratch {
+			*scratch = nil
+		}
+	}()
 	bounds = growBounds(bounds, len(rows))
 	rowIDs = growRowIDs(rowIDs, len(rows))
 	var chunks []*HistoryChunk
@@ -73,12 +96,26 @@ func newHistoryChunks(rows [][]renderer.Cell, bounds []LineBound, rowIDs []RowID
 			end++
 		}
 		frame := renderer.NewFrame(width, end-start)
-		lastStyleRow := make(map[renderer.Style]int)
+		if *scratch == nil || len(*scratch) > maxRetainedStyleScratch {
+			*scratch = make(map[renderer.Style]int)
+		} else {
+			clear(*scratch)
+		}
+		lastStyleRow := *scratch
+		defaultStyle := renderer.DefaultStyle()
 		for i := start; i < end; i++ {
 			frame.WriteRow(i-start, 0, rows[i])
-			for _, cell := range rows[i] {
+			// A run of identical raw styles canonicalizes identically and is
+			// already recorded for this row, so only the first cell of a run
+			// pays for Canonical and the map write.
+			var previous renderer.Style
+			for j, cell := range rows[i] {
+				if j > 0 && cell.Style == previous {
+					continue
+				}
+				previous = cell.Style
 				style := cell.Style.Canonical()
-				if style != renderer.DefaultStyle() {
+				if style != defaultStyle {
 					lastStyleRow[style] = i - start
 				}
 			}
@@ -300,8 +337,8 @@ func (h *History) recordTailRowStyles(width int) {
 	if h.tailPageRows == 0 || h.tailPageWidth != width || h.tailPageRows >= maxHistorySlabRows(width) {
 		h.tailPageWidth = width
 		h.tailPageRows = 0
-		h.tailPageStyles = map[renderer.Style]struct{}{renderer.DefaultStyle(): {}}
-		h.tailPagePayloads = nil
+		h.resetTailPageSets()
+		h.tailPageStyles[renderer.DefaultStyle()] = struct{}{}
 	}
 	for p := range h.payloadScratch {
 		if h.tailPagePayloads == nil {
@@ -315,13 +352,28 @@ func (h *History) recordTailRowStyles(width int) {
 	h.tailPageRows++
 }
 
+// resetTailPageSets empties the per-page style and payload sets, keeping their
+// storage for the next page unless a pathological page grew them past
+// maxRetainedStyleScratch. The style set is always non-nil afterwards.
+func (h *History) resetTailPageSets() {
+	if h.tailPageStyles == nil || len(h.tailPageStyles) > maxRetainedStyleScratch {
+		h.tailPageStyles = make(map[renderer.Style]struct{})
+	} else {
+		clear(h.tailPageStyles)
+	}
+	if len(h.tailPagePayloads) > maxRetainedStyleScratch {
+		h.tailPagePayloads = nil
+	} else {
+		clear(h.tailPagePayloads)
+	}
+}
+
 func (h *History) rebuildTailAccounting() {
 	old := h.tailBytes
 	h.tailBytes = 0
 	h.tailPageWidth = 0
 	h.tailPageRows = 0
-	h.tailPageStyles = nil
-	h.tailPagePayloads = nil
+	h.resetTailPageSets()
 	for _, row := range h.tail {
 		h.prepareRowStyles(row)
 		delta := h.tailAppendDelta(len(row))
@@ -496,16 +548,33 @@ func (h *History) sealTail() {
 	chunks := h.tailViewChunks()
 	h.chunks = append(h.chunks, chunks...)
 	h.logicalBytes = h.logicalBytes - h.tailBytes + historyChunksLogicalBytes(chunks)
-	h.tail = nil
 	h.cachedTail = nil
-	h.tailCells = nil
-	h.tailBounds = nil
-	h.tailIDs = nil
+	// The sealed chunks hold compact copies (newHistoryChunks and the bounds and
+	// ID slices are copied), and no view, snapshot or callback ever receives
+	// h.tail rows or h.tailCells. The mutable-tail storage is therefore private
+	// and can be recycled for the next chunk instead of reallocated. Cells are
+	// cleared so recycled storage does not pin payload strings. Oversized
+	// storage (wide rows) is released as before.
+	clear(h.tail)
+	h.tail = h.tail[:0]
+	if cap(h.tailCells) > maxTailPreallocCells {
+		h.tailCells = nil
+	} else {
+		clear(h.tailCells)
+		h.tailCells = h.tailCells[:0]
+	}
+	h.tailBounds = h.tailBounds[:0]
+	h.tailIDs = h.tailIDs[:0]
 	h.tailBytes = 0
 	h.tailPageWidth = 0
 	h.tailPageRows = 0
-	h.tailPageStyles = nil
-	h.tailPagePayloads = nil
+	// Sets are cleared lazily by the next page; release oversized ones now.
+	if len(h.tailPageStyles) > maxRetainedStyleScratch {
+		h.tailPageStyles = nil
+	}
+	if len(h.tailPagePayloads) > maxRetainedStyleScratch {
+		h.tailPagePayloads = nil
+	}
 }
 
 // evictFor discards oldest rows until row can fit both retention budgets.
@@ -552,6 +621,9 @@ func (h *History) evictOldest() {
 	h.cells -= len(row)
 	h.tail[0] = nil
 	h.tail = h.tail[1:]
+	// The evicted prefix stays in the recycled backing array; clear it so its
+	// payload strings are not pinned until the next seal.
+	clear(row)
 	h.tailCells = h.tailCells[len(row):]
 	h.tailBounds = growBounds(h.tailBounds, len(h.tail)+1)[1:]
 	h.tailIDs = growRowIDs(h.tailIDs, len(h.tail)+1)[1:]
@@ -569,7 +641,7 @@ func (h *History) SealAndView() HistoryView {
 
 func (h *History) tailViewChunks() []*HistoryChunk {
 	if h.cachedTail == nil && len(h.tail) > 0 {
-		h.cachedTail = newHistoryChunks(h.tail, h.tailBounds, h.tailIDs)
+		h.cachedTail = newHistoryChunksScratch(h.tail, h.tailBounds, h.tailIDs, &h.styleRowScratch)
 	}
 	return h.cachedTail
 }
