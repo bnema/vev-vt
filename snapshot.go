@@ -88,22 +88,22 @@ func HistoryFromBlobs(config HistoryConfig, sealed [][]byte, tail []byte) (*Hist
 }
 
 func decodeRestoredHistoryBlobs(sealed [][]byte, tail []byte, extra ...HistoryView) ([]HistoryView, HistoryView, error) {
-	seen := make(map[RowID]struct{})
+	var seen rowIDSet
 	sealedViews := make([]HistoryView, len(sealed))
 	for i, blob := range sealed {
 		view, err := UnmarshalHistory(blob)
-		if err != nil || len(view.chunks) != 1 || view.chunks[0].len() == 0 || !validateRestoredHistoryView(view, seen) {
+		if err != nil || len(view.chunks) != 1 || view.chunks[0].len() == 0 || !validateRestoredHistoryView(view, &seen) {
 			return nil, HistoryView{}, fmt.Errorf("restore sealed history: %w", errInvalidHistory)
 		}
 		sealedViews[i] = view
 	}
 
 	tailView, err := UnmarshalHistory(tail)
-	if err != nil || !validateRestoredHistoryView(tailView, seen) {
+	if err != nil || !validateRestoredHistoryView(tailView, &seen) {
 		return nil, HistoryView{}, fmt.Errorf("restore history tail: %w", errInvalidHistory)
 	}
 	for _, view := range extra {
-		if !validateRestoredHistoryView(view, seen) {
+		if !validateRestoredHistoryView(view, &seen) {
 			return nil, HistoryView{}, fmt.Errorf("restore recovery transcript: %w", errInvalidHistory)
 		}
 	}
@@ -174,7 +174,7 @@ func (h *History) boundedRestoredChunk(chunk *HistoryChunk) *HistoryChunk {
 	return bounded
 }
 
-func validateRestoredHistoryView(view HistoryView, seen map[RowID]struct{}) bool {
+func validateRestoredHistoryView(view HistoryView, seen *rowIDSet) bool {
 	if view.nextRowID == 0 || view.nextRowID == ^RowID(0) {
 		return false
 	}
@@ -183,18 +183,16 @@ func validateRestoredHistoryView(view HistoryView, seen map[RowID]struct{}) bool
 		if chunk == nil || chunk.len() != len(chunk.rowIDs) || chunk.len() != len(chunk.bounds) {
 			return false
 		}
+		seen.reserve(len(chunk.rowIDs))
 		for _, id := range chunk.rowIDs {
 			if id == 0 || id >= ^RowID(0)-1 {
 				return false
 			}
-			if _, duplicate := seen[id]; duplicate {
-				return false
-			}
-			seen[id] = struct{}{}
+			seen.collect(id)
 			maxID = max(maxID, id)
 		}
 	}
-	return view.nextRowID > maxID
+	return view.nextRowID > maxID && seen.commit()
 }
 
 // NewScreenWithRecoveryTranscript constructs a fresh blank screen whose
