@@ -159,6 +159,10 @@ func (p *Parser) commandEvent() Event {
 // exported separately so adapters can validate commands without maintaining a
 // stream parser.
 func ParseCommand(body []byte, config ...Limits) (Command, error) {
+	return parseCommand(body, true, config)
+}
+
+func parseCommand(body []byte, copyPayload bool, config []Limits) (Command, error) {
 	var l Limits
 	if len(config) != 0 {
 		l = config[0]
@@ -179,11 +183,27 @@ func ParseCommand(body []byte, config ...Limits) (Command, error) {
 	if uint64(len(payload)) > l.MaxPayloadBytes {
 		return Command{}, ErrPayloadTooLarge
 	}
-	return Command{Controls: controls, Payload: append([]byte(nil), payload...)}, nil
+	if copyPayload {
+		payload = append([]byte(nil), payload...)
+	}
+	return Command{Controls: controls, Payload: payload}, nil
 }
 
 // ParseAPC parses a complete ESC _ G ... ST sequence.
 func ParseAPC(apc []byte, config ...Limits) (Command, error) {
+	return parseAPC(apc, true, config)
+}
+
+// ParseAPCBorrowed is ParseAPC without copying the payload: the returned
+// Command.Payload aliases apc. The caller must not modify apc while the
+// command is in use and must not retain the command beyond the lifetime of
+// apc. Session.Process copies whatever it keeps from a command's payload, so
+// a borrowed command may be passed to it and apc reused afterwards.
+func ParseAPCBorrowed(apc []byte, config ...Limits) (Command, error) {
+	return parseAPC(apc, false, config)
+}
+
+func parseAPC(apc []byte, copyPayload bool, config []Limits) (Command, error) {
 	if len(apc) < 4 || apc[0] != 0x1b || apc[1] != '_' || apc[2] != 'G' {
 		return Command{}, ErrInvalidAPC
 	}
@@ -195,5 +215,5 @@ func ParseAPC(apc []byte, config ...Limits) (Command, error) {
 	} else {
 		return Command{}, ErrAPCTruncated
 	}
-	return ParseCommand(body, config...)
+	return parseCommand(body, copyPayload, config)
 }
