@@ -136,6 +136,24 @@ func TestCopyFromReleasesStorageWhenSourceShrinks(t *testing.T) {
 	}
 }
 
+func TestCopyFromClearsStalePayloadSlots(t *testing.T) {
+	src := copyTestFrame(t, 8, 2, 'a')
+	dst := NewFrame(8, 2)
+	for x := range 8 {
+		dst.Set(x, 0, Cell{Rune: 'x', Payload: copyTestPayload(t, "", "https://example.test/"+string(rune('a'+x)))})
+	}
+	old := len(dst.page.payloads)
+	dst.CopyFrom(src)
+	if len(dst.page.payloads) >= old {
+		t.Fatalf("test needs a source with fewer payload slots: %d >= %d", len(dst.page.payloads), old)
+	}
+	for i, slot := range dst.page.payloads[len(dst.page.payloads):old] {
+		if slot != (payloadSlot{}) {
+			t.Fatalf("stale payload slot %d still holds %+v", len(dst.page.payloads)+i, slot.value)
+		}
+	}
+}
+
 func TestRowsEqualAt(t *testing.T) {
 	a := copyTestFrame(t, 10, 4, 'a')
 	b := a.Clone()

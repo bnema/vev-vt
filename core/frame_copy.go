@@ -45,7 +45,13 @@ func (f *Frame) CopyFrom(src Frame) {
 		clear(dst.styleIndex)
 	}
 	maps.Copy(dst.styleIndex, from.styleIndex)
+	// Payloads hold strings: clear the reused tail so stale graphemes and
+	// hyperlinks are not kept alive by the backing array.
+	oldPayloads := len(dst.payloads)
 	dst.payloads = append(dst.payloads[:0], from.payloads...)
+	if oldPayloads > len(dst.payloads) {
+		clear(dst.payloads[len(dst.payloads):oldPayloads])
+	}
 	dst.freePayloads = append(dst.freePayloads[:0], from.freePayloads...)
 	dst.payloadBytes = from.payloadBytes
 	if dst.payloadIndex == nil && len(from.payloadIndex) > 0 {

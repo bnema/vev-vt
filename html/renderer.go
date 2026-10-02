@@ -209,16 +209,17 @@ func (r *Renderer) materializeCellSource(source CellSource) (core.Frame, error) 
 }
 
 // copyFrame copies a validated frame into the spare page, which the returned
-// frame then owns.
+// frame then owns. CopyFrom always succeeds here: src passed Validate.
 func (r *Renderer) copyFrame(src core.Frame) core.Frame {
 	frame := r.spare
 	r.spare = core.Frame{}
 	frame.CopyFrom(src)
-	if frame.Width != src.Width || frame.Height != src.Height {
-		return src.Clone()
-	}
 	return frame
 }
+
+// maxRetainedRows bounds the row count whose encoder scratch the renderer
+// keeps between updates.
+const maxRetainedRows = 80
 
 // normalizeWrapPendingCursor maps the deferred-wrap one-past-end column
 // produced after writing the last column with autowrap enabled onto the
@@ -291,13 +292,15 @@ func (r *Renderer) buildUpdate(frame core.Frame, scratch []core.Cell, snapshot b
 	if cap(ends) < frame.Width {
 		ends = make([]int, 0, frame.Width)
 		text = make([]byte, 0, frame.Width)
-		rowStarts = make([]int, 0, 4)
+	}
+	if cap(rowStarts) < min(frame.Height, maxRetainedRows) {
+		rowStarts = make([]int, 0, min(frame.Height, maxRetainedRows))
 	}
 	defer func() {
 		// Keep scratch for frames up to the common 240x80 size only, so one
 		// huge snapshot does not pin its buffers for the renderer lifetime.
-		const maxRetainedCells = 240 * 80
-		if cap(ends) <= maxRetainedCells && cap(text) <= 4*maxRetainedCells && cap(rowStarts) <= 80 {
+		const maxRetainedCells = 240 * maxRetainedRows
+		if cap(ends) <= maxRetainedCells && cap(text) <= 4*maxRetainedCells && cap(rowStarts) <= maxRetainedRows {
 			r.ends, r.text, r.rowStarts = ends, text, rowStarts
 		}
 	}()

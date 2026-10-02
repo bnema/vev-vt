@@ -76,6 +76,7 @@
   white-space: pre;
   visibility: hidden;
   pointer-events: none;
+  user-select: none;
 }
 
 .vev-terminal__cell--bold { font-weight: 700; }

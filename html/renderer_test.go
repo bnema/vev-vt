@@ -435,6 +435,103 @@ func TestAbortThenPrepareKeepsCommittedShadow(t *testing.T) {
 	require.Empty(t, steady.Update().Rows)
 }
 
+func TestRendererKeepsEncoderScratchAt240x80(t *testing.T) {
+	frames := [2]core.Frame{core.NewFrame(240, 80), core.NewFrame(240, 80)}
+	for y := range 80 {
+		for x := range 240 {
+			frames[0].Set(x, y, core.Cell{Rune: 'a'})
+			frames[1].Set(x, y, core.Cell{Rune: 'b'})
+		}
+	}
+	renderer, err := New(Options{})
+	require.NoError(t, err)
+	for step := range 2 {
+		prepared, err := renderer.Prepare(frames[step], nil, false, Cursor{})
+		require.NoError(t, err)
+		require.NoError(t, prepared.Commit())
+	}
+	require.GreaterOrEqual(t, cap(renderer.rowStarts), 80, "row-start scratch was not retained")
+	require.GreaterOrEqual(t, cap(renderer.ends), 240, "run-end scratch was not retained")
+}
+
+// TestRendererMatchesFreshRendererAcrossTransactions drives one renderer
+// (reused spare pages and scratch) through random edits with payloads and
+// equivalent styles, aborts, resets, stale commits and failed prepares. Most
+// steps commit and keep editing, so the shadow and spare pages alternate.
+// Every update must list exactly the rows that differ from a cloned committed
+// shadow (compared cell by cell with Cell.Equal) and encode the source frame.
+func TestRendererMatchesFreshRendererAcrossTransactions(t *testing.T) {
+	rng := rand.New(rand.NewSource(7))
+	link := func(i int) core.CellPayload {
+		payload, err := core.NewCellPayload("", "https://example.test/"+string(rune('a'+i)))
+		require.NoError(t, err)
+		return payload
+	}
+	bold := core.DefaultStyle()
+	bold.Bold = true
+	equivalent := bold
+	equivalent.ForegroundRGB = core.RGB{R: 1} // inactive RGB: same style
+	for seed := range 30 {
+		width, height := 2+rng.Intn(10), 1+rng.Intn(5)
+		frame := core.NewFrame(width, height)
+		renderer, err := New(Options{})
+		require.NoError(t, err)
+		var committed core.Frame
+		var stale *PreparedDraw
+		for step := range 60 {
+			for range rng.Intn(4) {
+				cell := core.Cell{Rune: rune('a' + rng.Intn(4))}
+				switch rng.Intn(4) {
+				case 0:
+					cell.Style = bold
+				case 1:
+					cell.Style = equivalent
+				case 2:
+					cell.Payload = link(rng.Intn(3))
+				}
+				frame.Set(rng.Intn(width), rng.Intn(height), cell)
+			}
+			if stale != nil && rng.Intn(3) == 0 {
+				require.ErrorIs(t, stale.Commit(), ErrStaleDraw)
+				stale = nil
+			}
+			if rng.Intn(10) == 0 {
+				// A failed prepare must not lose or corrupt the spare page.
+				_, err := renderer.Prepare(frame, nil, false, Cursor{Row: height})
+				require.Error(t, err)
+			}
+
+			want := []int{}
+			for y := range height {
+				for x := range width {
+					if committed.Width == 0 || !frame.Cell(x, y).Equal(committed.Cell(x, y)) {
+						want = append(want, y)
+						break
+					}
+				}
+			}
+			got, err := renderer.Prepare(frame, nil, false, Cursor{})
+			require.NoError(t, err, "seed %d step %d", seed, step)
+			update := got.Update()
+			require.Equal(t, committed.Width == 0, update.Snapshot, "seed %d step %d", seed, step)
+			require.Equal(t, want, rowIndexes(update), "seed %d step %d", seed, step)
+			requireRunsMatchFrame(t, update, frame, step)
+
+			switch k := rng.Intn(20); {
+			case k == 0:
+				renderer.Reset()
+				committed = core.Frame{}
+				stale = got
+			case k < 4:
+				require.NoError(t, got.Abort())
+			default:
+				require.NoError(t, got.Commit())
+				committed = frame.Clone()
+			}
+		}
+	}
+}
+
 func rowIndexes(update Update) []int {
 	rows := make([]int, 0, len(update.Rows))
 	for _, row := range update.Rows {
