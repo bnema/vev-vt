@@ -103,10 +103,27 @@ func (s *Screen) emitLineEvicted(top, n int) {
 	if s.alternate != nil || top != 0 {
 		return
 	}
+	// Without a history or an observer nothing consumes the evicted rows, so
+	// skip materialising them.
+	if s.history == nil && s.OnLineEvicted == nil {
+		return
+	}
+	// Drop scratch sized for a much wider past geometry.
+	if cap(s.evictScratch) > 2*s.frame.Width {
+		s.evictScratch = nil
+	}
 	// Read boundaries and IDs before the caller rotates the frame: a soft link
 	// belongs to the row it follows, and rotation reassigns row indices.
 	for y := top; y < top+n; y++ {
-		s.recordEvicted(s.frame.Row(y), s.buffer.bound(y), s.buffer.rowIDs[y])
+		// The scratch row is only valid for this call: History copies appended
+		// rows and OnLineEvicted receives its own copy (see recordEvicted).
+		row := s.evictScratch[:0]
+		for x := range s.frame.Width {
+			row = append(row, s.frame.Cell(x, y))
+		}
+		s.evictScratch = row
+		s.recordEvicted(row, s.buffer.bound(y), s.buffer.rowIDs[y])
+		clear(s.evictScratch)
 	}
 }
 

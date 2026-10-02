@@ -100,15 +100,23 @@ optional compression during idle time.
 The HTML renderer compares every row with its committed shadow; damage values are
 non-authoritative hints. `Prepare` permits one outstanding draw and requires an
 explicit `Commit` or `Abort`. `Reset` invalidates retained prepared draws.
-Updates are immutable, schema-versioned JSON-compatible values. Complete-row
+Updates are immutable JSON-compatible values at schema version 2; browser
+events share that version, so a host must serve the matching `terminal.js`.
+Complete-row
 replacement preserves wide-cell atomicity, and scroll damage uses a safe
-snapshot fallback. `html.DefaultLimits()` documents the default 1,000,000-cell,
+snapshot fallback. Rows are encoded as text runs: adjacent printable ASCII
+cells with one style form a single entry, while wide and non-ASCII characters
+stay single entries so column alignment never depends on fallback fonts. `html.DefaultLimits()` documents the default 1,000,000-cell,
 10,000-row, 64 MiB generated-update, and 65,536-style bounds.
 
 The browser adapter builds DOM nodes with `textContent` and fixed classes. It
 provides a labeled input proxy, synchronized plain-text accessible output,
 typed CSS themes, IME-aware text input, keys, paste, pointer, wheel, resize, and
 focus events. A synchronous consumer callback decides default prevention.
+`applyAll` validates a queue of updates and merges them before touching the
+DOM, so a consumer that falls behind rebuilds each changed row once. Text runs
+assume a monospace primary font whose ASCII advance is `1ch`, and
+`maxTextBytes` bounds one run, so keep it at least as large as the widest row.
 Consumers remain responsible for transport and mapping events to terminal bytes
 or application actions. Clipboard text is preserved unchanged, including
 control bytes, so consumers forwarding paste events to a PTY must apply their
@@ -154,6 +162,14 @@ npm run test:browser
 npm run test:browser:docker
 ```
 
+`TestDifferentialOracle` replays seeded terminal workloads through the public
+VT, history, graphics, ANSI and HTML APIs and compares one digest per layer with
+`testdata/oracle/golden.txt`. Keep it unchanged for refactors and performance
+work. For a deliberate behavior change, regenerate it on a full run with
+`go test -run TestDifferentialOracle -oracle.update .` and explain the changed
+columns. To locate a divergence, run `-oracle.dump=DIR` on both trees and diff
+the scenario transcripts.
+
 Playwright 1.62.1 and its Chromium, Firefox, and WebKit revisions are pinned by
 `package-lock.json`. The matching Playwright container provides the reproducible
 fallback when host libraries cannot run one of those browser builds. Production
@@ -161,3 +177,5 @@ Go packages retain the module's standard-library-only dependency boundary apart
 from `vev-vt/core`.
 
 [Storage benchmarks and design decisions →](docs/storage-optimization.md)
+
+[Measuring and profiling performance changes →](docs/performance.md)

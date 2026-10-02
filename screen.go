@@ -18,6 +18,11 @@ const maxEscapeBufferLen = 128 * 1024
 // through the text path or truncated at the OSC clipboard bound.
 const maxKittyEscapeBufferLen = int(kittygraphics.DefaultMaxAPCBytes) + 5
 
+// maxRetainedEscapeBufferCap bounds the capacity of the escape scratch buffers
+// kept between writes so that a single huge APC does not pin its memory, while
+// ordinary fragmented uploads still reuse their buffer.
+const maxRetainedEscapeBufferCap = 1 << 20
+
 const (
 	// ColorSchemeReportDark is the DEC 2031 dark-scheme report.
 	ColorSchemeReportDark = "\x1b[?997;1n"
@@ -72,6 +77,8 @@ type Screen struct {
 	damageSaturated        bool
 	damageFullRedrawSticky bool
 	escapeBuf              []byte
+	combineBuf             []byte
+	evictScratch           []renderer.Cell
 	kittyDiscard           bool
 	kittyDiscardEscaped    bool
 	kittyPendingDisplay    *kittygraphics.Controls
@@ -168,7 +175,9 @@ func (s *Screen) LineBounds() []LineBound {
 }
 
 func (s *Screen) Write(data []byte) {
-	if len(s.escapeBuf) > 0 && isKittyEscapeContinuation(s.escapeBuf, data) {
+	if len(s.escapeBuf) == 0 {
+		s.trimEscapeBuffers()
+	} else if isKittyEscapeContinuation(s.escapeBuf, data) {
 		prefix := s.escapeBuf
 		s.escapeBuf = nil
 		data = s.continueKittyEscape(prefix, data)
@@ -177,11 +186,30 @@ func (s *Screen) Write(data []byte) {
 		}
 	}
 	if len(s.escapeBuf) > 0 {
-		combined := make([]byte, 0, len(s.escapeBuf)+len(data))
+		// Reuse a bounded scratch buffer: data is consumed before Write returns
+		// and nothing retains slices of it (the partial-escape path copies).
+		// Detach it while in use: callbacks invoked below may call Write
+		// re-entrantly, and that inner Write must not overwrite bytes this
+		// Write is still reading.
+		need := len(s.escapeBuf) + len(data)
+		combined := s.combineBuf[:0]
+		s.combineBuf = nil
+		if cap(combined) < need {
+			combined = make([]byte, 0, need)
+		}
 		combined = append(combined, s.escapeBuf...)
 		combined = append(combined, data...)
+		defer func() {
+			if s.combineBuf == nil && cap(combined) <= maxRetainedEscapeBufferCap {
+				s.combineBuf = combined[:0]
+			}
+		}()
 		data = combined
-		s.escapeBuf = nil
+		if cap(s.escapeBuf) > maxRetainedEscapeBufferCap {
+			s.escapeBuf = nil
+		} else {
+			s.escapeBuf = s.escapeBuf[:0]
+		}
 	}
 	if s.kittyDiscard {
 		consumed := s.consumeKittyDiscard(data)
@@ -249,42 +277,55 @@ func isKittyEscapeContinuation(prefix, data []byte) bool {
 	return true
 }
 
+// trimEscapeBuffers drops oversized idle escape scratch buffers.
+func (s *Screen) trimEscapeBuffers() {
+	if cap(s.escapeBuf) > maxRetainedEscapeBufferCap {
+		s.escapeBuf = nil
+	}
+	if cap(s.combineBuf) > maxRetainedEscapeBufferCap {
+		s.combineBuf = nil
+	}
+}
+
+// recycleEscapeBuf keeps buf's capacity for the next fragmented escape when no
+// other buffer has been installed meanwhile. Callers must be done with buf.
+func (s *Screen) recycleEscapeBuf(buf []byte) {
+	if s.escapeBuf == nil && cap(buf) <= maxRetainedEscapeBufferCap {
+		s.escapeBuf = buf[:0]
+	}
+}
+
+// continueKittyEscape completes or extends the pending Kitty APC in prefix,
+// which is the Screen's former escapeBuf (s.escapeBuf is nil on entry). The
+// protocol adapter copies whatever it retains from a dispatched APC, so prefix
+// is recycled afterwards instead of being reallocated for every APC.
 func (s *Screen) continueKittyEscape(prefix, data []byte) []byte {
 	if len(prefix) != 0 && prefix[len(prefix)-1] == 0x1b && len(data) != 0 && data[0] == '\\' {
 		if len(prefix)+1 <= maxKittyEscapeBufferLen {
 			apc := append(prefix, data[:1]...)
 			s.dispatchKittyGraphics(apc)
+			s.recycleEscapeBuf(apc)
 		} else {
 			s.abortKittyPendingDisplay()
+			s.recycleEscapeBuf(prefix)
 		}
 		return data[1:]
 	}
 	for i := 0; i < len(data); i++ {
 		if data[i] == 0x9c {
 			end := i + 1
-			if len(prefix)+end <= maxKittyEscapeBufferLen {
-				apc := append(prefix, data[:end]...)
-				s.dispatchKittyGraphics(apc)
-			} else {
-				s.abortKittyPendingDisplay()
-			}
+			s.finishKittyEscape(prefix, data[:end])
 			return data[end:]
 		}
 		if data[i] == 0x1b && i+1 < len(data) && data[i+1] == '\\' {
 			end := i + 2
-			if len(prefix)+end <= maxKittyEscapeBufferLen {
-				apc := append(prefix, data[:end]...)
-				s.dispatchKittyGraphics(apc)
-			} else {
-				s.abortKittyPendingDisplay()
-			}
+			s.finishKittyEscape(prefix, data[:end])
 			return data[end:]
 		}
 	}
 	remaining := maxKittyEscapeBufferLen - len(prefix)
 	if len(data) <= remaining {
-		returnData := append(prefix, data...)
-		s.escapeBuf = returnData
+		s.escapeBuf = append(prefix, data...)
 		return nil
 	}
 	s.abortKittyPendingDisplay()
@@ -294,8 +335,22 @@ func (s *Screen) continueKittyEscape(prefix, data []byte) []byte {
 		escaped = data[remaining-1] == 0x1b
 	}
 	s.kittyDiscardEscaped = escaped
+	s.recycleEscapeBuf(prefix)
 	tail := data[remaining:]
 	return tail[s.consumeKittyDiscard(tail):]
+}
+
+// finishKittyEscape dispatches prefix+terminated, or aborts when the framed
+// APC would exceed the Kitty escape bound, then recycles prefix.
+func (s *Screen) finishKittyEscape(prefix, terminated []byte) {
+	if len(prefix)+len(terminated) > maxKittyEscapeBufferLen {
+		s.abortKittyPendingDisplay()
+		s.recycleEscapeBuf(prefix)
+		return
+	}
+	apc := append(prefix, terminated...)
+	s.dispatchKittyGraphics(apc)
+	s.recycleEscapeBuf(apc)
 }
 
 func (s *Screen) consumeKittyDiscard(data []byte) int {
@@ -418,7 +473,9 @@ func (s *Screen) consumeKittyGraphics(data []byte) (consumed int, partial bool) 
 }
 
 func (s *Screen) dispatchKittyGraphics(apc []byte) {
-	command, err := kittygraphics.ParseAPC(apc)
+	// The session copies any payload it retains, so the APC bytes may be
+	// borrowed for the duration of this call only.
+	command, err := kittygraphics.ParseAPCBorrowed(apc)
 	if err != nil {
 		s.abortKittyPendingDisplay()
 		return

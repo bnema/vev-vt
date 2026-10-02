@@ -7,7 +7,7 @@ const root = process.cwd();
 function snapshot(width, height, text) {
   const cells = Array.from({ length: width }, (_, column) => ({ column, width: 1, text, style: 0 }));
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     width,
     height,
     snapshot: true,

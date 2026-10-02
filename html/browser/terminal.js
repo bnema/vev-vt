@@ -13,9 +13,9 @@
   /** @typedef {{maxCells?: number, maxRowsPerUpdate?: number, maxColumns?: number, maxStyles?: number, maxTextBytes?: number, maxUpdateBytes?: number, maxPasteBytes?: number}} BrowserLimits */
   /** @typedef {{foreground: RGB, background: RGB, cursor: RGB, selection: RGB, selectionText: RGB, palette: RGB[]}} TerminalTheme */
   /** @typedef {{label: string, decide?: (event: BrowserEvent) => CaptureDecision, send?: (event: BrowserEvent) => void, limits?: BrowserLimits}} MountOptions */
-  /** @typedef {{apply(update: Update): void, focus(): void, setMouseCapture(enabled: boolean): void, setTheme(theme: TerminalTheme): void, destroy(): void}} Terminal */
+  /** @typedef {{apply(update: Update): void, applyAll(updates: Update[]): void, focus(): void, setMouseCapture(enabled: boolean): void, setTheme(theme: TerminalTheme): void, destroy(): void}} Terminal */
 
-  const SCHEMA_VERSION = 1;
+  const SCHEMA_VERSION = 2;
   const DEFAULT_LIMITS = Object.freeze({
     maxCells: 1_000_000,
     maxRowsPerUpdate: 10_000,
@@ -26,6 +26,7 @@
     maxPasteBytes: 1 << 20
   });
   const encoder = new TextEncoder();
+  const PRINTABLE_ASCII = /^[\x20-\x7e]*$/;
 
   function fail(message) {
     throw new TypeError(`VevTerminal: ${message}`);
@@ -56,7 +57,7 @@
   /** @returns {{value: string, byteLength: number}} */
   function boundedString(value, limit, name) {
     if (typeof value !== 'string') fail(`${name} must be a string`);
-    const byteLength = encoder.encode(value).byteLength;
+    const byteLength = PRINTABLE_ASCII.test(value) ? value.length : encoder.encode(value).byteLength;
     if (byteLength > limit) fail(`${name} exceeds its byte limit`);
     return { value, byteLength };
   }
@@ -148,10 +149,13 @@
       object(candidate, name);
       keys(candidate, ['column', 'width', 'text', 'style'], name);
       const current = integer(candidate.column, 0, width - 1, `${name}.column`);
-      const cellWidth = integer(candidate.width, 1, 2, `${name}.width`);
+      const cellWidth = integer(candidate.width, 1, configured.maxColumns, `${name}.width`);
       if (current !== column) fail(`row coverage is not contiguous at row ${row} column ${column}`);
       if (current + cellWidth > width) fail(`row coverage exceeds width at row ${row}`);
       const text = boundedString(candidate.text, configured.maxTextBytes, `${name}.text`);
+      // Entries wider than one wide character are text runs: printable ASCII,
+      // one character per column, so grid columns and font advance agree.
+      if (cellWidth > 2 && (text.value.length !== cellWidth || !PRINTABLE_ASCII.test(text.value))) fail(`${name} text run does not match its width`);
       const cell = {
         column: current,
         width: cellWidth,
@@ -198,6 +202,59 @@
     return { schemaVersion: SCHEMA_VERSION, width, height, snapshot, rows, styles, cursor: validateCursor(value.cursor, width, height) };
   }
 
+  /**
+   * Merge validated updates into one equivalent update, or return null when
+   * the merged styles would exceed maxStyles (callers then apply in order).
+   * Every incremental update must match the geometry established by the
+   * mounted terminal or the latest snapshot, exactly as sequential apply
+   * requires, so a protocol error is reported before any DOM mutation.
+   * The merged update keeps the latest snapshot flag, geometry and cursor;
+   * rows are last-writer-wins and style ids are remapped.
+   */
+  function coalesce(updates, mounted, maxStyles) {
+    let geometry = mounted;
+    for (const update of updates) {
+      if (update.snapshot) geometry = { width: update.width, height: update.height };
+      else if (!geometry || update.width !== geometry.width || update.height !== geometry.height) fail('incremental update dimensions do not match the mounted snapshot');
+    }
+    if (updates.length === 1) return updates[0];
+    let start = 0;
+    for (let index = 0; index < updates.length; index += 1) if (updates[index].snapshot) start = index;
+    const tail = updates.slice(start);
+    const last = tail[tail.length - 1];
+    const rows = new Map();
+    for (const update of tail) for (const row of update.rows) rows.set(row.row, { row, styles: update.styles });
+    const styles = [];
+    const ids = new Map();
+    const remaps = new Map();
+    const merged = [];
+    for (const key of [...rows.keys()].sort((left, right) => left - right)) {
+      const { row, styles: source } = rows.get(key);
+      let remap = remaps.get(source);
+      if (!remap) {
+        remap = new Array(source.length);
+        remaps.set(source, remap);
+      }
+      const cells = row.cells.map(cell => {
+        let id = remap[cell.style];
+        if (id === undefined) {
+          const styleKey = JSON.stringify(source[cell.style]);
+          id = ids.get(styleKey);
+          if (id === undefined) {
+            id = styles.length;
+            ids.set(styleKey, id);
+            styles.push(source[cell.style]);
+          }
+          remap[cell.style] = id;
+        }
+        return id === cell.style ? cell : { ...cell, style: id };
+      });
+      merged.push({ row: row.row, bytes: row.bytes, cells });
+    }
+    if (styles.length > maxStyles) return null;
+    return { schemaVersion: SCHEMA_VERSION, width: last.width, height: last.height, snapshot: tail[0].snapshot, rows: merged, styles, cursor: last.cursor };
+  }
+
   function xtermColor(index) {
     if (index < 16) return `var(--vev-color-${index})`;
     if (index < 232) {
@@ -236,23 +293,8 @@
     node.className = 'vev-terminal__row';
     node.dataset.row = String(row.row);
     let text = '';
-    for (let index = 0; index < row.cells.length; index += 1) {
-      let cell = row.cells[index];
+    for (const cell of row.cells) {
       const style = styles[cell.style];
-      // A run of spaces needs one grid item, not one item per column. Only
-      // merge plain spaces: arbitrary text still needs explicit cell widths.
-      if (cell.text === ' ' && cell.width === 1 && !style.underline && !style.strikethrough) {
-        let width = cell.width;
-        let spaces = cell.text;
-        while (index + 1 < row.cells.length) {
-          const next = row.cells[index + 1];
-          if (next.text !== ' ' || next.width !== 1 || next.style !== cell.style || next.column !== cell.column + width) break;
-          width += next.width;
-          spaces += next.text;
-          index += 1;
-        }
-        cell = { ...cell, width, text: spaces };
-      }
       const child = document.createElement('span');
       child.className = 'vev-terminal__cell';
       child.dataset.column = String(cell.column);
@@ -345,7 +387,15 @@
     accessible.setAttribute('aria-live', 'off');
     accessible.setAttribute('aria-label', `${label} output`);
 
-    root.append(input, viewport, accessible);
+    // Grid tracks round the column width (Chromium: to 1/64 px) while text
+    // advances by the exact glyph width, so a long text run drifts out of its
+    // columns. The probe measures both and letter-spacing absorbs the gap.
+    const probe = document.createElement('span');
+    probe.className = 'vev-terminal__measure';
+    probe.setAttribute('aria-hidden', 'true');
+    probe.textContent = 'x'.repeat(64);
+
+    root.append(input, viewport, accessible, probe);
 
     let destroyed = false;
     let composing = false;
@@ -363,6 +413,7 @@
     let pointerFrame = 0;
     let pendingPointer = null;
     let lastResize = '';
+    let letterSpacing = '';
     const previousProperties = new Map();
 
     function setOwnedProperty(name, value) {
@@ -416,7 +467,48 @@
     /** @param {Update} value */
     function apply(value) {
       alive();
-      const update = validateUpdate(value, configured);
+      applyValidated(validateUpdate(value, configured));
+    }
+
+    /**
+     * Validate a queue of updates and their geometry chain, then apply one
+     * merged update: a snapshot supersedes everything before it and later
+     * rows win. A consumer that falls behind rebuilds each changed row once
+     * instead of once per queued update. Invalid input throws before the DOM
+     * changes.
+     * @param {Update[]} values
+     */
+    function applyAll(values) {
+      alive();
+      if (!Array.isArray(values)) fail('updates must be an array');
+      if (values.length === 0) return;
+      const updates = values.map(value => validateUpdate(value, configured));
+      const mounted = rowNodes.length === 0 ? null : { width, height };
+      const merged = coalesce(updates, mounted, configured.maxStyles);
+      if (merged) applyValidated(merged);
+      else {
+        // Rare: the merged rows need more distinct styles than one update may
+        // carry. Each update is valid on its own and the geometry chain was
+        // checked above. Replay the retained-text budget too, then apply them
+        // in order, so a failure still leaves the DOM unchanged.
+        let bytes = rowBytes.slice();
+        let total = retainedBytes;
+        for (const update of updates) {
+          if (update.snapshot) {
+            bytes = [];
+            total = 0;
+          }
+          for (const row of update.rows) {
+            total += row.bytes - (bytes[row.row] || 0);
+            bytes[row.row] = row.bytes;
+          }
+          if (total > configured.maxUpdateBytes) fail('retained text exceeds its aggregate byte limit');
+        }
+        for (const update of updates) applyValidated(update);
+      }
+    }
+
+    function applyValidated(update) {
       if (!update.snapshot && (update.width !== width || update.height !== height || rowNodes.length === 0)) fail('incremental update dimensions do not match the mounted snapshot');
       if (!update.snapshot) {
         for (let row = 0; row < height; row += 1) {
@@ -438,8 +530,8 @@
       const built = update.rows.map(row => {
         const old = previousRows[row.row];
         const node = rowNodes[row.row];
-        // Text-only updates preserve geometry and styling. Space runs use
-        // merged nodes and deliberately take the full rebuilding path.
+        // Text-only updates preserve geometry and styling. Blank cells skip
+        // clipping, so a change to or from blanks takes the rebuilding path.
         const reuse = reusable && node?.parentNode === viewport && old &&
           old.cells.length === row.cells.length && node.children.length === row.cells.length &&
           row.cells.every((cell, index) => {
@@ -538,10 +630,26 @@
       dispatch(payload, nativeEvent);
     }
 
+    function measureAdvance() {
+      const column = probe.getBoundingClientRect().width;
+      const css = parseFloat(getComputedStyle(probe).width);
+      const range = document.createRange();
+      range.selectNodeContents(probe);
+      const advance = range.getBoundingClientRect().width / probe.textContent.length;
+      if (!(column > 0 && css > 0 && advance > 0)) return;
+      const spacing = `${((column - advance) * css / column).toFixed(4)}px`;
+      if (spacing !== letterSpacing) {
+        letterSpacing = spacing;
+        setOwnedProperty('--vev-letter-spacing', spacing);
+      }
+    }
+
     function scheduleResize() {
-      if (resizeFrame || width === 0 || height === 0) return;
+      if (resizeFrame) return;
       resizeFrame = requestAnimationFrame(() => {
         resizeFrame = 0;
+        measureAdvance();
+        if (width === 0 || height === 0) return;
         const bounds = viewport.getBoundingClientRect();
         const cellWidth = bounds.width / width;
         const cellHeight = bounds.height / height;
@@ -646,9 +754,11 @@
 
     const observer = new ResizeObserver(scheduleResize);
     observer.observe(root);
+    document.fonts?.addEventListener('loadingdone', scheduleResize, { signal });
 
     return Object.freeze({
       apply,
+      applyAll,
       focus() { alive(); input.focus(); },
       setMouseCapture(enabled) {
         alive();
@@ -678,6 +788,7 @@
         input.remove();
         viewport.remove();
         accessible.remove();
+        probe.remove();
         rowNodes = [];
         rowText = [];
         rowBytes = [];
@@ -688,6 +799,7 @@
         width = 0;
         height = 0;
         lastResize = '';
+        letterSpacing = '';
         decide = () => ({ emit: false, preventDefault: false });
         send = () => {};
         for (const [name, previous] of previousProperties) {

@@ -10,7 +10,7 @@ func TestExternalBrowserConsumerUsesEmbeddedRuntimeAndNeutralEvents(t *testing.T
 	if browser.JavaScript() == "" {
 		t.Fatal("embedded browser runtime is empty")
 	}
-	event, err := browser.DecodeEvent([]byte(`{"schemaVersion":1,"type":"focus","focused":true}`), browser.EventLimits{})
+	event, err := browser.DecodeEvent([]byte(`{"schemaVersion":2,"type":"focus","focused":true}`), browser.EventLimits{})
 	if err != nil {
 		t.Fatal(err)
 	}

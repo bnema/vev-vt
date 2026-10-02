@@ -28,6 +28,41 @@ func TestRectOperationsRejectOverflow(t *testing.T) {
 	}
 }
 
+// Owned assets keep only accounted memory: a slice with large spare capacity
+// is trimmed, a tight one is kept as is, and a rejected blob is not retained.
+func TestOwnedAssetsRetainOnlyAccountedBytes(t *testing.T) {
+	scene := NewScene(Limits{MaxEncodedBytes: 1 << 20, MaxDecodedPixels: 1 << 20})
+	loose := make([]byte, 4, 1<<16)
+	id, err := scene.AddAssetOwned(testAsset(t, loose, 1, 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := scene.state.assets[id].encoded; cap(got) != len(got) || &got[0] == &loose[0] {
+		t.Fatalf("loose owned slice retained with cap %d for len %d", cap(got), len(got))
+	}
+	tight := []byte{1, 2, 3, 4}
+	id, err = scene.ReplaceAssetOwned(id, testAsset(t, tight, 1, 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := scene.state.assets[id].encoded; &got[0] != &tight[0] {
+		t.Fatal("tight owned slice was copied")
+	}
+	before := scene.Snapshot()
+	rejected := make([]byte, 2<<20)
+	if _, err := scene.AddAssetOwned(testAsset(t, rejected, 1, 1)); !errors.Is(err, ErrEncodedBudget) {
+		t.Fatalf("over-budget owned asset error = %v", err)
+	}
+	for _, asset := range scene.state.assets {
+		if len(asset.encoded) > 0 && &asset.encoded[0] == &rejected[0] {
+			t.Fatal("rejected owned blob retained")
+		}
+	}
+	if scene.Snapshot().Usage() != before.Usage() {
+		t.Fatal("rejected owned blob changed usage")
+	}
+}
+
 func TestAssetBlobOwnershipAndSnapshotLifecycle(t *testing.T) {
 	scene := NewScene(Limits{MaxEncodedBytes: 32, MaxDecodedPixels: 64})
 	encoded := []byte{1, 2, 3}

@@ -162,6 +162,12 @@ func (s *Session) Finish() (Result, error) {
 
 // Process applies one already parsed command. It is useful for callers that
 // have their own stream framing but want this package's strict adapter.
+//
+// Process never retains command.Payload (or the APC bytes it was parsed from)
+// beyond the call: whatever must outlive it, such as a pending chunked upload
+// or a committed asset, is copied or freshly decoded. Callers may therefore pass
+// a command from ParseAPCBorrowed and reuse or overwrite the underlying bytes
+// as soon as Process returns.
 func (s *Session) Process(command Command) (Result, error) {
 	if s == nil {
 		return Result{}, ErrNoScene
@@ -287,14 +293,16 @@ func (s *Session) transmit(command Command, display bool) ([][]byte, *Mutation, 
 		s.upload = &upload{
 			controls: c,
 			imageID:  imageID,
-			payload:  append([]byte(nil), command.Payload...),
-			chunks:   1,
-			display:  display,
-			origin:   s.origin,
+			// The session keeps the payload across Process calls, so it must
+			// not alias the caller's (possibly borrowed) bytes.
+			payload: append([]byte(nil), command.Payload...),
+			chunks:  1,
+			display: display,
+			origin:  s.origin,
 		}
 		return nil, nil, nil
 	}
-	return s.commitUpload(upload{controls: c, imageID: imageID, payload: append([]byte(nil), command.Payload...), chunks: 1, display: display, origin: s.origin}, display)
+	return s.commitUpload(upload{controls: c, imageID: imageID, payload: command.Payload, chunks: 1, display: display, origin: s.origin}, display)
 }
 
 func (s *Session) commitUpload(value upload, display bool) ([][]byte, *Mutation, error) {
@@ -336,14 +344,14 @@ func (s *Session) commitUpload(value upload, display bool) ([][]byte, *Mutation,
 	if replacing {
 		// Scene replacement is copy-on-write: a rejected new asset leaves the
 		// old asset and every placement that references it untouched.
-		assetID, err = s.scene.ReplaceAsset(old, graphics.AssetBlob{
+		assetID, err = s.scene.ReplaceAssetOwned(old, graphics.AssetBlob{
 			Encoded: decoded,
 			Format:  assetFormat(format),
 			Width:   width,
 			Height:  height,
 		})
 	} else {
-		assetID, err = s.scene.AddAsset(graphics.AssetBlob{
+		assetID, err = s.scene.AddAssetOwned(graphics.AssetBlob{
 			Encoded: decoded,
 			Format:  assetFormat(format),
 			Width:   width,

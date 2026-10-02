@@ -8,7 +8,9 @@
 //
 // Damage values are non-authoritative hints: every row is compared with the
 // committed shadow, so mutations outside reported damage remain observable.
-// Updates replace complete rows to preserve wide-cell atomicity. Scroll damage
+// Updates replace complete rows to preserve wide-cell atomicity. Rows are
+// encoded as text runs of same-style printable ASCII; wide and non-ASCII
+// characters stay single entries. Scroll damage
 // uses a full snapshot until browser measurements justify a more complex plan.
 //
 // The package emits typed data and structural CSS; it never converts terminal

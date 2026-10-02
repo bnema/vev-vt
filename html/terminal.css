@@ -64,6 +64,19 @@
   color: var(--vev-cell-fg, var(--vev-fg));
   background: var(--vev-cell-bg, var(--vev-bg));
   text-decoration-color: var(--vev-cell-underline, currentColor);
+  letter-spacing: var(--vev-letter-spacing, 0);
+}
+
+.vev-terminal__measure {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: block;
+  width: var(--vev-cell-width);
+  white-space: pre;
+  visibility: hidden;
+  pointer-events: none;
+  user-select: none;
 }
 
 .vev-terminal__cell--bold { font-weight: 700; }

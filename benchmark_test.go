@@ -248,8 +248,8 @@ func BenchmarkScreenKittyAPC(b *testing.B) {
 			b.ReportAllocs()
 			for b.Loop() {
 				if fragmented {
-					for _, part := range apc {
-						s.Write([]byte{part})
+					for i := range apc {
+						s.Write(apc[i : i+1 : i+1])
 					}
 				} else {
 					s.Write(apc)
@@ -301,9 +301,10 @@ func BenchmarkScreenCaptureDamage(b *testing.B) {
 
 func BenchmarkScreenShellRedrawBurst(b *testing.B) {
 	chunk := []byte("\r\x1b[K❯ abc\x1b[90m autosuggestion\x1b[39m\r\x1b[5C")
+	s := NewScreen(120, 40)
+	s.ClearDamage()
 	b.ReportAllocs()
 	for b.Loop() {
-		s := NewScreen(120, 40)
 		for range 200 {
 			s.Write(chunk)
 			s.ClearDamage()
@@ -313,9 +314,10 @@ func BenchmarkScreenShellRedrawBurst(b *testing.B) {
 
 func BenchmarkScreenFullscreenScrollRegion(b *testing.B) {
 	chunk := []byte("\x1b[2;39r\x1b[39;1Hline\n")
+	s := NewScreen(120, 40)
+	s.ClearDamage()
 	b.ReportAllocs()
 	for b.Loop() {
-		s := NewScreen(120, 40)
 		for range 500 {
 			s.Write(chunk)
 			s.ClearDamage()

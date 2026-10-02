@@ -8,7 +8,7 @@ import (
 )
 
 // UpdateSchemaVersion identifies the browser update contract.
-const UpdateSchemaVersion uint16 = 1
+const UpdateSchemaVersion uint16 = 2
 
 // CursorStyle is a DECSCUSR cursor shape value from 0 through 6.
 type CursorStyle uint8
@@ -80,8 +80,12 @@ type Style struct {
 	UnderlineColor Color               `json:"underlineColor"`
 }
 
-// CellUpdate occupies Width terminal columns beginning at Column. Wide-cell
-// continuation markers are represented by the preceding cell's width.
+// CellUpdate occupies Width terminal columns beginning at Column. It is
+// either a text run of Width printable ASCII characters (blank cells are
+// spaces) sharing one style, or one non-ASCII character of width 1 or 2.
+// Wide-cell continuation markers are represented by the preceding cell's
+// width. Text values of one update may share backing storage, so retaining
+// one keeps that update's text alive.
 type CellUpdate struct {
 	Column int    `json:"column"`
 	Width  int    `json:"width"`

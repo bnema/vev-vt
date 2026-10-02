@@ -19,12 +19,30 @@ should use these methods rather than assuming a particular memory layout.
 Rows returned by public extraction methods are copies. For a writable
 `core.Frame`, use `Set`, `WriteRow`, `FillRow`, `CopyRow` and the scroll operations.
 A plain Go assignment of a `Frame` shares its storage; use `Clone()` when you need
-an independent grid.
+an independent grid. `CopyFrom` reuses the destination's storage, so every
+`Frame` assigned from it sees the overwrite: call it only on a frame you own
+exclusively. `core.RowsEqualAt` compares rows of two frames without copying.
 
 ## Callbacks
 
 Callbacks run synchronously, before `Screen.Write` returns. Avoid slow work in
 them. Copy response bytes during the callback if you need to retain them.
+
+## Borrowed and owned byte slices
+
+A few entry points skip a copy when the caller can promise exclusive ownership:
+
+- `kittygraphics.ParseAPCBorrowed` returns a command whose payload aliases the
+  input. Keep the input unchanged while the command is in use.
+  `Session.Process` never retains a command's payload, so the input may be
+  reused once it returns.
+- `graphics.Scene.AddAssetOwned` and `ReplaceAssetOwned` keep `Encoded` instead
+  of copying it. Do not read or modify it afterwards. A slice with large spare
+  capacity is still copied, so the scene retains only accounted bytes. On error
+  the scene keeps nothing.
+
+The copying variants (`ParseAPC`, `AddAsset`, `ReplaceAsset`) remain the safe
+default.
 
 ## Styles
 

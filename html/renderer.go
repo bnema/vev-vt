@@ -1,7 +1,6 @@
 package html
 
 import (
-	"encoding/json"
 	"fmt"
 	"math"
 	"unicode/utf8"
@@ -10,12 +9,19 @@ import (
 )
 
 type Renderer struct {
-	limits      Limits
-	generation  uint64
-	pending     *transaction
-	committed   core.Frame
+	limits     Limits
+	generation uint64
+	pending    *transaction
+	committed  core.Frame
+	// spare is a frame page no update or transaction references. Prepare
+	// copies a core.Frame source into it; Commit and Abort hand a page back.
+	spare       core.Frame
 	cursor      Cursor
 	initialized bool
+	// Encoder scratch reused across updates; never referenced by an Update.
+	ends      []int
+	text      []byte
+	rowStarts []int
 }
 
 // CellSource is the read-only semantic grid consumed by HTML rendering.
@@ -61,26 +67,13 @@ func (r *Renderer) Prepare(source CellSource, damage []core.Damage, reset bool, 
 	if r.pending != nil {
 		return nil, ErrPendingDraw
 	}
-	frame, err := materializeCellSource(source)
+	frame, err := r.materializeCellSource(source)
 	if err != nil {
 		return nil, err
 	}
-	if err := r.validateFrame(frame); err != nil {
-		return nil, err
-	}
-	cursor = normalizeWrapPendingCursor(cursor, frame.Width)
-	if err := validateCursor(cursor, frame.Width, frame.Height); err != nil {
-		return nil, err
-	}
-
-	snapshot := reset || !r.initialized || r.committed.Width != frame.Width || r.committed.Height != frame.Height || damageRequiresSnapshot(damage, frame.Width, frame.Height)
-	candidate := frame.Clone()
-	update, err := r.buildUpdate(candidate, snapshot, cursor)
+	update, encoded, err := r.prepareUpdate(frame, damage, reset, &cursor)
 	if err != nil {
-		return nil, err
-	}
-	encoded, err := encodeBoundedUpdate(update, r.limits.MaxGeneratedBytes)
-	if err != nil {
+		r.spare = frame
 		return nil, err
 	}
 
@@ -90,46 +83,70 @@ func (r *Renderer) Prepare(source CellSource, damage []core.Damage, reset bool, 
 		state:      transactionPending,
 		update:     update,
 		json:       encoded,
-		frame:      candidate,
+		frame:      frame,
 		cursor:     cursor,
 	}
 	r.pending = tx
 	return &PreparedDraw{tx: tx}, nil
 }
 
-func (r *Renderer) validateFrame(frame core.Frame) error {
+func (r *Renderer) prepareUpdate(frame core.Frame, damage []core.Damage, reset bool, cursor *Cursor) (Update, []byte, error) {
+	scratch, err := r.validateFrame(frame)
+	if err != nil {
+		return Update{}, nil, err
+	}
+	*cursor = normalizeWrapPendingCursor(*cursor, frame.Width)
+	if err := validateCursor(*cursor, frame.Width, frame.Height); err != nil {
+		return Update{}, nil, err
+	}
+	snapshot := reset || !r.initialized || r.committed.Width != frame.Width || r.committed.Height != frame.Height || damageRequiresSnapshot(damage, frame.Width, frame.Height)
+	update, err := r.buildUpdate(frame, scratch, snapshot, *cursor)
+	if err != nil {
+		return Update{}, nil, err
+	}
+	encoded, err := encodeBoundedUpdate(update, r.limits.MaxGeneratedBytes)
+	if err != nil {
+		return Update{}, nil, err
+	}
+	return update, encoded, nil
+}
+
+// validateFrame checks limits and cell invariants. It returns a one-row
+// scratch buffer that the caller may reuse for the rest of this Prepare.
+func (r *Renderer) validateFrame(frame core.Frame) ([]core.Cell, error) {
 	if frame.Width <= 0 || frame.Height <= 0 {
-		return fmt.Errorf("html: invalid frame size %dx%d", frame.Width, frame.Height)
+		return nil, fmt.Errorf("html: invalid frame size %dx%d", frame.Width, frame.Height)
 	}
 	if frame.Width > math.MaxInt/frame.Height {
-		return fmt.Errorf("%w: frame cell count overflows int", ErrLimitExceeded)
+		return nil, fmt.Errorf("%w: frame cell count overflows int", ErrLimitExceeded)
 	}
 	cells := frame.Width * frame.Height
 	if cells > r.limits.MaxCells {
-		return fmt.Errorf("%w: frame has %d cells, limit is %d", ErrLimitExceeded, cells, r.limits.MaxCells)
+		return nil, fmt.Errorf("%w: frame has %d cells, limit is %d", ErrLimitExceeded, cells, r.limits.MaxCells)
 	}
 	if frame.Height > r.limits.MaxRowsPerUpdate {
-		return fmt.Errorf("%w: frame has %d rows, limit is %d", ErrLimitExceeded, frame.Height, r.limits.MaxRowsPerUpdate)
+		return nil, fmt.Errorf("%w: frame has %d rows, limit is %d", ErrLimitExceeded, frame.Height, r.limits.MaxRowsPerUpdate)
 	}
 	if err := frame.Validate(); err != nil {
-		return fmt.Errorf("html: validate frame: %w", err)
+		return nil, fmt.Errorf("html: validate frame: %w", err)
 	}
+	scratch := make([]core.Cell, frame.Width)
 	for y := range frame.Height {
-		row := frame.Row(y)
+		row := readRow(frame, y, scratch)
 		for x := 0; x < frame.Width; x++ {
 			cell := row[x]
 			if err := validateCoreStyle(cell.Style); err != nil {
-				return fmt.Errorf("html: cell (%d,%d): %w", x, y, err)
+				return nil, fmt.Errorf("html: cell (%d,%d): %w", x, y, err)
 			}
 			if cell.Continuation {
 				if cell.Rune != 0 {
-					return fmt.Errorf("html: cell (%d,%d): wide continuation contains a rune", x, y)
+					return nil, fmt.Errorf("html: cell (%d,%d): wide continuation contains a rune", x, y)
 				}
 				if x == 0 || row[x-1].Continuation || core.RuneWidth(row[x-1].Rune) != 2 {
-					return fmt.Errorf("html: cell (%d,%d): orphan wide continuation", x, y)
+					return nil, fmt.Errorf("html: cell (%d,%d): orphan wide continuation", x, y)
 				}
 				if !cell.Style.Equal(row[x-1].Style) {
-					return fmt.Errorf("html: cell (%d,%d): wide continuation style differs from its head", x, y)
+					return nil, fmt.Errorf("html: cell (%d,%d): wide continuation style differs from its head", x, y)
 				}
 				continue
 			}
@@ -137,28 +154,29 @@ func (r *Renderer) validateFrame(frame core.Frame) error {
 				continue
 			}
 			if !utf8.ValidRune(cell.Rune) {
-				return fmt.Errorf("html: cell (%d,%d): invalid Unicode scalar", x, y)
+				return nil, fmt.Errorf("html: cell (%d,%d): invalid Unicode scalar", x, y)
 			}
 			width := core.RuneWidth(cell.Rune)
 			switch width {
 			case 1:
 			case 2:
 				if x+1 >= frame.Width || !row[x+1].Continuation {
-					return fmt.Errorf("html: cell (%d,%d): wide rune lacks continuation", x, y)
+					return nil, fmt.Errorf("html: cell (%d,%d): wide rune lacks continuation", x, y)
 				}
 			case 0:
-				return fmt.Errorf("html: cell (%d,%d): unsupported zero-width rune", x, y)
+				return nil, fmt.Errorf("html: cell (%d,%d): unsupported zero-width rune", x, y)
 			default:
-				return fmt.Errorf("html: cell (%d,%d): unsupported rune width %d", x, y, width)
+				return nil, fmt.Errorf("html: cell (%d,%d): unsupported rune width %d", x, y, width)
 			}
 		}
 	}
-	return nil
+	return scratch, nil
 }
 
-// materializeCellSource reads a source into an owned frame. A core.Frame
-// takes the fast clone path; any other source is copied cell by cell.
-func materializeCellSource(source CellSource) (core.Frame, error) {
+// materializeCellSource reads a source into an owned frame. A core.Frame is
+// copied into the renderer's spare page; any other source is copied cell by
+// cell.
+func (r *Renderer) materializeCellSource(source CellSource) (core.Frame, error) {
 	if source == nil {
 		return core.Frame{}, fmt.Errorf("html: nil cell source")
 	}
@@ -167,7 +185,7 @@ func materializeCellSource(source CellSource) (core.Frame, error) {
 		if err := frame.Validate(); err != nil {
 			return core.Frame{}, fmt.Errorf("html: validate frame: %w", err)
 		}
-		return frame.Clone(), nil
+		return r.copyFrame(frame), nil
 	case *core.Frame:
 		if frame == nil {
 			return core.Frame{}, fmt.Errorf("html: nil cell source")
@@ -175,7 +193,7 @@ func materializeCellSource(source CellSource) (core.Frame, error) {
 		if err := frame.Validate(); err != nil {
 			return core.Frame{}, fmt.Errorf("html: validate frame: %w", err)
 		}
-		return frame.Clone(), nil
+		return r.copyFrame(*frame), nil
 	}
 	width, height := source.Columns(), source.Rows()
 	if width <= 0 || height <= 0 {
@@ -189,6 +207,19 @@ func materializeCellSource(source CellSource) (core.Frame, error) {
 	}
 	return clone, nil
 }
+
+// copyFrame copies a validated frame into the spare page, which the returned
+// frame then owns. CopyFrom always succeeds here: src passed Validate.
+func (r *Renderer) copyFrame(src core.Frame) core.Frame {
+	frame := r.spare
+	r.spare = core.Frame{}
+	frame.CopyFrom(src)
+	return frame
+}
+
+// maxRetainedRows bounds the row count whose encoder scratch the renderer
+// keeps between updates.
+const maxRetainedRows = 80
 
 // normalizeWrapPendingCursor maps the deferred-wrap one-past-end column
 // produced after writing the last column with autowrap enabled onto the
@@ -229,7 +260,17 @@ func damageRequiresSnapshot(damage []core.Damage, width, height int) bool {
 	return false
 }
 
-func (r *Renderer) buildUpdate(frame core.Frame, snapshot bool, cursor Cursor) (Update, error) {
+// readRow copies logical row y into buf and returns the filled prefix. It is
+// the allocation-free equivalent of core.Frame.Row.
+func readRow(frame core.Frame, y int, buf []core.Cell) []core.Cell {
+	row := buf[:frame.Width]
+	for x := range row {
+		row[x] = frame.Cell(x, y)
+	}
+	return row
+}
+
+func (r *Renderer) buildUpdate(frame core.Frame, scratch []core.Cell, snapshot bool, cursor Cursor) (Update, error) {
 	update := Update{
 		SchemaVersion: UpdateSchemaVersion,
 		Width:         frame.Width,
@@ -240,27 +281,69 @@ func (r *Renderer) buildUpdate(frame core.Frame, snapshot bool, cursor Cursor) (
 		Cursor:        cursor,
 	}
 	styleIDs := make(map[Style]int)
+	// Every row appends its runs to cells and their text to text; ends[i]
+	// is the text offset after cells[i]. Rows and texts are sliced out once
+	// at the end, so an update costs one cell slice and one string.
+	// cells is owned by the update and sized for one full row (an
+	// incremental update usually changes one or a few rows). The other
+	// buffers are renderer scratch: the text is copied into one string.
+	cells := make([]CellUpdate, 0, frame.Width)
+	ends, text, rowStarts := r.ends[:0], r.text[:0], r.rowStarts[:0]
+	if cap(ends) < frame.Width {
+		ends = make([]int, 0, frame.Width)
+		text = make([]byte, 0, frame.Width)
+	}
+	if cap(rowStarts) < min(frame.Height, maxRetainedRows) {
+		rowStarts = make([]int, 0, min(frame.Height, maxRetainedRows))
+	}
+	defer func() {
+		// Keep scratch for frames up to the common 240x80 size only, so one
+		// huge snapshot does not pin its buffers for the renderer lifetime.
+		const maxRetainedCells = 240 * maxRetainedRows
+		if cap(ends) <= maxRetainedCells && cap(text) <= 4*maxRetainedCells && cap(rowStarts) <= maxRetainedRows {
+			r.ends, r.text, r.rowStarts = ends, text, rowStarts
+		}
+	}()
 	for y := range frame.Height {
-		if !snapshot && rowsEqual(frame.Row(y), r.committed.Row(y)) {
+		if !snapshot && core.RowsEqualAt(frame, y, r.committed, y) {
 			continue
 		}
+		row := readRow(frame, y, scratch)
 		if len(update.Rows) >= r.limits.MaxRowsPerUpdate {
 			return Update{}, fmt.Errorf("%w: update rows exceed limit %d", ErrLimitExceeded, r.limits.MaxRowsPerUpdate)
 		}
-		row, err := encodeRow(y, frame.Row(y), &update.Styles, styleIDs, r.limits.MaxStyles)
+		rowStarts = append(rowStarts, len(cells))
+		update.Rows = append(update.Rows, RowUpdate{Row: y})
+		var err error
+		cells, ends, text, err = encodeRow(row, cells, ends, text, &update.Styles, styleIDs, r.limits.MaxStyles)
 		if err != nil {
 			return Update{}, err
 		}
-		update.Rows = append(update.Rows, row)
+	}
+	all := string(text)
+	offset := 0
+	for i := range cells {
+		cells[i].Text = all[offset:ends[i]]
+		offset = ends[i]
+	}
+	for i := range update.Rows {
+		next := len(cells)
+		if i+1 < len(rowStarts) {
+			next = rowStarts[i+1]
+		}
+		update.Rows[i].Cells = cells[rowStarts[i]:next:next]
 	}
 	return update, nil
 }
 
-// encodeBoundedUpdate marshals one update and enforces MaxGeneratedBytes on
+// encodeBoundedUpdate encodes one update and enforces MaxGeneratedBytes on
 // the exact encoded size. The previous conservative estimate could reject
 // compact updates well below the configured limit.
 func encodeBoundedUpdate(update Update, limit int) ([]byte, error) {
-	encoded, err := json.Marshal(update)
+	// The hint never exceeds limit, so an oversized update cannot reserve its
+	// full estimate before the limit rejects it. limit+1 would overflow for
+	// math.MaxInt.
+	encoded, err := appendUpdateJSON(make([]byte, 0, min(estimateUpdateJSONSize(update), limit)), update)
 	if err != nil {
 		return nil, fmt.Errorf("html: encode update: %w", err)
 	}
@@ -270,22 +353,30 @@ func encodeBoundedUpdate(update Update, limit int) ([]byte, error) {
 	return encoded, nil
 }
 
-func rowsEqual(left, right []core.Cell) bool {
-	if len(left) != len(right) {
-		return false
+// runText returns the single-column printable ASCII text of cell, treating a
+// blank cell as a space, or false when the cell cannot join a text run.
+func runText(cell core.Cell) (byte, bool) {
+	switch {
+	case cell.Continuation:
+		return 0, false
+	case cell.Rune == 0:
+		return ' ', true
+	case cell.Rune >= 0x20 && cell.Rune < 0x7f:
+		return byte(cell.Rune), true
+	default:
+		return 0, false
 	}
-	for i := range left {
-		if !left[i].Equal(right[i]) {
-			return false
-		}
-	}
-	return true
 }
 
-func encodeRow(y int, cells []core.Cell, styles *[]Style, styleIDs map[Style]int, maxStyles int) (RowUpdate, error) {
-	row := RowUpdate{Row: y, Cells: make([]CellUpdate, 0, len(cells))}
-	for x := 0; x < len(cells); x++ {
-		cell := cells[x]
+// encodeRow appends one CellUpdate per text run of a row to cells, its text
+// to text, and the text end offset to ends. Adjacent printable ASCII or blank
+// cells with equal styles merge into one run whose Width equals its byte
+// length. Every other cell (wide or non-ASCII) stays a single entry, so
+// browsers never rely on a fallback font's advance for column alignment.
+// Text fields are filled by the caller.
+func encodeRow(row []core.Cell, cells []CellUpdate, ends []int, text []byte, styles *[]Style, styleIDs map[Style]int, maxStyles int) ([]CellUpdate, []int, []byte, error) {
+	for x := 0; x < len(row); x++ {
+		cell := row[x]
 		if cell.Continuation {
 			continue
 		}
@@ -293,21 +384,31 @@ func encodeRow(y int, cells []core.Cell, styles *[]Style, styleIDs map[Style]int
 		styleID, ok := styleIDs[style]
 		if !ok {
 			if len(*styles) >= maxStyles {
-				return RowUpdate{}, fmt.Errorf("%w: update styles exceed limit %d", ErrLimitExceeded, maxStyles)
+				return cells, ends, text, fmt.Errorf("%w: update styles exceed limit %d", ErrLimitExceeded, maxStyles)
 			}
 			styleID = len(*styles)
 			styleIDs[style] = styleID
 			*styles = append(*styles, style)
 		}
-		width := core.RuneWidth(cell.Rune)
-		text := string(cell.Rune)
-		if cell.Rune == 0 {
-			width = 1
-			text = " "
+		if first, ok := runText(cell); ok {
+			start := x
+			text = append(text, first)
+			for x+1 < len(row) && row[x+1].Style.Equal(cell.Style) {
+				next, ok := runText(row[x+1])
+				if !ok {
+					break
+				}
+				text = append(text, next)
+				x++
+			}
+			cells = append(cells, CellUpdate{Column: start, Width: x - start + 1, Style: styleID})
+		} else {
+			text = utf8.AppendRune(text, cell.Rune)
+			cells = append(cells, CellUpdate{Column: x, Width: core.RuneWidth(cell.Rune), Style: styleID})
 		}
-		row.Cells = append(row.Cells, CellUpdate{Column: x, Width: width, Text: text, Style: styleID})
+		ends = append(ends, len(text))
 	}
-	return row, nil
+	return cells, ends, text, nil
 }
 
 func validateCoreStyle(style core.Style) error {
@@ -396,6 +497,7 @@ func (p *PreparedDraw) Commit() error {
 	if tx.generation != r.generation || r.pending != tx {
 		return ErrStaleDraw
 	}
+	r.spare = r.committed
 	r.committed = tx.frame
 	r.cursor = tx.cursor
 	r.initialized = true
@@ -417,6 +519,7 @@ func (p *PreparedDraw) Abort() error {
 	if tx.generation != r.generation || r.pending != tx {
 		return ErrStaleDraw
 	}
+	r.spare = tx.frame
 	r.pending = nil
 	tx.state = transactionAborted
 	return nil
@@ -430,6 +533,7 @@ func (r *Renderer) Reset() {
 	r.generation++
 	r.pending = nil
 	r.committed = core.Frame{}
+	r.spare = core.Frame{}
 	r.cursor = Cursor{}
 	r.initialized = false
 }

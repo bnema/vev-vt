@@ -3,6 +3,8 @@ package ansi
 import (
 	"bytes"
 	"strconv"
+
+	"github.com/bnema/vev-vt/core"
 )
 
 func findSafeScroll(frame CellSource, damage []Damage) (Damage, bool) {
@@ -67,11 +69,15 @@ func canApplyScrollAgainst(frame CellSource, scroll Damage, damage []Damage, com
 			}
 		}
 	}
-	switch frame := frame.(type) {
-	case Frame:
-		return canApplyDenseScrollAgainst(frame, scroll, damage, committed)
-	case *Frame:
-		return canApplyDenseScrollAgainst(*frame, scroll, damage, committed)
+	// The plan emits one scroll plus text/clear spans. Rows outside the chosen
+	// region must therefore already match the committed shadow wherever damage
+	// does not repaint them; another scroll region in the same batch moves rows
+	// without text damage and must fall back to a snapshot.
+	if !outsideScrollMatches(frame, scroll, damage, committed) {
+		return false
+	}
+	if dense, ok := asFrame(frame); ok {
+		return canApplyDenseScrollAgainst(dense, scroll, damage, committed)
 	}
 	start, end, offset := scrollRetainedRows(scroll)
 	for y := start; y < end; y++ {
@@ -92,6 +98,11 @@ func canApplyScrollAgainst(frame CellSource, scroll Damage, damage []Damage, com
 func canApplyDenseScrollAgainst(frame Frame, scroll Damage, damage []Damage, committed Frame) bool {
 	start, end, offset := scrollRetainedRows(scroll)
 	for y := start; y < end; y++ {
+		// isSafeScroll guarantees full-width scrolls, so a retained row that
+		// matches whole needs no per-cell damage lookups.
+		if core.RowsEqualAt(committed, y+offset, frame, y) {
+			continue
+		}
 		for x := range scroll.Width {
 			column := scroll.X + x
 			committedCell, frameCell := committed.At(column, y+offset), frame.At(column, y)
@@ -99,6 +110,29 @@ func canApplyDenseScrollAgainst(frame Frame, scroll Damage, damage []Damage, com
 				continue
 			}
 			if !damageCoversCell(damage, column, y) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func outsideScrollMatches(frame CellSource, scroll Damage, damage []Damage, committed Frame) bool {
+	dense, isDense := asFrame(frame)
+	columns := frame.Columns()
+	for y := range frame.Rows() {
+		if y >= scroll.Y && y < scroll.Y+scroll.Height {
+			continue
+		}
+		if isDense && core.RowsEqualAt(committed, y, dense, y) {
+			continue
+		}
+		for x := range columns {
+			committedCell, frameCell := committed.Cell(x, y), frame.Cell(x, y)
+			if committedCell == frameCell || committedCell.Equal(frameCell) {
+				continue
+			}
+			if !damageCoversCell(damage, x, y) {
 				return false
 			}
 		}
