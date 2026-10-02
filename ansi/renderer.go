@@ -64,6 +64,11 @@ func (p PreparedDraw) Bytes() []byte { return p.data }
 
 // Commit applies the prepared delta exactly once. Discarding it leaves the
 // renderer's committed state unchanged.
+//
+// Committing a draw that a later Prepare has superseded does not apply it:
+// the renderer instead drops its committed state, so the next Prepare
+// re-emits a full snapshot instead of diffing against a shadow that may no
+// longer match the terminal. Draws without output are unaffected.
 func (p *PreparedDraw) Commit() {
 	if p == nil || p.renderer == nil || p.commitOnce == nil {
 		return
@@ -76,7 +81,11 @@ func (p *PreparedDraw) Commit() {
 		}
 		if p.generation != r.generation {
 			// A later Prepare reused the scratch frame this draw's snapshot
-			// lives in, so it was discarded.
+			// lives in, so it cannot be applied. Its bytes may nevertheless
+			// have reached the terminal, which would then differ from the
+			// committed shadow in unknown ways: forget the shadow so the next
+			// Prepare emits a full snapshot.
+			r.hasCommitted = false
 			return
 		}
 		if plan.Snapshot || !r.hasCommitted {
@@ -113,7 +122,7 @@ func (r *Renderer) Prepare(frame CellSource, damage []Damage, reset bool) (Prepa
 		plan := planSingleDamage(frame, damage[0])
 		candidate = newDeltaCandidate(frame, plan, &r.scratch)
 	} else {
-		candidate, err = planDelta(frame, damage, r.committedFrame(), reset || !r.hasCommitted, &r.scratch)
+		candidate, err = planDelta(frame, damage, r.committed, reset || !r.hasCommitted, &r.scratch)
 	}
 	if err != nil {
 		return PreparedDraw{}, err
@@ -169,17 +178,6 @@ func (r *Renderer) Draw(frame CellSource, damage []Damage) ([]byte, error) {
 	}
 	prepared.Commit()
 	return prepared.Bytes(), nil
-}
-
-func (r *Renderer) committedFrame() Frame {
-	return r.committed
-}
-
-func (r *Renderer) setCommittedFrame(frame Frame) {
-	r.width = frame.Width
-	r.height = frame.Height
-	r.hasCommitted = true
-	r.committed = frame
 }
 
 // copyBytes copies the buffer contents into a fresh byte slice and is used

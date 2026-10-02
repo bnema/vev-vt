@@ -234,9 +234,3 @@ func (c DeltaCandidate) Commit(dst *Frame) {
 		}
 	}
 }
-
-// replaceFrame overwrites dst's own storage with a copy of src, reusing
-// capacity. It is for frames the renderer owns exclusively.
-func replaceFrame(dst *Frame, src Frame) {
-	dst.CopyFrom(src)
-}

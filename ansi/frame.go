@@ -68,10 +68,11 @@ func snapshotCellSource(scratch *Frame, source CellSource) Frame {
 	return *scratch
 }
 
-// compactFrames reports whether both sources are core.Frame values (directly or
-// by pointer), enabling stored-cell comparison without the CellSource interface.
+// framePair holds two compact frames compared through core.RowsEqual.
 type framePair struct{ a, b Frame }
 
+// compactFrames reports whether both sources are core.Frame values (directly or
+// by pointer), enabling stored-cell comparison without the CellSource interface.
 func compactFrames(a, b CellSource) (framePair, bool) {
 	fa, ok := asFrame(a)
 	if !ok {
