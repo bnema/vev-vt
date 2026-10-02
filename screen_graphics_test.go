@@ -331,3 +331,28 @@ func TestScreenKittyPlacementScrollSkipsBottomEdgeOverflow(t *testing.T) {
 	placement = screen.GraphicsSnapshot().Placements()[0]
 	require.Equal(t, nearLimit, placement.Destination())
 }
+
+// Fragmented APCs reuse the Screen's escape buffer, so retained graphics state
+// (assets and pending chunked uploads) must not alias it.
+func TestScreenKittyFragmentedAPCsDoNotAliasEscapeBuffer(t *testing.T) {
+	screen := NewScreen(16, 3)
+	writeByteWise := func(data []byte) {
+		for i := range data {
+			screen.Write(data[i : i+1])
+		}
+	}
+	enc := func(b ...byte) string { return base64.StdEncoding.EncodeToString(b) }
+	writeByteWise([]byte("\x1b_Ga=t,i=1,f=32,s=1,v=1;" + enc(1, 2, 3, 4) + "\x1b\\"))
+	// Chunked upload interleaved with other escape sequences reusing the buffer.
+	writeByteWise([]byte("\x1b_Ga=t,i=2,f=32,s=1,v=1,m=1;" + enc(9, 9, 9, 9)[:4] + "\x1b\\"))
+	writeByteWise([]byte("\x1b[1mtext\x1b[0m"))
+	writeByteWise([]byte("\x1b_Gm=0;" + enc(9, 9, 9, 9)[4:] + "\x1b\\"))
+
+	snapshot := screen.GraphicsSnapshot()
+	require.NotNil(t, snapshot)
+	var got [][]byte
+	for _, asset := range snapshot.Assets() {
+		got = append(got, asset.Bytes())
+	}
+	require.ElementsMatch(t, [][]byte{{1, 2, 3, 4}, {9, 9, 9, 9}}, got)
+}
