@@ -188,18 +188,28 @@ func (s *Screen) Write(data []byte) {
 	if len(s.escapeBuf) > 0 {
 		// Reuse a bounded scratch buffer: data is consumed before Write returns
 		// and nothing retains slices of it (the partial-escape path copies).
+		// Detach it while in use: callbacks invoked below may call Write
+		// re-entrantly, and that inner Write must not overwrite bytes this
+		// Write is still reading.
 		need := len(s.escapeBuf) + len(data)
 		combined := s.combineBuf[:0]
+		s.combineBuf = nil
 		if cap(combined) < need {
 			combined = make([]byte, 0, need)
 		}
 		combined = append(combined, s.escapeBuf...)
 		combined = append(combined, data...)
-		if cap(combined) <= maxRetainedEscapeBufferCap {
-			s.combineBuf = combined
-		}
+		defer func() {
+			if s.combineBuf == nil && cap(combined) <= maxRetainedEscapeBufferCap {
+				s.combineBuf = combined[:0]
+			}
+		}()
 		data = combined
-		s.escapeBuf = s.escapeBuf[:0]
+		if cap(s.escapeBuf) > maxRetainedEscapeBufferCap {
+			s.escapeBuf = nil
+		} else {
+			s.escapeBuf = s.escapeBuf[:0]
+		}
 	}
 	if s.kittyDiscard {
 		consumed := s.consumeKittyDiscard(data)

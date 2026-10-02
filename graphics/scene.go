@@ -106,7 +106,8 @@ func (s *Scene) AddAsset(blob AssetBlob) (AssetID, error) {
 
 // AddAssetOwned is AddAsset for callers that hand over blob.Encoded: the scene
 // keeps the slice without copying, so the caller must not read or modify it
-// afterwards. Snapshots and AssetView still return copies.
+// afterwards. Snapshots and AssetView still return copies. On error the scene
+// does not retain blob.Encoded, so the caller keeps ownership of it.
 func (s *Scene) AddAssetOwned(blob AssetBlob) (AssetID, error) {
 	return s.addAsset(blob, false)
 }
@@ -149,7 +150,7 @@ func (s *Scene) ReplaceAsset(id AssetID, blob AssetBlob) (AssetID, error) {
 }
 
 // ReplaceAssetOwned is ReplaceAsset for callers that hand over blob.Encoded;
-// see AddAssetOwned.
+// see AddAssetOwned. On error blob.Encoded is not retained.
 func (s *Scene) ReplaceAssetOwned(id AssetID, blob AssetBlob) (AssetID, error) {
 	return s.replaceAsset(id, blob, false)
 }

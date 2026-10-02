@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"math"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/bnema/vev-vt/graphics"
@@ -355,4 +356,84 @@ func TestScreenKittyFragmentedAPCsDoNotAliasEscapeBuffer(t *testing.T) {
 		got = append(got, asset.Bytes())
 	}
 	require.ElementsMatch(t, [][]byte{{1, 2, 3, 4}, {9, 9, 9, 9}}, got)
+}
+
+func screenAssetBytes(t *testing.T, screen *Screen) [][]byte {
+	t.Helper()
+	snapshot := screen.GraphicsSnapshot()
+	require.NotNil(t, snapshot)
+	var got [][]byte
+	for _, asset := range snapshot.Assets() {
+		got = append(got, asset.Bytes())
+	}
+	return got
+}
+
+// A callback may call Write re-entrantly; the inner Write must not clobber the
+// reusable combine buffer the outer Write is still parsing.
+func TestScreenWriteReentrantFromCallbackKeepsOuterStreamIntact(t *testing.T) {
+	t.Run("split CSI then DA reply writes text", func(t *testing.T) {
+		screen := NewScreen(40, 3)
+		fired := 0
+		screen.OnResponse = func([]byte) {
+			fired++
+			// Leave a partial escape, then complete it: the second inner
+			// Write takes the combine path while the outer Write is mid-parse.
+			screen.Write([]byte("\x1b["))
+			screen.Write([]byte("1mZZZZZZZZZZ"))
+		}
+		screen.Write([]byte("\x1b[1"))
+		screen.Write([]byte("m\x1b[cBCDEFGH"))
+		require.Equal(t, 1, fired)
+		require.Equal(t, "ZZZZZZZZZZBCDEFGH", strings.TrimRight(rowText(screen.Snapshot().Row(0)), " "))
+	})
+	t.Run("split APC response writes upload", func(t *testing.T) {
+		screen := NewScreen(40, 3)
+		inner := false
+		screen.OnResponse = func([]byte) {
+			if inner {
+				return
+			}
+			inner = true
+			for _, b := range []byte("\x1b_Ga=t,f=32,s=1,v=1;CQkJCQ==\x1b\\") {
+				screen.Write([]byte{b})
+			}
+		}
+		screen.Write([]byte("\x1b_Ga=t,i=1,f=32,s=1,v=1;AQID"))
+		screen.Write([]byte("BA==\x1b\\XYZ"))
+		require.Equal(t, "XYZ", strings.TrimRight(rowText(screen.Snapshot().Row(0)), " "))
+		require.ElementsMatch(t, [][]byte{{1, 2, 3, 4}, {9, 9, 9, 9}}, screenAssetBytes(t, screen))
+	})
+}
+
+// The Screen borrows the caller's Write buffer while parsing; nothing it
+// retains may alias that buffer once Write returns.
+func TestScreenKittyGraphicsDoesNotAliasCallerWriteBuffer(t *testing.T) {
+	scribble := func(b []byte) {
+		for i := range b {
+			b[i] = 0xff
+		}
+	}
+	t.Run("single-shot transmit and display", func(t *testing.T) {
+		screen := NewScreen(16, 3)
+		buf := []byte("\x1b_Ga=T,i=1,f=32,s=1,v=1;AQIDBA==\x1b\\")
+		screen.Write(buf)
+		scribble(buf)
+		require.Equal(t, [][]byte{{1, 2, 3, 4}}, screenAssetBytes(t, screen))
+	})
+	t.Run("first and final chunk in one write", func(t *testing.T) {
+		screen := NewScreen(16, 3)
+		buf := []byte("\x1b_Ga=t,i=1,f=32,s=1,v=1,m=1;AQID\x1b\\\x1b_Gm=0;BA==\x1b\\")
+		screen.Write(buf)
+		scribble(buf)
+		require.Equal(t, [][]byte{{1, 2, 3, 4}}, screenAssetBytes(t, screen))
+	})
+	t.Run("first chunk write then buffer reuse before final chunk", func(t *testing.T) {
+		screen := NewScreen(16, 3)
+		buf := []byte("\x1b_Ga=t,i=1,f=32,s=1,v=1,m=1;AQID\x1b\\")
+		screen.Write(buf)
+		scribble(buf)
+		screen.Write([]byte("\x1b_Gm=0;BA==\x1b\\"))
+		require.Equal(t, [][]byte{{1, 2, 3, 4}}, screenAssetBytes(t, screen))
+	})
 }

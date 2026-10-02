@@ -162,6 +162,12 @@ func (s *Session) Finish() (Result, error) {
 
 // Process applies one already parsed command. It is useful for callers that
 // have their own stream framing but want this package's strict adapter.
+//
+// Process never retains command.Payload (or the APC bytes it was parsed from)
+// beyond the call: whatever must outlive it, such as a pending chunked upload
+// or a committed asset, is copied or freshly decoded. Callers may therefore pass
+// a command from ParseAPCBorrowed and reuse or overwrite the underlying bytes
+// as soon as Process returns.
 func (s *Session) Process(command Command) (Result, error) {
 	if s == nil {
 		return Result{}, ErrNoScene

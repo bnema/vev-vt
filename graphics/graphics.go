@@ -111,7 +111,8 @@ const (
 // scene or any snapshot. Format preserves the encoded pixel layout for the
 // renderer. Width and Height describe the decoded pixel extent used for
 // clipping and quota accounting. DecodedPixels, when non-zero, must equal
-// Width*Height; accounting always uses the checked product.
+// Width*Height; accounting always uses the checked product. Scene.AddAssetOwned
+// and ReplaceAssetOwned instead take ownership of Encoded without copying it.
 type AssetBlob struct {
 	Encoded       []byte
 	Format        AssetFormat
