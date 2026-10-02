@@ -293,23 +293,8 @@
     node.className = 'vev-terminal__row';
     node.dataset.row = String(row.row);
     let text = '';
-    for (let index = 0; index < row.cells.length; index += 1) {
-      let cell = row.cells[index];
+    for (const cell of row.cells) {
       const style = styles[cell.style];
-      // A run of spaces needs one grid item, not one item per column. Only
-      // merge plain spaces: arbitrary text still needs explicit cell widths.
-      if (cell.text === ' ' && cell.width === 1 && !style.underline && !style.strikethrough) {
-        let width = cell.width;
-        let spaces = cell.text;
-        while (index + 1 < row.cells.length) {
-          const next = row.cells[index + 1];
-          if (next.text !== ' ' || next.width !== 1 || next.style !== cell.style || next.column !== cell.column + width) break;
-          width += next.width;
-          spaces += next.text;
-          index += 1;
-        }
-        cell = { ...cell, width, text: spaces };
-      }
       const child = document.createElement('span');
       child.className = 'vev-terminal__cell';
       child.dataset.column = String(cell.column);
@@ -402,7 +387,15 @@
     accessible.setAttribute('aria-live', 'off');
     accessible.setAttribute('aria-label', `${label} output`);
 
-    root.append(input, viewport, accessible);
+    // Grid tracks round the column width (Chromium: to 1/64 px) while text
+    // advances by the exact glyph width, so a long text run drifts out of its
+    // columns. The probe measures both and letter-spacing absorbs the gap.
+    const probe = document.createElement('span');
+    probe.className = 'vev-terminal__measure';
+    probe.setAttribute('aria-hidden', 'true');
+    probe.textContent = 'x'.repeat(64);
+
+    root.append(input, viewport, accessible, probe);
 
     let destroyed = false;
     let composing = false;
@@ -420,6 +413,7 @@
     let pointerFrame = 0;
     let pendingPointer = null;
     let lastResize = '';
+    let letterSpacing = '';
     const previousProperties = new Map();
 
     function setOwnedProperty(name, value) {
@@ -492,10 +486,26 @@
       const mounted = rowNodes.length === 0 ? null : { width, height };
       const merged = coalesce(updates, mounted, configured.maxStyles);
       if (merged) applyValidated(merged);
-      // Rare: the merged rows need more distinct styles than one update may
-      // carry. Each update is valid on its own and the geometry chain was
-      // checked above, so apply them in order.
-      else for (const update of updates) applyValidated(update);
+      else {
+        // Rare: the merged rows need more distinct styles than one update may
+        // carry. Each update is valid on its own and the geometry chain was
+        // checked above. Replay the retained-text budget too, then apply them
+        // in order, so a failure still leaves the DOM unchanged.
+        let bytes = rowBytes.slice();
+        let total = retainedBytes;
+        for (const update of updates) {
+          if (update.snapshot) {
+            bytes = [];
+            total = 0;
+          }
+          for (const row of update.rows) {
+            total += row.bytes - (bytes[row.row] || 0);
+            bytes[row.row] = row.bytes;
+          }
+          if (total > configured.maxUpdateBytes) fail('retained text exceeds its aggregate byte limit');
+        }
+        for (const update of updates) applyValidated(update);
+      }
     }
 
     function applyValidated(update) {
@@ -520,8 +530,8 @@
       const built = update.rows.map(row => {
         const old = previousRows[row.row];
         const node = rowNodes[row.row];
-        // Text-only updates preserve geometry and styling. Space runs use
-        // merged nodes and deliberately take the full rebuilding path.
+        // Text-only updates preserve geometry and styling. Blank cells skip
+        // clipping, so a change to or from blanks takes the rebuilding path.
         const reuse = reusable && node?.parentNode === viewport && old &&
           old.cells.length === row.cells.length && node.children.length === row.cells.length &&
           row.cells.every((cell, index) => {
@@ -620,10 +630,26 @@
       dispatch(payload, nativeEvent);
     }
 
+    function measureAdvance() {
+      const column = probe.getBoundingClientRect().width;
+      const css = parseFloat(getComputedStyle(probe).width);
+      const range = document.createRange();
+      range.selectNodeContents(probe);
+      const advance = range.getBoundingClientRect().width / probe.textContent.length;
+      if (!(column > 0 && css > 0 && advance > 0)) return;
+      const spacing = `${((column - advance) * css / column).toFixed(4)}px`;
+      if (spacing !== letterSpacing) {
+        letterSpacing = spacing;
+        setOwnedProperty('--vev-letter-spacing', spacing);
+      }
+    }
+
     function scheduleResize() {
-      if (resizeFrame || width === 0 || height === 0) return;
+      if (resizeFrame) return;
       resizeFrame = requestAnimationFrame(() => {
         resizeFrame = 0;
+        measureAdvance();
+        if (width === 0 || height === 0) return;
         const bounds = viewport.getBoundingClientRect();
         const cellWidth = bounds.width / width;
         const cellHeight = bounds.height / height;
@@ -728,6 +754,7 @@
 
     const observer = new ResizeObserver(scheduleResize);
     observer.observe(root);
+    document.fonts?.addEventListener('loadingdone', scheduleResize, { signal });
 
     return Object.freeze({
       apply,
@@ -761,6 +788,7 @@
         input.remove();
         viewport.remove();
         accessible.remove();
+        probe.remove();
         rowNodes = [];
         rowText = [];
         rowBytes = [];
@@ -771,6 +799,7 @@
         width = 0;
         height = 0;
         lastResize = '';
+        letterSpacing = '';
         decide = () => ({ emit: false, preventDefault: false });
         send = () => {};
         for (const [name, previous] of previousProperties) {

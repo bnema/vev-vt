@@ -90,8 +90,7 @@ test('plain spaces retain grid boxes without per-cell clipping', async ({ page }
       {column:0,width:1,text:' ',style:0},
       {column:1,width:1,text:'A',style:0},
       {column:2,width:1,text:' ',style:1},
-      {column:3,width:1,text:' ',style:0},
-      {column:4,width:1,text:' ',style:0}
+      {column:3,width:2,text:'  ',style:0}
     ]}],
     cursor: {row:0,column:0,visible:false,style:0,styleSet:false}
   }));
@@ -280,6 +279,34 @@ test('renders ASCII text runs on the column grid and rejects mismatched runs', a
   expect(result.wide).toContain('text run does not match its width');
 });
 
+test('keeps long text runs on the column grid at any font size and zoom', async ({ page }) => {
+  await mount(page);
+  const drift = await page.evaluate(async () => {
+    const plain = { foreground: { kind: 0 }, background: { kind: 0 }, underlineColor: { kind: 0 } };
+    const root = document.querySelector('#terminal');
+    const results = [];
+    for (const [size, zoom] of [[13, 1], [14, 1], [16, 1], [14, 1.25]]) {
+      root.style.setProperty('--vev-font-size', `${size}px`);
+      document.body.style.zoom = String(zoom);
+      terminal.apply({
+        schemaVersion: 2, width: 240, height: 1, snapshot: true, styles: [plain],
+        rows: [{ row: 0, cells: [
+          { column: 0, width: 238, text: 'x'.repeat(238), style: 0 },
+          { column: 238, width: 2, text: '界', style: 0 }
+        ] }],
+        cursor: { row: 0, column: 0, visible: false, style: 0, styleSet: false }
+      });
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      const [run, wide] = document.querySelectorAll('.vev-terminal__cell');
+      const range = document.createRange();
+      range.selectNodeContents(run);
+      results.push(Math.abs(range.getBoundingClientRect().right - wide.getBoundingClientRect().left));
+    }
+    return results;
+  });
+  for (const value of drift) expect(value).toBeLessThan(0.5);
+});
+
 test('applyAll coalesces queued updates into the same final DOM as sequential apply', async ({ page }) => {
   await mount(page);
   const result = await page.evaluate(() => {
@@ -337,6 +364,76 @@ test('applyAll coalesces queued updates into the same final DOM as sequential ap
   expect(result.cursorAfterSnapshot[1]).toContain('1 *');
   expect(result.failures.every(message => message.includes('dimensions do not match'))).toBe(true);
   expect(result.unchanged).toBe(true);
+});
+
+test('applyAll applies in order when merged styles exceed maxStyles, atomically', async ({ page }) => {
+  await page.setContent('<main><div id="terminal"></div></main>');
+  await page.addStyleTag({ path: path.join(root, 'html/terminal.css') });
+  await page.addScriptTag({ path: path.join(root, 'html/browser/terminal.js') });
+  const result = await page.evaluate(() => {
+    const plain = { foreground: { kind: 0 }, background: { kind: 0 }, underlineColor: { kind: 0 } };
+    const bold = { ...plain, bold: true };
+    const cursor = column => ({ row: 0, column, visible: true, style: 0, styleSet: false });
+    const update = (snapshot, rows, style, column) => ({
+      schemaVersion: 2, width: 4, height: 2, snapshot, styles: [style],
+      rows: rows.map(([row, text]) => ({ row, cells: [{ column: 0, width: 4, text, style: 0 }] })),
+      cursor: cursor(column)
+    });
+    const capture = () => ({
+      html: document.querySelector('.vev-terminal__viewport').innerHTML,
+      text: document.querySelector('.vev-terminal__accessible-output').textContent
+    });
+    const mount = maxUpdateBytes => VevTerminal.mount(document.querySelector('#terminal'), {
+      label: 'Fallback terminal', limits: { maxStyles: 1, maxUpdateBytes }
+    });
+    const snapshot = update(true, [[0, 'aaaa'], [1, 'bbbb']], plain, 0);
+    const queue = [update(false, [[0, 'A1  ']], plain, 1), update(false, [[1, 'B2  ']], bold, 2)];
+
+    let terminal = mount(16);
+    terminal.apply(snapshot);
+    for (const value of queue) terminal.apply(value);
+    const sequential = capture();
+    terminal.destroy();
+
+    terminal = mount(16);
+    terminal.apply(snapshot);
+    terminal.applyAll(queue);
+    const merged = capture();
+    const errors = [];
+    const attempt = values => {
+      try { terminal.applyAll(values); return ''; } catch (error) { return error.message; }
+    };
+    errors.push(attempt([]), attempt('nope'));
+    const beforeOverflow = capture();
+    terminal.destroy();
+
+    // A row starting with 'é' holds 5 bytes. The snapshot retains 8 of 9
+    // bytes; each update alone retains 9, but the batch reaches 10 on its
+    // second update, after the first would already have changed the DOM.
+    const accented = (row, style) => ({
+      schemaVersion: 2, width: 4, height: 2, snapshot: false, styles: [style],
+      rows: [{ row, cells: [{ column: 0, width: 1, text: 'é', style: 0 }, { column: 1, width: 3, text: '   ', style: 0 }] }],
+      cursor: cursor(0)
+    });
+    terminal = mount(9);
+    terminal.apply(snapshot);
+    const before = capture();
+    const overflow = attempt([accented(0, plain), accented(1, bold)]);
+    const unchanged = JSON.stringify(capture()) === JSON.stringify(before);
+    terminal.destroy();
+
+    terminal = mount(16);
+    const unmounted = attempt([queue[0]]);
+    terminal.destroy();
+    return { sequential, merged, errors, beforeOverflow, overflow, unchanged, unmounted };
+  });
+  expect(result.merged).toEqual(result.sequential);
+  expect(result.errors[0]).toBe('');
+  expect(result.errors[1]).toContain('updates must be an array');
+  expect(result.beforeOverflow).toEqual(result.merged);
+  expect(result.overflow).toContain('retained text exceeds');
+  expect(result.unchanged).toBe(true);
+  expect(result.unmounted).toContain('dimensions do not match');
 });
 
 test('rejects colors with a payload from another color kind', async ({ page }) => {
