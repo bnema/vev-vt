@@ -77,3 +77,56 @@ func TestDownwardScrollMismatchFallsBack(t *testing.T) {
 		}
 	}
 }
+
+func TestStaleCommitForcesSnapshotAndReplaysCorrectly(t *testing.T) {
+	for _, deliverB := range []bool{false, true} {
+		frame := vt.NewFrame(10, 4)
+		for y := range frame.Height {
+			frame.FillRow(y, 0, frame.Width, vt.Cell{Rune: rune('a' + y), Style: vt.DefaultStyle()})
+		}
+		r := ansi.New(ansi.Capabilities{})
+		terminal := vt.NewScreen(frame.Width, frame.Height)
+		initial, err := r.Draw(frame, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		terminal.Write(initial)
+
+		frame.Set(1, 1, vt.Cell{Rune: 'A', Style: vt.DefaultStyle()})
+		a, err := r.Prepare(frame, []vt.Damage{{Kind: vt.DamageText, X: 1, Y: 1, Width: 1, Height: 1}}, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		terminal.Write(a.Bytes())
+		frame.Set(2, 2, vt.Cell{Rune: 'B', Style: vt.Style{Bold: true, Foreground: 2, Background: -1}})
+		b, err := r.Prepare(frame, []vt.Damage{{Kind: vt.DamageText, X: 2, Y: 2, Width: 1, Height: 1}}, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if deliverB {
+			terminal.Write(b.Bytes())
+		}
+		a.Commit() // superseded by b: must drop the committed shadow
+
+		next, err := r.Prepare(frame, nil, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(next.Bytes()) == 0 || !bytes.Contains(next.Bytes(), []byte("a")) || !bytes.Contains(next.Bytes(), []byte("d")) {
+			t.Fatalf("deliverB=%v: next prepare is not a full snapshot: %q", deliverB, next.Bytes())
+		}
+		terminal.Write(next.Bytes())
+		next.Commit()
+		for y := range frame.Height {
+			for x := range frame.Width {
+				if !frame.Cell(x, y).Equal(terminal.Cell(x, y)) {
+					t.Fatalf("deliverB=%v: cell %d,%d = %+v, want %+v", deliverB, x, y, terminal.Cell(x, y), frame.Cell(x, y))
+				}
+			}
+		}
+		unchanged, err := r.Draw(frame, nil)
+		if err != nil || len(unchanged) != 0 {
+			t.Fatalf("committed shadow differs after snapshot: %q, %v", unchanged, err)
+		}
+	}
+}
