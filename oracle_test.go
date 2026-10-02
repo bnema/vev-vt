@@ -78,8 +78,6 @@ type oracleRun struct {
 	h      hash.Hash
 	dump   *bufio.Writer
 	events []string
-
-	replayMismatches int
 }
 
 func (o *oracleRun) emit(format string, args ...any) {
@@ -467,12 +465,9 @@ func (o *oracleRun) render(step int) {
 	}
 }
 
-// applyReplay feeds committed ANSI output to an independent VT and compares
-// the visible grid with the source. Mismatches are known renderer defects on
-// the baseline (for example two scroll regions in one damage batch), so they
-// are hashed into the transcript instead of failing: a performance change must
-// neither add nor remove one. The replay is then resynchronized from a full
-// draw, matching the renderer's committed belief.
+// applyReplay feeds committed ANSI output to an independent VT and requires
+// the visible grid to match the source. This semantic check does not depend on
+// the golden file.
 func (o *oracleRun) applyReplay(out []byte, step int) {
 	s := o.screen
 	if o.replay == nil || o.replay.Columns() != s.Columns() || o.replay.Rows() != s.Rows() {
@@ -483,15 +478,7 @@ func (o *oracleRun) applyReplay(out []byte, step int) {
 		for x := range s.Columns() {
 			want, got := s.Cell(x, y), o.replay.Cell(x, y)
 			if want.Rune != got.Rune || want.Continuation != got.Continuation || !want.Style.Equal(got.Style) {
-				o.replayMismatches++
-				o.emit("replay-mismatch step %d at (%d,%d): got %s want %s", step, x, y, formatCell(got), formatCell(want))
-				o.replay = vt.NewScreen(s.Columns(), s.Rows())
-				full, err := ansi.New(ansi.Capabilities{}).Draw(s, []core.Damage{core.FullRedraw()})
-				if err != nil {
-					o.t.Fatalf("seed %d: resync draw: %v", o.sc.seed, err)
-				}
-				o.replay.Write(full)
-				return
+				o.t.Fatalf("seed %d step %d: ANSI replay mismatch at (%d,%d): got %s want %s", o.sc.seed, step, x, y, formatCell(got), formatCell(want))
 			}
 		}
 	}
@@ -569,7 +556,6 @@ func runOracleScenario(t *testing.T, idx int) string {
 			digests = append(digests, fmt.Sprintf("%02d/%03d %s", idx, step, hex.EncodeToString(o.h.Sum(nil))[:24]))
 		}
 	}
-	digests = append(digests, fmt.Sprintf("%02d replay-mismatches=%d", idx, o.replayMismatches))
 	return strings.Join(digests, "\n")
 }
 

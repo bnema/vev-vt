@@ -69,6 +69,13 @@ func canApplyScrollAgainst(frame CellSource, scroll Damage, damage []Damage, com
 			}
 		}
 	}
+	// The plan emits one scroll plus text/clear spans. Rows outside the chosen
+	// region must therefore already match the committed shadow wherever damage
+	// does not repaint them; another scroll region in the same batch moves rows
+	// without text damage and must fall back to a snapshot.
+	if !outsideScrollMatches(frame, scroll, damage, committed) {
+		return false
+	}
 	switch frame := frame.(type) {
 	case Frame:
 		return canApplyDenseScrollAgainst(frame, scroll, damage, committed)
@@ -106,6 +113,32 @@ func canApplyDenseScrollAgainst(frame Frame, scroll Damage, damage []Damage, com
 				continue
 			}
 			if !damageCoversCell(damage, column, y) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func outsideScrollMatches(frame CellSource, scroll Damage, damage []Damage, committed Frame) bool {
+	dense, isDense := frame.(Frame)
+	if pointer, ok := frame.(*Frame); ok {
+		dense, isDense = *pointer, true
+	}
+	columns := frame.Columns()
+	for y := range frame.Rows() {
+		if y >= scroll.Y && y < scroll.Y+scroll.Height {
+			continue
+		}
+		if isDense && core.RowsEqualAt(committed, y, dense, y) {
+			continue
+		}
+		for x := range columns {
+			committedCell, frameCell := committed.Cell(x, y), frame.Cell(x, y)
+			if committedCell == frameCell || committedCell.Equal(frameCell) {
+				continue
+			}
+			if !damageCoversCell(damage, x, y) {
 				return false
 			}
 		}
