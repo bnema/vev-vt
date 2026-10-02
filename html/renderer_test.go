@@ -2,6 +2,7 @@ package html
 
 import (
 	"errors"
+	"math"
 	"os"
 	"testing"
 
@@ -125,6 +126,14 @@ func TestRendererEnforcesExactGeneratedByteLimit(t *testing.T) {
 	_, err = strict.Prepare(frame, nil, true, Cursor{})
 	require.ErrorIs(t, err, ErrLimitExceeded)
 	require.ErrorContains(t, err, "generated update is")
+}
+
+func TestRendererAcceptsMaxIntGeneratedBytesLimit(t *testing.T) {
+	renderer, err := New(Options{Limits: Limits{MaxGeneratedBytes: math.MaxInt}})
+	require.NoError(t, err)
+	prepared, err := renderer.Prepare(core.NewFrame(2, 1), nil, true, Cursor{})
+	require.NoError(t, err)
+	require.NoError(t, prepared.Commit())
 }
 
 func TestRendererUsesIncrementalDamageWithNormalCounts(t *testing.T) {

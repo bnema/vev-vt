@@ -644,6 +644,9 @@ func TestDifferentialOracle(t *testing.T) {
 	}
 	want := map[string][]string{}
 	for _, line := range strings.Split(strings.TrimSpace(string(golden)), "\n") {
+		if len(line) < 3 {
+			t.Fatalf("malformed golden line %q (regenerate with -oracle.update on a trusted baseline)", line)
+		}
 		want[line[:2]] = append(want[line[:2]], line)
 	}
 	for i, digests := range got {
