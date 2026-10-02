@@ -26,6 +26,22 @@ an independent grid.
 Callbacks run synchronously, before `Screen.Write` returns. Avoid slow work in
 them. Copy response bytes during the callback if you need to retain them.
 
+## Borrowed and owned byte slices
+
+A few entry points skip a copy when the caller can promise exclusive ownership:
+
+- `kittygraphics.ParseAPCBorrowed` returns a command whose payload aliases the
+  input. Keep the input unchanged while the command is in use.
+  `Session.Process` never retains a command's payload, so the input may be
+  reused once it returns.
+- `graphics.Scene.AddAssetOwned` and `ReplaceAssetOwned` keep `Encoded` instead
+  of copying it. Do not read or modify it afterwards. A slice with large spare
+  capacity is still copied, so the scene retains only accounted bytes. On error
+  the scene keeps nothing.
+
+The copying variants (`ParseAPC`, `AddAsset`, `ReplaceAsset`) remain the safe
+default.
+
 ## Styles
 
 Use `DefaultStyle()` to leave foreground and background colors at the terminal's

@@ -78,19 +78,45 @@ type oracleRun struct {
 	// mirror reproduces the vev daemon consumer: one core.Frame reused and
 	// mutated in place between draws, so renderer shadows must not alias it.
 	mirror core.Frame
-	h      hash.Hash
+	// hashes holds one digest per observable concern, so an intentional
+	// change to one layer (for example ANSI bytes) leaves the others'
+	// golden columns untouched and auditable.
+	hashes map[string]hash.Hash
 	dump   *bufio.Writer
 	events []string
 }
 
-func (o *oracleRun) emit(format string, args ...any) {
+// oracleConcerns are the golden columns, in output order. "input" covers the
+// generated workload and VT callbacks; the others cover one layer each.
+var oracleConcerns = []string{"input", "vt", "graphics", "history", "ansi", "ansi256", "html"}
+
+func (o *oracleRun) emit(concern, format string, args ...any) {
 	line := fmt.Sprintf(format, args...)
-	o.h.Write([]byte(line))
-	o.h.Write([]byte{'\n'})
+	h := o.hashes[concern]
+	if h == nil {
+		o.t.Fatalf("unknown oracle concern %q", concern)
+	}
+	h.Write([]byte(line))
+	h.Write([]byte{'\n'})
 	if o.dump != nil {
+		o.dump.WriteString(concern)
+		o.dump.WriteString(": ")
 		o.dump.WriteString(line)
 		o.dump.WriteByte('\n')
 	}
+}
+
+func (o *oracleRun) digest() string {
+	var b strings.Builder
+	for i, concern := range oracleConcerns {
+		if i > 0 {
+			b.WriteByte(' ')
+		}
+		b.WriteString(concern)
+		b.WriteByte('=')
+		b.WriteString(hex.EncodeToString(o.hashes[concern].Sum(nil))[:12])
+	}
+	return b.String()
 }
 
 func formatCell(c core.Cell) string {
@@ -284,41 +310,41 @@ func (o *oracleRun) maybeResize(step int) {
 		return
 	}
 	cols, rows := 8+o.r.IntN(110), 3+o.r.IntN(40)
-	o.emit("step %d resize %dx%d", step, cols, rows)
+	o.emit("input", "step %d resize %dx%d", step, cols, rows)
 	o.screen.Resize(cols, rows)
 }
 
 func (o *oracleRun) checkScreen() {
 	s := o.screen
-	o.emit("screen %dx%d cursor=%d,%d vis=%t title=%q alt=%t", s.Columns(), s.Rows(), s.CursorRow(), s.CursorCol(), s.CursorVisible(), s.TerminalTitle(), s.AltScreenActive())
+	o.emit("vt", "screen %dx%d cursor=%d,%d vis=%t title=%q alt=%t", s.Columns(), s.Rows(), s.CursorRow(), s.CursorCol(), s.CursorVisible(), s.TerminalTitle(), s.AltScreenActive())
 	snap := s.Snapshot()
-	o.emit("modes %+v cursor %+v next=%d", snap.Modes(), snap.Cursor(), snap.NextRowID())
+	o.emit("vt", "modes %+v cursor %+v next=%d", snap.Modes(), snap.Cursor(), snap.NextRowID())
 	for y := range s.Rows() {
-		o.emit("row %d id=%d bound=%+v %s %q", y, s.RowID(y), snap.Bound(y), formatRow(s.RowCells(y)), rowText(s.RowCells(y)))
+		o.emit("vt", "row %d id=%d bound=%+v %s %q", y, s.RowID(y), snap.Bound(y), formatRow(s.RowCells(y)), rowText(s.RowCells(y)))
 		snapRow := snap.Row(y)
 		if formatRow(snapRow) != formatRow(s.RowCells(y)) {
 			o.t.Fatalf("seed %d: snapshot row %d differs from live row", o.sc.seed, y)
 		}
 	}
-	o.emit("bounds %+v", s.LineBounds())
+	o.emit("vt", "bounds %+v", s.LineBounds())
 }
 
 func (o *oracleRun) checkGraphics() {
 	g := o.screen.GraphicsSnapshot()
 	if g == nil {
-		o.emit("graphics nil")
+		o.emit("graphics", "graphics nil")
 		return
 	}
-	o.emit("graphics gen=%d usage=%+v", g.Generation(), g.Usage())
+	o.emit("graphics", "graphics gen=%d usage=%+v", g.Generation(), g.Usage())
 	for _, a := range g.Assets() {
 		blob := a.Blob()
 		sum := sha256.Sum256(blob.Encoded)
-		o.emit("asset fmt=%v %dx%d px=%d sha=%x", blob.Format, blob.Width, blob.Height, blob.DecodedPixels, sum[:8])
+		o.emit("graphics", "asset fmt=%v %dx%d px=%d sha=%x", blob.Format, blob.Width, blob.Height, blob.DecodedPixels, sum[:8])
 	}
 	for _, p := range g.Placements() {
-		o.emit("placement %+v", p.Spec())
+		o.emit("graphics", "placement %+v", p.Spec())
 	}
-	o.emit("fragments %+v", g.VisibleCellFragments(graphics.CellRect{Width: int64(o.screen.Columns()), Height: int64(o.screen.Rows())}))
+	o.emit("graphics", "fragments %+v", g.VisibleCellFragments(graphics.CellRect{Width: int64(o.screen.Columns()), Height: int64(o.screen.Rows())}))
 }
 
 func (o *oracleRun) checkHistory(deep bool) {
@@ -326,7 +352,7 @@ func (o *oracleRun) checkHistory(deep bool) {
 	if h == nil {
 		return
 	}
-	o.emit("history len=%d cells=%d bytes=%d next=%d stats=%+v", h.Len(), h.Cells(), h.LogicalBytes(), h.NextRowID(), h.CompressionStats())
+	o.emit("history", "history len=%d cells=%d bytes=%d next=%d stats=%+v", h.Len(), h.Cells(), h.LogicalBytes(), h.NextRowID(), h.CompressionStats())
 	if !deep {
 		return
 	}
@@ -336,7 +362,7 @@ func (o *oracleRun) checkHistory(deep bool) {
 		o.t.Fatalf("seed %d: MarshalHistoryTail: %v", o.sc.seed, err)
 	}
 	sum := sha256.Sum256(tail)
-	o.emit("snapview len=%d chunks=%d tail=%x", snapView.Len(), snapView.ChunkCount(), sum)
+	o.emit("history", "snapview len=%d chunks=%d tail=%x", snapView.Len(), snapView.ChunkCount(), sum)
 	var sealed [][]byte
 	for i := range snapView.ChunkCount() {
 		blob, err := vt.MarshalHistoryChunk(snapView.Chunk(i))
@@ -344,7 +370,7 @@ func (o *oracleRun) checkHistory(deep bool) {
 			o.t.Fatalf("seed %d: MarshalHistoryChunk: %v", o.sc.seed, err)
 		}
 		sum := sha256.Sum256(blob)
-		o.emit("chunk %d %x", i, sum)
+		o.emit("history", "chunk %d %x", i, sum)
 		sealed = append(sealed, blob)
 	}
 	view := h.View()
@@ -358,7 +384,7 @@ func (o *oracleRun) checkHistory(deep bool) {
 		o.t.Fatalf("seed %d: history Range: %v", o.sc.seed, err)
 	}
 	for i, row := range rows {
-		o.emit("hrow %d id=%d bound=%+v %s %q", i, view.RowID(i), view.Bound(i), row, texts[i])
+		o.emit("history", "hrow %d id=%d bound=%+v %s %q", i, view.RowID(i), view.Bound(i), row, texts[i])
 		if got := formatRow(view.Row(i)); got != row {
 			o.t.Fatalf("seed %d: history Row(%d) differs from Range", o.sc.seed, i)
 		}
@@ -386,16 +412,16 @@ func (o *oracleRun) checkHistory(deep bool) {
 		o.t.Fatalf("seed %d: recovery transcript: %v", o.sc.seed, err)
 	}
 	tsum := sha256.Sum256(transcript)
-	o.emit("transcript %x", tsum)
+	o.emit("history", "transcript %x", tsum)
 	recovered, err := vt.NewScreenWithRecoveryTranscript(o.screen.Columns(), o.screen.Rows(), h.Limits(), sealed, tail, transcript)
 	if err != nil {
 		o.t.Fatalf("seed %d: NewScreenWithRecoveryTranscript: %v", o.sc.seed, err)
 	}
 	rh := recovered.History()
-	o.emit("recovered len=%d next=%d", rh.Len(), rh.NextRowID())
+	o.emit("history", "recovered len=%d next=%d", rh.Len(), rh.NextRowID())
 	if rh.Len() > 0 {
 		rv := rh.View()
-		o.emit("recovered last %s", formatRow(rv.Row(rv.Len()-1)))
+		o.emit("history", "recovered last %s", formatRow(rv.Row(rv.Len()-1)))
 	}
 }
 
@@ -406,7 +432,7 @@ func (o *oracleRun) render(step int) {
 	if len(capture.Damage) != len(damage) {
 		o.t.Fatalf("seed %d: CaptureDamage length %d want %d", o.sc.seed, len(capture.Damage), len(damage))
 	}
-	o.emit("damage %+v", damage)
+	o.emit("vt", "damage %+v", damage)
 
 	if o.mirror.Width != s.Columns() || o.mirror.Height != s.Rows() {
 		o.mirror = core.NewFrame(s.Columns(), s.Rows())
@@ -428,11 +454,11 @@ func (o *oracleRun) render(step int) {
 		o.t.Fatalf("seed %d step %d: ansi Prepare: %v", o.sc.seed, step, err)
 	}
 	out := prepared.Bytes()
-	o.emit("ansi %q", out)
+	o.emit("ansi", "ansi %q", out)
 	if o.r.IntN(7) == 0 {
 		// Discarded draw: renderer must keep its committed shadow and damage
 		// must remain pending for the next draw.
-		o.emit("ansi discard")
+		o.emit("ansi", "ansi discard")
 	} else {
 		prepared.Commit()
 		o.replay = o.applyReplay(o.replay, out, step, true)
@@ -444,7 +470,7 @@ func (o *oracleRun) render(step int) {
 	if err != nil {
 		o.t.Fatalf("seed %d: ansi256 Draw: %v", o.sc.seed, err)
 	}
-	o.emit("ansi256 %q", other)
+	o.emit("ansi256", "ansi256 %q", other)
 	o.replay256 = o.applyReplay(o.replay256, other, step, false)
 
 	snap := s.Snapshot()
@@ -455,15 +481,15 @@ func (o *oracleRun) render(step int) {
 	}
 	hp, err := o.htmlR.Prepare(htmlSource, damage, false, html.Cursor{Row: cur.Row, Column: cur.Col, Visible: cur.Visible, Style: html.CursorStyle(cur.Style), StyleSet: cur.StyleSet})
 	if err != nil {
-		o.emit("html err %v", err)
+		o.emit("html", "html err %v", err)
 		return
 	}
-	o.emit("html %s", hp.JSON())
+	o.emit("html", "html %s", hp.JSON())
 	if o.r.IntN(6) == 0 {
 		if err := hp.Abort(); err != nil {
 			o.t.Fatalf("seed %d: html abort: %v", o.sc.seed, err)
 		}
-		o.emit("html abort")
+		o.emit("html", "html abort")
 	} else if err := hp.Commit(); err != nil {
 		o.t.Fatalf("seed %d: html commit: %v", o.sc.seed, err)
 	}
@@ -491,7 +517,10 @@ func (o *oracleRun) applyReplay(replay *vt.Screen, out []byte, step int, styles 
 
 func runOracleScenario(t *testing.T, idx int) string {
 	sc := oracleScenarioFor(idx)
-	o := &oracleRun{t: t, sc: sc, r: rand.New(rand.NewPCG(sc.seed, 0xdecaf)), h: sha256.New()}
+	o := &oracleRun{t: t, sc: sc, r: rand.New(rand.NewPCG(sc.seed, 0xdecaf)), hashes: map[string]hash.Hash{}}
+	for _, concern := range oracleConcerns {
+		o.hashes[concern] = sha256.New()
+	}
 	if *oracleDump != "" {
 		if err := os.MkdirAll(*oracleDump, 0o755); err != nil {
 			t.Fatal(err)
@@ -541,16 +570,16 @@ func runOracleScenario(t *testing.T, idx int) string {
 	if sc.history != nil {
 		historyConfig = *sc.history
 	}
-	o.emit("scenario %d %dx%d history=%+v byteSplit=%t evictHook=%t", idx, sc.cols, sc.rows, historyConfig, sc.byteSplit, sc.evictHook)
+	o.emit("input", "scenario %d %dx%d history=%+v byteSplit=%t evictHook=%t", idx, sc.cols, sc.rows, historyConfig, sc.byteSplit, sc.evictHook)
 
 	var digests []string
 	for step := range oracleSteps {
 		o.maybeResize(step)
 		chunk := o.genChunk()
-		o.emit("step %d write %q", step, chunk)
+		o.emit("input", "step %d write %q", step, chunk)
 		o.write(chunk)
 		for _, e := range o.events {
-			o.emit("%s", e)
+			o.emit("input", "%s", e)
 		}
 		o.events = o.events[:0]
 		o.render(step)
@@ -558,12 +587,20 @@ func runOracleScenario(t *testing.T, idx int) string {
 			o.checkScreen()
 			o.checkGraphics()
 			o.checkHistory(step%(2*oracleCheckEvery) == 2*oracleCheckEvery-1)
-			digests = append(digests, fmt.Sprintf("%02d/%03d %s", idx, step, hex.EncodeToString(o.h.Sum(nil))[:24]))
+			digests = append(digests, fmt.Sprintf("%02d/%03d %s", idx, step, o.digest()))
 		}
 	}
 	return strings.Join(digests, "\n")
 }
 
+// TestDifferentialOracle compares every checkpoint against
+// testdata/oracle/golden.txt. Each golden line holds one digest per concern
+// (see oracleConcerns), so an intentional output change shows which layers
+// moved. Regenerate with -oracle.update only for a deliberate behavior change,
+// on a full run, and justify the changed columns; diagnose a divergence by
+// running -oracle.dump=DIR on both trees and diffing the scenario transcript.
+// Under -race only every sixth scenario runs: scenarios are single-goroutine,
+// so the detector adds cost without coverage.
 func TestDifferentialOracle(t *testing.T) {
 	if testing.Short() {
 		t.Skip("differential oracle skipped in -short mode")
@@ -572,6 +609,9 @@ func TestDifferentialOracle(t *testing.T) {
 	t.Run("scenarios", func(t *testing.T) {
 		for i := range oracleScenarios {
 			t.Run(fmt.Sprintf("%02d", i), func(t *testing.T) {
+				if raceEnabled && i%6 != 0 {
+					t.Skip("reduced oracle under -race")
+				}
 				t.Parallel()
 				got[i] = runOracleScenario(t, i)
 			})
@@ -580,28 +620,56 @@ func TestDifferentialOracle(t *testing.T) {
 	if t.Failed() {
 		return
 	}
-	text := strings.Join(got, "\n") + "\n"
+	ran := 0
+	for _, digests := range got {
+		if digests != "" {
+			ran++
+		}
+	}
 	if *oracleUpdate {
+		if ran != oracleScenarios {
+			t.Fatalf("-oracle.update needs every scenario; only %d of %d ran (remove -run filters and -race)", ran, oracleScenarios)
+		}
 		if err := os.MkdirAll(filepath.Dir(oracleGolden), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(oracleGolden, []byte(text), 0o644); err != nil {
+		if err := os.WriteFile(oracleGolden, []byte(strings.Join(got, "\n")+"\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
 		return
 	}
-	want, err := os.ReadFile(oracleGolden)
+	golden, err := os.ReadFile(oracleGolden)
 	if err != nil {
 		t.Fatalf("read golden (run with -oracle.update on a trusted baseline): %v", err)
 	}
-	if string(want) == text {
-		return
+	want := map[string][]string{}
+	for _, line := range strings.Split(strings.TrimSpace(string(golden)), "\n") {
+		want[line[:2]] = append(want[line[:2]], line)
 	}
-	wantLines, gotLines := strings.Split(string(want), "\n"), strings.Split(text, "\n")
-	for i := range min(len(wantLines), len(gotLines)) {
-		if wantLines[i] != gotLines[i] {
-			t.Fatalf("oracle diverged at checkpoint %q (want %q); rerun with -oracle.dump=DIR on both trees and diff the scenario transcript", gotLines[i], wantLines[i])
+	for i, digests := range got {
+		if digests == "" {
+			continue
 		}
+		compareOracleScenario(t, fmt.Sprintf("%02d", i), strings.Split(digests, "\n"), want[fmt.Sprintf("%02d", i)])
 	}
-	t.Fatalf("oracle checkpoint count differs: got %d want %d", len(gotLines), len(wantLines))
+}
+
+func compareOracleScenario(t *testing.T, id string, got, want []string) {
+	t.Helper()
+	for i := range min(len(got), len(want)) {
+		if got[i] == want[i] {
+			continue
+		}
+		gotFields, wantFields := strings.Fields(got[i]), strings.Fields(want[i])
+		var moved []string
+		for j := 1; j < min(len(gotFields), len(wantFields)); j++ {
+			if gotFields[j] != wantFields[j] {
+				moved = append(moved, strings.SplitN(gotFields[j], "=", 2)[0])
+			}
+		}
+		t.Fatalf("scenario %s diverged at checkpoint %s in %v\n got  %s\n want %s\nrerun with -oracle.dump=DIR on both trees and diff the transcript", id, gotFields[0], moved, got[i], want[i])
+	}
+	if len(got) != len(want) {
+		t.Fatalf("scenario %s checkpoint count differs: got %d want %d", id, len(got), len(want))
+	}
 }

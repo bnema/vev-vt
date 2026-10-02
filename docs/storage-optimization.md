@@ -50,6 +50,7 @@ latency or claiming a precise speedup.
 | Geometry-bounded tail preallocation | Accepted | Large reproducible allocation reduction for small chunks; no ownership changes. |
 | Change default logical chunk rows | Rejected for now | Corrected throughput samples overlap. 256 rows uses fewer allocations/dictionaries than smaller chunks. |
 | Pool tail/page memory | Not justified yet | The immediate cause was excessive requested capacity. Sealed pages may outlive History through borrowed views, making recycling ownership-sensitive; pools can also retain cold memory. |
+| Recycle the private mutable tail across seals | Accepted | Only History reads its tail: sealed chunks and views hold compact copies. Reusing that storage removed about 85% of the bytes allocated by `BenchmarkHistoryBuild10Kx120`. Retention is bounded: at most 128K cells (a default chunk up to 512 columns), and cleared cells, so payload strings are not pinned. Style scratch maps are dropped above 1,024 entries. Sealed pages are never pooled. |
 | mmap/decommit | Not justified | Go GC already releases dropped page references; no measured syscall/RSS benefit supports platform-specific backing, finalization and failure paths. |
 | SIMD | Not justified | The measured work is semantic cell writes and dictionary lookup, not a demonstrated bulk transform suited to SIMD. Native copy/clear remains the baseline. |
 | Fixed physical page alignment | Rejected | No measured benefit. Chunk rows are logical grouping, not an OS page-size commitment. |

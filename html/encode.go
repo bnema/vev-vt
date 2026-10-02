@@ -1,9 +1,7 @@
 package html
 
 import (
-	"encoding/json"
 	"fmt"
-	"reflect"
 	"strconv"
 	"unicode/utf8"
 )
@@ -157,11 +155,7 @@ func appendColorJSON(dst []byte, color Color) ([]byte, error) {
 		dst = strconv.AppendUint(dst, uint64(color.RGB.B), 10)
 		return append(dst, "}}"...), nil
 	default:
-		// Same error value encoding/json produced via Color.MarshalJSON.
-		return nil, &json.MarshalerError{
-			Type: reflect.TypeFor[*Color](),
-			Err:  fmt.Errorf("html: invalid color kind %d", color.Kind),
-		}
+		return nil, fmt.Errorf("html: invalid color kind %d", color.Kind)
 	}
 }
 
@@ -169,8 +163,8 @@ const hexDigits = "0123456789abcdef"
 
 // appendJSONString appends s as a JSON string using encoding/json's default
 // escaping: quotes, backslashes, control characters, <, >, & and U+2028/2029
-// are escaped, and each invalid UTF-8 byte becomes U+FFFD written as the
-// literal character, byte-identical to encoding/json on this toolchain.
+// are escaped. Cell text is always valid UTF-8; an invalid byte, should one
+// appear, is replaced by U+FFFD so the output stays valid JSON.
 func appendJSONString(dst []byte, s string) []byte {
 	dst = append(dst, '"')
 	start := 0
@@ -226,7 +220,7 @@ func appendJSONString(dst []byte, s string) []byte {
 // estimateUpdateJSONSize returns a capacity hint close to the encoded size so
 // the output buffer normally grows zero times.
 func estimateUpdateJSONSize(update Update) int {
-	size := 256 + 160*len(update.Styles)
+	size := 256 + 256*len(update.Styles)
 	for i := range update.Rows {
 		size += 32 + 48*len(update.Rows[i].Cells)
 	}

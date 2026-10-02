@@ -17,6 +17,11 @@ var errInvalidHistoryRowID = errors.New("invalid history row ID")
 
 const maxTailPreallocCells = 32 * 1024
 
+// maxRetainedTailCells bounds tail storage recycled across seals. It covers a
+// full default chunk of terminals up to 512 columns, so wide terminals reuse
+// their tail too, while rare very wide rows are still released.
+const maxRetainedTailCells = 4 * maxTailPreallocCells
+
 // History stores terminal rows in immutable chunks. It is intended to be
 // mutated by the owner of a Screen; views are safe to retain after later
 // appends.
@@ -557,7 +562,7 @@ func (h *History) sealTail() {
 	// storage (wide rows) is released as before.
 	clear(h.tail)
 	h.tail = h.tail[:0]
-	if cap(h.tailCells) > maxTailPreallocCells {
+	if cap(h.tailCells) > maxRetainedTailCells {
 		h.tailCells = nil
 	} else {
 		clear(h.tailCells)

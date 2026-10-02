@@ -93,6 +93,22 @@ func TestHistoryTailStorageIsRecycledAcrossSeals(t *testing.T) {
 	require.NoError(t, h.chunks[len(h.chunks)-1].CheckInvariants())
 }
 
+// Default chunks of wide terminals (256 rows × 200 columns) must recycle their
+// tail storage too.
+func TestHistoryTailStorageIsRecycledForWideTerminals(t *testing.T) {
+	const width = 200
+	h := NewHistory(HistoryConfig{MaxRows: 4096, MaxBytes: 1 << 30})
+	row := make([]renderer.Cell, width)
+	for i := range row {
+		row[i] = renderer.Cell{Rune: 'w', Style: renderer.DefaultStyle()}
+	}
+	for range 256 {
+		require.NoError(t, h.Append(row, LineBound{End: width}))
+	}
+	require.Empty(t, h.tail)
+	require.GreaterOrEqual(t, cap(h.tailCells), 256*width, "seal released wide-terminal tail storage")
+}
+
 // Eviction from a partial tail must not leave the evicted rows' payload
 // strings pinned in the recycled backing array's prefix.
 func TestHistoryTailEvictionClearsEvictedPrefix(t *testing.T) {

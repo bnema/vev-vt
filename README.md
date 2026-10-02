@@ -154,6 +154,14 @@ npm run test:browser
 npm run test:browser:docker
 ```
 
+`TestDifferentialOracle` replays seeded terminal workloads through the public
+VT, history, graphics, ANSI and HTML APIs and compares one digest per layer with
+`testdata/oracle/golden.txt`. Keep it unchanged for refactors and performance
+work. For a deliberate behavior change, regenerate it on a full run with
+`go test -run TestDifferentialOracle -oracle.update .` and explain the changed
+columns. To locate a divergence, run `-oracle.dump=DIR` on both trees and diff
+the scenario transcripts.
+
 Playwright 1.62.1 and its Chromium, Firefox, and WebKit revisions are pinned by
 `package-lock.json`. The matching Playwright container provides the reproducible
 fallback when host libraries cannot run one of those browser builds. Production

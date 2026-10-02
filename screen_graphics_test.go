@@ -3,6 +3,7 @@ package vt
 import (
 	"encoding/base64"
 	"math"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -408,6 +409,31 @@ func TestScreenWriteReentrantFromCallbackKeepsOuterStreamIntact(t *testing.T) {
 
 // The Screen borrows the caller's Write buffer while parsing; nothing it
 // retains may alias that buffer once Write returns.
+// Base64 payloads padded with CR/LF decode into a buffer sized for the raw
+// input. The scene must not retain that slack beyond its accounted bytes,
+// otherwise untrusted output could hold memory past MaxEncodedBytes.
+func TestScreenKittyNewlinePaddedPayloadRetainsOnlyAccountedBytes(t *testing.T) {
+	const uploads, padding = 16, 1 << 20
+	screen := NewScreen(16, 3)
+	pad := strings.Repeat("\n", padding)
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	for i := range uploads {
+		screen.Write([]byte("\x1b_Ga=t,i=" + strconv.Itoa(i+1) + ",f=32,s=1,v=1;AQID" + pad + "BA==\x1b\\"))
+	}
+	runtime.GC()
+	runtime.ReadMemStats(&after)
+	require.Equal(t, uint64(4*uploads), screen.graphics.scene.Usage().EncodedBytes)
+	for _, asset := range screenAssetBytes(t, screen) {
+		require.Equal(t, []byte{1, 2, 3, 4}, asset)
+	}
+	// Untrimmed decode buffers would retain about 0.75 MiB per upload.
+	growth := int64(after.HeapAlloc) - int64(before.HeapAlloc)
+	require.Less(t, growth, int64(4<<20), "heap retained by %d padded uploads", uploads)
+	runtime.KeepAlive(screen)
+}
+
 func TestScreenKittyGraphicsDoesNotAliasCallerWriteBuffer(t *testing.T) {
 	scribble := func(b []byte) {
 		for i := range b {

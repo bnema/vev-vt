@@ -78,6 +78,62 @@ func TestDownwardScrollMismatchFallsBack(t *testing.T) {
 	}
 }
 
+// A stale commit followed by the current draw's commit, or a Reset between
+// Prepare and Commit, must never leave a shadow that disagrees with the
+// terminal: the next Prepare is a full snapshot.
+func TestCommitAfterStaleCommitOrResetKeepsTerminalExact(t *testing.T) {
+	for _, tc := range []string{"stale-then-current", "reset-between"} {
+		t.Run(tc, func(t *testing.T) {
+			frame := vt.NewFrame(10, 4)
+			for y := range frame.Height {
+				frame.FillRow(y, 0, frame.Width, vt.Cell{Rune: rune('a' + y), Style: vt.DefaultStyle()})
+			}
+			r := ansi.New(ansi.Capabilities{})
+			terminal := vt.NewScreen(frame.Width, frame.Height)
+			initial, err := r.Draw(frame, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			terminal.Write(initial)
+
+			frame.Set(1, 1, vt.Cell{Rune: 'A', Style: vt.DefaultStyle()})
+			a, err := r.Prepare(frame, []vt.Damage{{Kind: vt.DamageText, X: 1, Y: 1, Width: 1, Height: 1}}, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			terminal.Write(a.Bytes())
+			// The caller reverts the cell before the next draw; only row 2 is damaged.
+			frame.Set(1, 1, vt.Cell{Rune: 'b', Style: vt.DefaultStyle()})
+			frame.Set(2, 2, vt.Cell{Rune: 'B', Style: vt.DefaultStyle()})
+			if tc == "reset-between" {
+				r.Reset()
+				a.Commit()
+			} else {
+				b, err := r.Prepare(frame, []vt.Damage{{Kind: vt.DamageText, X: 2, Y: 2, Width: 1, Height: 1}}, false)
+				if err != nil {
+					t.Fatal(err)
+				}
+				terminal.Write(b.Bytes())
+				a.Commit()
+				b.Commit()
+			}
+			next, err := r.Prepare(frame, nil, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			terminal.Write(next.Bytes())
+			next.Commit()
+			for y := range frame.Height {
+				for x := range frame.Width {
+					if !frame.Cell(x, y).Equal(terminal.Cell(x, y)) {
+						t.Fatalf("cell %d,%d = %+v, want %+v", x, y, terminal.Cell(x, y), frame.Cell(x, y))
+					}
+				}
+			}
+		})
+	}
+}
+
 func TestStaleCommitForcesSnapshotAndReplaysCorrectly(t *testing.T) {
 	for _, deliverB := range []bool{false, true} {
 		frame := vt.NewFrame(10, 4)

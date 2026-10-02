@@ -436,8 +436,13 @@ func (s *Scene) prepareAsset(blob AssetBlob, state *sceneState, copyEncoded bool
 	if !within(state.usage.DecodedPixels, pixels, s.limits.MaxDecodedPixels) {
 		return assetRecord{}, fmt.Errorf("add asset: %w", ErrDecodedPixelBudget)
 	}
-	if copyEncoded {
-		data = append([]byte(nil), data...)
+	// Budgets count len(data). An owned slice with spare capacity would keep
+	// unaccounted memory alive (for example base64 input padded with CR/LF
+	// or a zlib read buffer), so it is trimmed by copying.
+	if copyEncoded || cap(data)-len(data) > len(data)/8 {
+		exact := make([]byte, len(data))
+		copy(exact, data)
+		data = exact
 	}
 	return assetRecord{encoded: data, format: blob.Format, width: blob.Width, height: blob.Height, pixels: pixels}, nil
 }

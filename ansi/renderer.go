@@ -51,11 +51,13 @@ func NewWithColorProfile(caps Capabilities, profile ColorProfile) *Renderer {
 	return &Renderer{caps: caps, colorProfile: profile}
 }
 
+// Reset forgets the committed shadow and invalidates every outstanding
+// prepared draw. The private frame buffers are kept for reuse.
 func (r *Renderer) Reset() {
 	r.width = 0
 	r.height = 0
 	r.hasCommitted = false
-	// The frame buffers are kept for reuse; hasCommitted gates their content.
+	r.generation++
 }
 
 // Bytes returns the prepared ANSI output. The returned bytes remain valid after
@@ -80,15 +82,24 @@ func (p *PreparedDraw) Commit() {
 			return
 		}
 		if p.generation != r.generation {
-			// A later Prepare reused the scratch frame this draw's snapshot
-			// lives in, so it cannot be applied. Its bytes may nevertheless
-			// have reached the terminal, which would then differ from the
-			// committed shadow in unknown ways: forget the shadow so the next
-			// Prepare emits a full snapshot.
+			// A later Prepare or Reset reused the scratch frame this draw's
+			// snapshot lives in, so it cannot be applied. Its bytes may
+			// nevertheless have reached the terminal, which would then differ
+			// from the committed shadow in unknown ways: forget the shadow and
+			// invalidate every outstanding draw, so even a delta prepared
+			// after this one cannot re-establish a shadow on commit and the
+			// next Prepare emits a full snapshot.
 			r.hasCommitted = false
+			r.generation++
 			return
 		}
-		if plan.Snapshot || !r.hasCommitted {
+		if !plan.Snapshot && !r.hasCommitted {
+			// Unreachable for current draws: Prepare plans a snapshot whenever
+			// no shadow exists, and every path that drops the shadow also
+			// advances the generation. Keep the shadow dropped defensively.
+			return
+		}
+		if plan.Snapshot {
 			// The snapshot lives in the renderer's scratch buffer; promote it
 			// and recycle the previous committed buffer as the next scratch.
 			r.committed, r.scratch = p.candidate.frame, r.committed
@@ -104,7 +115,8 @@ func (p *PreparedDraw) Commit() {
 // Prepare plans and encodes a transactional draw. The renderer advances only
 // when the returned draw is committed. Keep at most one prepared draw
 // outstanding; commit or discard it before calling Prepare again. A draw
-// superseded by a later Prepare is discarded and its Commit does nothing.
+// superseded by a later Prepare is not applied: committing it forces the next
+// Prepare to emit a full snapshot.
 //
 // The renderer copies frame into reusable private storage, so the caller may
 // keep mutating frame between draws.

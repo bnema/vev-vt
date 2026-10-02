@@ -126,7 +126,7 @@ func TestRowsEqual(t *testing.T) {
 	a := copyTestFrame(t, 10, 4, 'a')
 	b := a.Clone()
 	for y := range a.Height {
-		if !RowsEqual(a, b, y) {
+		if !RowsEqualAt(a, y, b, y) {
 			t.Fatalf("clone row %d differs", y)
 		}
 	}
@@ -141,11 +141,11 @@ func TestRowsEqual(t *testing.T) {
 		}
 	}
 	for y := range a.Height {
-		if !RowsEqual(a, c, y) {
+		if !RowsEqualAt(a, y, c, y) {
 			t.Fatalf("semantically equal row %d reported different", y)
 		}
-		if got, want := RowsEqual(a, c, y), reflect.DeepEqual(a.Row(y), c.Row(y)); got != want {
-			t.Fatalf("row %d: RowsEqual=%v DeepEqual=%v", y, got, want)
+		if got, want := RowsEqualAt(a, y, c, y), reflect.DeepEqual(a.Row(y), c.Row(y)); got != want {
+			t.Fatalf("row %d: RowsEqualAt=%v DeepEqual=%v", y, got, want)
 		}
 	}
 
@@ -161,7 +161,7 @@ func TestRowsEqual(t *testing.T) {
 		m.Set(3, 1, d)
 		for y := range a.Height {
 			want := y != 1
-			if got := RowsEqual(a, m, y); got != want {
+			if got := RowsEqualAt(a, y, m, y); got != want {
 				t.Fatalf("diff %d row %d: got %v want %v", i, y, got, want)
 			}
 		}
@@ -180,7 +180,7 @@ func TestRowsEqual(t *testing.T) {
 		t.Fatal("test frame row 0 has no payload")
 	}
 	m.Set(px, 0, Cell{Rune: a.Cell(px, 0).Rune, Style: a.Cell(px, 0).Style})
-	if RowsEqual(a, m, 0) {
+	if RowsEqualAt(a, 0, m, 0) {
 		t.Fatal("payload removal not detected")
 	}
 
@@ -191,12 +191,12 @@ func TestRowsEqual(t *testing.T) {
 	s2.ForegroundRGB = RGB{R: 9}
 	e1.Set(0, 0, Cell{Rune: 'a', Style: s1})
 	e2.Set(0, 0, Cell{Rune: 'a', Style: s2})
-	if !RowsEqual(e1, e2, 0) {
+	if !RowsEqualAt(e1, 0, e2, 0) {
 		t.Fatal("equivalent styles reported different")
 	}
 
 	// Mismatched shape or range is unequal and never panics.
-	if RowsEqual(a, NewFrame(a.Width+1, a.Height), 0) || RowsEqual(a, b, -1) || RowsEqual(a, b, a.Height) || RowsEqual(Frame{}, Frame{}, 0) {
+	if RowsEqualAt(a, 0, NewFrame(a.Width+1, a.Height), 0) || RowsEqualAt(a, -1, b, -1) || RowsEqualAt(a, a.Height, b, a.Height) || RowsEqualAt(Frame{}, 0, Frame{}, 0) {
 		t.Fatal("invalid comparison reported equal")
 	}
 }
@@ -204,8 +204,8 @@ func TestRowsEqual(t *testing.T) {
 func TestRowsEqualDoesNotAllocate(t *testing.T) {
 	a := copyTestFrame(t, 80, 4, 'a')
 	b := a.Clone()
-	if n := testing.AllocsPerRun(20, func() { RowsEqual(a, b, 2) }); n != 0 {
-		t.Fatalf("RowsEqual allocated %v times", n)
+	if n := testing.AllocsPerRun(20, func() { RowsEqualAt(a, 2, b, 2) }); n != 0 {
+		t.Fatalf("RowsEqualAt allocated %v times", n)
 	}
 }
 
@@ -295,5 +295,14 @@ func TestRowsEqualAt(t *testing.T) {
 	}
 	if RowsEqualAt(a, 0, b, 0) || RowsEqualAt(a, 0, b, 5) || RowsEqualAt(a, -1, b, 0) {
 		t.Fatal("unequal or out-of-range rows reported equal")
+	}
+}
+
+func TestRowsEqualAtRejectsCorruptPayloadIDs(t *testing.T) {
+	a := copyTestFrame(t, 4, 1, 'a')
+	b := a.Clone()
+	b.page.cells[b.page.rows[0]].payloadID = uint32(len(b.page.payloads) + 5)
+	if RowsEqualAt(a, 0, b, 0) || RowsEqualAt(b, 0, a, 0) {
+		t.Fatal("corrupt payload ID reported equal")
 	}
 }

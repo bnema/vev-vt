@@ -57,17 +57,13 @@ func (f *Frame) CopyFrom(src Frame) {
 	}
 }
 
-// RowsEqual reports whether logical row y holds semantically equal cells in a
-// and b (the same comparison as Cell.Equal for every column). It compares
-// compact stored cells directly and resolves page-local style and payload IDs
-// only when they are not both the default, so it does not allocate and does not
-// require the two frames to share ID tables. Frames of different width, an
-// out-of-range row, or inconsistent storage compare unequal.
-func RowsEqual(a, b Frame, y int) bool {
-	return RowsEqualAt(a, y, b, y)
-}
-
-// RowsEqualAt is RowsEqual for logical row ya of a against logical row yb of b.
+// RowsEqualAt reports whether logical row ya of a and logical row yb of b hold
+// semantically equal cells (the same comparison as Cell.Equal for every
+// column). It compares compact stored cells directly and resolves page-local
+// style and payload IDs only when they are not both the default, so it does
+// not allocate and does not require the two frames to share ID tables. Frames
+// of different width, an out-of-range row, or inconsistent storage compare
+// unequal.
 func RowsEqualAt(a Frame, ya int, b Frame, yb int) bool {
 	if a.Width != b.Width || a.Width <= 0 || a.page == nil || b.page == nil ||
 		ya < 0 || ya >= a.Height || yb < 0 || yb >= b.Height ||
@@ -99,7 +95,9 @@ func RowsEqualAt(a Frame, ya int, b Frame, yb int) bool {
 			}
 		}
 		if ca.payloadID != 0 || cb.payloadID != 0 {
-			if ca.payloadID == 0 || cb.payloadID == 0 || a.payload(ca.payloadID) != b.payload(cb.payloadID) {
+			if ca.payloadID == 0 || cb.payloadID == 0 ||
+				int(ca.payloadID) > len(a.page.payloads) || int(cb.payloadID) > len(b.page.payloads) ||
+				a.payload(ca.payloadID) != b.payload(cb.payloadID) {
 				return false
 			}
 		}

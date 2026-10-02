@@ -30,10 +30,7 @@ func validateCellSource(source CellSource) error {
 	if source.Columns() <= 0 || source.Rows() <= 0 {
 		return fmt.Errorf("invalid cell source size %dx%d", source.Columns(), source.Rows())
 	}
-	switch frame := source.(type) {
-	case Frame:
-		return frame.Validate()
-	case *Frame:
+	if frame, ok := asFrame(source); ok {
 		return frame.Validate()
 	}
 	return nil
@@ -48,12 +45,8 @@ func snapshotCellSource(scratch *Frame, source CellSource) Frame {
 	if scratch == nil {
 		return cloneCellSource(source)
 	}
-	switch frame := source.(type) {
-	case Frame:
+	if frame, ok := asFrame(source); ok {
 		scratch.CopyFrom(frame)
-		return *scratch
-	case *Frame:
-		scratch.CopyFrom(*frame)
 		return *scratch
 	}
 	columns, rows := source.Columns(), source.Rows()
@@ -68,23 +61,8 @@ func snapshotCellSource(scratch *Frame, source CellSource) Frame {
 	return *scratch
 }
 
-// framePair holds two compact frames compared through core.RowsEqual.
-type framePair struct{ a, b Frame }
-
-// compactFrames reports whether both sources are core.Frame values (directly or
-// by pointer), enabling stored-cell comparison without the CellSource interface.
-func compactFrames(a, b CellSource) (framePair, bool) {
-	fa, ok := asFrame(a)
-	if !ok {
-		return framePair{}, false
-	}
-	fb, ok := asFrame(b)
-	if !ok {
-		return framePair{}, false
-	}
-	return framePair{fa, fb}, true
-}
-
+// asFrame reports whether source is a compact core.Frame, directly or through
+// a non-nil pointer, enabling stored-cell paths that bypass CellSource.
 func asFrame(source CellSource) (Frame, bool) {
 	switch frame := source.(type) {
 	case Frame:
@@ -98,10 +76,7 @@ func asFrame(source CellSource) (Frame, bool) {
 }
 
 func cloneCellSource(source CellSource) Frame {
-	switch frame := source.(type) {
-	case Frame:
-		return frame.Clone()
-	case *Frame:
+	if frame, ok := asFrame(source); ok {
 		return frame.Clone()
 	}
 	clone := NewFrame(source.Columns(), source.Rows())

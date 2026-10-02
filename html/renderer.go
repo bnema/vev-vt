@@ -287,7 +287,9 @@ func (r *Renderer) buildUpdate(frame core.Frame, scratch []core.Cell, snapshot b
 // the exact encoded size. The previous conservative estimate could reject
 // compact updates well below the configured limit.
 func encodeBoundedUpdate(update Update, limit int) ([]byte, error) {
-	encoded, err := appendUpdateJSON(make([]byte, 0, estimateUpdateJSONSize(update)), update)
+	// The hint never exceeds limit+1, so an oversized update cannot reserve
+	// its full estimate before the limit rejects it.
+	encoded, err := appendUpdateJSON(make([]byte, 0, min(estimateUpdateJSONSize(update), limit+1)), update)
 	if err != nil {
 		return nil, fmt.Errorf("html: encode update: %w", err)
 	}

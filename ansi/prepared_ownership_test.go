@@ -86,7 +86,14 @@ func TestDiscardedPreparedDrawLeavesCommittedStateUnchanged(t *testing.T) {
 		for y := range committed.Height {
 			require.Equal(t, committed.Row(y), r.committed.Row(y))
 		}
+		// The stale commit invalidated every outstanding draw, so committing
+		// the newer one cannot re-establish a shadow; the next draw is a
+		// full snapshot that leaves the shadow exact.
 		again.Commit()
+		require.False(t, r.hasCommitted)
+		snapshot, err := r.Draw(frame, nil)
+		require.NoError(t, err)
+		require.NotEmpty(t, snapshot)
 		require.Equal(t, '#', r.committed.Cell(1, 1).Rune)
 		require.NoError(t, r.committed.CheckInvariants())
 
@@ -186,7 +193,6 @@ func TestPrepareCommitDoesNotAllocateFrameStorage(t *testing.T) {
 	var m1, m2 runtime.MemStats
 	runtime.ReadMemStats(&m1)
 	for range 50 {
-		toggled = !toggled
 		frame.Set(60, 20, Cell{Rune: 'W', Style: DefaultStyle()})
 		prepared, err := r.Prepare(frame, damage, false)
 		require.NoError(t, err)

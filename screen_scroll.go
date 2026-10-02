@@ -108,6 +108,10 @@ func (s *Screen) emitLineEvicted(top, n int) {
 	if s.history == nil && s.OnLineEvicted == nil {
 		return
 	}
+	// Drop scratch sized for a much wider past geometry.
+	if cap(s.evictScratch) > 2*s.frame.Width {
+		s.evictScratch = nil
+	}
 	// Read boundaries and IDs before the caller rotates the frame: a soft link
 	// belongs to the row it follows, and rotation reassigns row indices.
 	for y := top; y < top+n; y++ {

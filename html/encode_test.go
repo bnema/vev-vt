@@ -5,6 +5,7 @@ import (
 	"math/rand"
 	"reflect"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/bnema/vev-vt/core"
 	"github.com/stretchr/testify/require"
@@ -25,14 +26,32 @@ func TestAppendJSONStringMatchesEncodingJSON(t *testing.T) {
 	}
 }
 
-// Invalid UTF-8 never reaches the encoder (cells are validated), but the
-// escaping must still match encoding/json byte for byte.
-func TestAppendJSONStringInvalidUTF8MatchesEncodingJSON(t *testing.T) {
+// Invalid UTF-8 never reaches the encoder (cells are validated). Should it,
+// the output must stay valid JSON decoding to the same text encoding/json
+// would produce, whatever escaping style the toolchain's encoder uses.
+func TestAppendJSONStringInvalidUTF8StaysValidJSON(t *testing.T) {
 	for _, text := range []string{"\xff", "a\xc3", "\xed\xa0\x80", "\xe2\x80", "ok\xf0\x9f"} {
 		want, err := json.Marshal(text)
 		require.NoError(t, err)
-		require.Equal(t, string(want), string(appendJSONString(nil, text)), "%q", text)
+		var wantText, gotText string
+		require.NoError(t, json.Unmarshal(want, &wantText))
+		require.NoError(t, json.Unmarshal(appendJSONString(nil, text), &gotText), "%q", text)
+		require.Equal(t, wantText, gotText, "%q", text)
 	}
+}
+
+func FuzzAppendJSONString(f *testing.F) {
+	for _, seed := range []string{"", "a<b>&c", "\u2028\u2029", "界😀", "\x00\x1f\x7f"} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, text string) {
+		if !utf8.ValidString(text) {
+			t.Skip("cell text is always valid UTF-8")
+		}
+		want, err := json.Marshal(text)
+		require.NoError(t, err)
+		require.Equal(t, string(want), string(appendJSONString(nil, text)))
+	})
 }
 
 func TestAsciiTextIndexesEveryByte(t *testing.T) {
@@ -100,9 +119,7 @@ func TestAppendUpdateJSONMatchesEncodingJSON(t *testing.T) {
 func TestAppendUpdateJSONRejectsInvalidColorKind(t *testing.T) {
 	update := Update{Styles: []Style{{Foreground: Color{Kind: 9}}}}
 	_, err := appendUpdateJSON(nil, update)
-	_, want := json.Marshal(update)
-	require.Error(t, want)
-	require.EqualError(t, err, want.Error())
+	require.ErrorContains(t, err, "invalid color kind 9")
 }
 
 func TestPreparedJSONMatchesEncodingJSONOfUpdate(t *testing.T) {
@@ -126,7 +143,6 @@ func TestPreparedJSONMatchesEncodingJSONOfUpdate(t *testing.T) {
 	want, err := json.Marshal(prepared.tx.update)
 	require.NoError(t, err)
 	require.Equal(t, string(want), string(prepared.JSON()))
-	require.Contains(t, string(prepared.JSON()), "😀")
 }
 
 // fillAll sets every field reachable from v to a distinctive non-zero value

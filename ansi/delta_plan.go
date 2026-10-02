@@ -117,13 +117,13 @@ func planSingleDamage(frame CellSource, d Damage) DeltaPlan {
 	return plan
 }
 
-func buildDirtyLinePlan(frame, committed CellSource) ([]Span, bool) {
+func buildDirtyLinePlan(frame CellSource, committed Frame) ([]Span, bool) {
 	var spans []Span
-	fast, fastOK := compactFrames(frame, committed)
+	dense, isDense := asFrame(frame)
 	for y := range frame.Rows() {
 		dirty := false
-		if fastOK {
-			dirty = !core.RowsEqual(fast.a, fast.b, y)
+		if isDense {
+			dirty = !core.RowsEqualAt(dense, y, committed, y)
 		} else {
 			for x := range frame.Columns() {
 				if !frame.Cell(x, y).Equal(committed.Cell(x, y)) {

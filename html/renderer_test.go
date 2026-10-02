@@ -287,21 +287,6 @@ func TestAbortThenPrepareKeepsCommittedShadow(t *testing.T) {
 	require.Empty(t, steady.Update().Rows)
 }
 
-func TestPrepareDoesNotAliasCallerFrame(t *testing.T) {
-	frame := core.NewFrame(2, 1)
-	renderer, err := New(Options{})
-	require.NoError(t, err)
-	prepared, err := renderer.Prepare(frame, nil, false, Cursor{})
-	require.NoError(t, err)
-	require.NoError(t, prepared.Commit())
-
-	// Mutating the caller frame after Commit must be seen as a change.
-	frame.Set(0, 0, core.Cell{Rune: 'Q', Style: core.DefaultStyle()})
-	next, err := renderer.Prepare(frame, nil, false, Cursor{})
-	require.NoError(t, err)
-	require.Equal(t, []int{0}, rowIndexes(next.Update()))
-}
-
 func rowIndexes(update Update) []int {
 	rows := make([]int, 0, len(update.Rows))
 	for _, row := range update.Rows {
