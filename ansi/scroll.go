@@ -3,6 +3,8 @@ package ansi
 import (
 	"bytes"
 	"strconv"
+
+	"github.com/bnema/vev-vt/core"
 )
 
 func findSafeScroll(frame CellSource, damage []Damage) (Damage, bool) {
@@ -92,6 +94,11 @@ func canApplyScrollAgainst(frame CellSource, scroll Damage, damage []Damage, com
 func canApplyDenseScrollAgainst(frame Frame, scroll Damage, damage []Damage, committed Frame) bool {
 	start, end, offset := scrollRetainedRows(scroll)
 	for y := start; y < end; y++ {
+		// Scrolls are full width, so a retained row that matches whole needs no
+		// per-cell damage lookups.
+		if scroll.X == 0 && scroll.Width == frame.Width && core.RowsEqualAt(committed, y+offset, frame, y) {
+			continue
+		}
 		for x := range scroll.Width {
 			column := scroll.X + x
 			committedCell, frameCell := committed.At(column, y+offset), frame.At(column, y)
