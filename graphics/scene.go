@@ -101,13 +101,24 @@ func (s *Scene) Limits() Limits {
 
 // AddAsset copies and registers an encoded asset, returning an opaque ID.
 func (s *Scene) AddAsset(blob AssetBlob) (AssetID, error) {
+	return s.addAsset(blob, true)
+}
+
+// AddAssetOwned is AddAsset for callers that hand over blob.Encoded: the scene
+// keeps the slice without copying, so the caller must not read or modify it
+// afterwards. Snapshots and AssetView still return copies.
+func (s *Scene) AddAssetOwned(blob AssetBlob) (AssetID, error) {
+	return s.addAsset(blob, false)
+}
+
+func (s *Scene) addAsset(blob AssetBlob, copyEncoded bool) (AssetID, error) {
 	if s == nil {
 		return AssetID{}, fmt.Errorf("add asset: %w", ErrInvalidAsset)
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	candidate := cloneState(s.state)
-	record, err := s.prepareAsset(blob, candidate)
+	record, err := s.prepareAsset(blob, candidate, copyEncoded)
 	if err != nil {
 		return AssetID{}, err
 	}
@@ -134,6 +145,16 @@ func (s *Scene) RegisterAsset(blob AssetBlob) (AssetID, error) { return s.AddAss
 // reference it. If validation or resource limits reject the new asset, the
 // existing asset and placements remain unchanged.
 func (s *Scene) ReplaceAsset(id AssetID, blob AssetBlob) (AssetID, error) {
+	return s.replaceAsset(id, blob, true)
+}
+
+// ReplaceAssetOwned is ReplaceAsset for callers that hand over blob.Encoded;
+// see AddAssetOwned.
+func (s *Scene) ReplaceAssetOwned(id AssetID, blob AssetBlob) (AssetID, error) {
+	return s.replaceAsset(id, blob, false)
+}
+
+func (s *Scene) replaceAsset(id AssetID, blob AssetBlob, copyEncoded bool) (AssetID, error) {
 	if s == nil {
 		return AssetID{}, fmt.Errorf("replace asset: %w", ErrAssetNotFound)
 	}
@@ -155,7 +176,7 @@ func (s *Scene) ReplaceAsset(id AssetID, blob AssetBlob) (AssetID, error) {
 	candidate.usage.Assets--
 	candidate.usage.EncodedBytes -= uint64(len(old.encoded))
 	candidate.usage.DecodedPixels -= old.pixels
-	replacement, err := s.prepareAsset(blob, candidate)
+	replacement, err := s.prepareAsset(blob, candidate, copyEncoded)
 	if err != nil {
 		return AssetID{}, err
 	}
@@ -389,7 +410,7 @@ func (s *Scene) Usage() Usage {
 	return s.state.usage
 }
 
-func (s *Scene) prepareAsset(blob AssetBlob, state *sceneState) (assetRecord, error) {
+func (s *Scene) prepareAsset(blob AssetBlob, state *sceneState, copyEncoded bool) (assetRecord, error) {
 	data := blob.Encoded
 	if blob.Width <= 0 || blob.Height <= 0 {
 		return assetRecord{}, fmt.Errorf("add asset: %w", ErrInvalidAsset)
@@ -414,7 +435,10 @@ func (s *Scene) prepareAsset(blob AssetBlob, state *sceneState) (assetRecord, er
 	if !within(state.usage.DecodedPixels, pixels, s.limits.MaxDecodedPixels) {
 		return assetRecord{}, fmt.Errorf("add asset: %w", ErrDecodedPixelBudget)
 	}
-	return assetRecord{encoded: append([]byte(nil), data...), format: blob.Format, width: blob.Width, height: blob.Height, pixels: pixels}, nil
+	if copyEncoded {
+		data = append([]byte(nil), data...)
+	}
+	return assetRecord{encoded: data, format: blob.Format, width: blob.Width, height: blob.Height, pixels: pixels}, nil
 }
 
 func (s *Scene) preparePlacement(state *sceneState, spec PlacementSpec, existing *placementRecord) (placementRecord, error) {
@@ -495,7 +519,7 @@ func removeAsset(state *sceneState, id AssetID, cascade bool) error {
 func (s *Scene) applyOperation(state *sceneState, operation Operation) error {
 	switch operation.Kind {
 	case OperationAddAsset:
-		record, err := s.prepareAsset(operation.Blob, state)
+		record, err := s.prepareAsset(operation.Blob, state, true)
 		if err != nil {
 			return err
 		}
