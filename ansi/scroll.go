@@ -121,10 +121,7 @@ func canApplyDenseScrollAgainst(frame Frame, scroll Damage, damage []Damage, com
 }
 
 func outsideScrollMatches(frame CellSource, scroll Damage, damage []Damage, committed Frame) bool {
-	dense, isDense := frame.(Frame)
-	if pointer, ok := frame.(*Frame); ok {
-		dense, isDense = *pointer, true
-	}
+	dense, isDense := asFrame(frame)
 	columns := frame.Columns()
 	for y := range frame.Rows() {
 		if y >= scroll.Y && y < scroll.Y+scroll.Height {

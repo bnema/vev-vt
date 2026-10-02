@@ -38,7 +38,7 @@ func buildDamagePlan(frame CellSource, damage []Damage, skip *Damage) ([]Span, b
 			if len(spans) == maxPlannedDamageSpans {
 				return nil, true
 			}
-			spans = append(spans, Span{Y: row, X: x, Width: width})
+			spans = append(spans, wideAlignedSpan(frame, row, x, width))
 		}
 	}
 
@@ -62,9 +62,24 @@ func buildSingleDamageSpans(frame CellSource, d Damage) ([]Span, bool) {
 	}
 	spans := make([]Span, height)
 	for row := range height {
-		spans[row] = Span{Y: y + row, X: x, Width: width}
+		spans[row] = wideAlignedSpan(frame, y+row, x, width)
 	}
 	return spans, false
+}
+
+// wideAlignedSpan widens a clamped span so it never splits a wide rune.
+// Damage can name only one half of a pair, for example when text damage was
+// recorded before a scroll moved a wide rune under it. Writing from the right
+// half would erase the rune on the client, and the shadow must hold whole pairs.
+func wideAlignedSpan(frame CellSource, y, x, width int) Span {
+	if x > 0 && frame.Cell(x, y).Continuation {
+		x--
+		width++
+	}
+	if end := x + width; end < frame.Columns() && frame.Cell(end, y).Continuation {
+		width++
+	}
+	return Span{Y: y, X: x, Width: width}
 }
 
 func mergeDamageSpans(spans []Span) []Span {

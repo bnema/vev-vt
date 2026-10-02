@@ -42,13 +42,42 @@ func TestTwoScrollRegionsInOneBatchReplayExactly(t *testing.T) {
 			draw()
 			s.Write([]byte("\x1b[1;4r\x1b[4;1H\nX\x1b[5;8r\x1b[8;1H\n\nY\x1b[r"))
 			draw()
-			for y := range 8 {
-				for x := range 10 {
-					if want, got := s.Cell(x, y), replay.Cell(x, y); want.Rune != got.Rune {
-						t.Fatalf("cell (%d,%d) = %q, want %q", x, y, got.Rune, want.Rune)
-					}
-				}
-			}
+			requireReplayMatches(t, s, replay)
 		})
+	}
+}
+
+// Text damage recorded before a scroll can start on the right half of a wide
+// rune that the scroll moved there; the renderer must repaint the rune.
+func TestSpanStartingOnWideContinuationRepaintsHead(t *testing.T) {
+	s := vt.NewScreen(6, 3)
+	r := ansi.New(ansi.Capabilities{})
+	replay := vt.NewScreen(6, 3)
+	draw := func() {
+		prepared, err := r.Prepare(s, s.Damage(), false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		prepared.Commit()
+		replay.Write(prepared.Bytes())
+		s.ClearDamage()
+	}
+	draw()
+	s.Write([]byte("\x1b[2;1H界"))
+	draw()
+	s.Write([]byte("\x1b[1;2Hab\x1b[1;2r\x1b[2;1H\n\x1b[r"))
+	draw()
+	requireReplayMatches(t, s, replay)
+}
+
+func requireReplayMatches(t *testing.T, source, replay *vt.Screen) {
+	t.Helper()
+	for y := range source.Rows() {
+		for x := range source.Columns() {
+			want, got := source.Cell(x, y), replay.Cell(x, y)
+			if want.Rune != got.Rune || want.Continuation != got.Continuation || !want.Style.Equal(got.Style) {
+				t.Fatalf("cell (%d,%d) = %+v, want %+v", x, y, got, want)
+			}
+		}
 	}
 }

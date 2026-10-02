@@ -72,6 +72,9 @@ type oracleRun struct {
 	ansi256 *ansi.Renderer
 	htmlR   *html.Renderer
 	replay  *vt.Screen
+	// replay256 receives the ANSI-256 renderer output. Colors are projected,
+	// so only text and wide-cell structure are compared.
+	replay256 *vt.Screen
 	// mirror reproduces the vev daemon consumer: one core.Frame reused and
 	// mutated in place between draws, so renderer shadows must not alias it.
 	mirror core.Frame
@@ -432,7 +435,7 @@ func (o *oracleRun) render(step int) {
 		o.emit("ansi discard")
 	} else {
 		prepared.Commit()
-		o.applyReplay(out, step)
+		o.replay = o.applyReplay(o.replay, out, step, true)
 		if !s.AcknowledgeDamage(capture.Generation) {
 			o.t.Fatalf("seed %d: acknowledge failed", o.sc.seed)
 		}
@@ -442,6 +445,7 @@ func (o *oracleRun) render(step int) {
 		o.t.Fatalf("seed %d: ansi256 Draw: %v", o.sc.seed, err)
 	}
 	o.emit("ansi256 %q", other)
+	o.replay256 = o.applyReplay(o.replay256, other, step, false)
 
 	snap := s.Snapshot()
 	cur := snap.Cursor()
@@ -468,20 +472,21 @@ func (o *oracleRun) render(step int) {
 // applyReplay feeds committed ANSI output to an independent VT and requires
 // the visible grid to match the source. This semantic check does not depend on
 // the golden file.
-func (o *oracleRun) applyReplay(out []byte, step int) {
+func (o *oracleRun) applyReplay(replay *vt.Screen, out []byte, step int, styles bool) *vt.Screen {
 	s := o.screen
-	if o.replay == nil || o.replay.Columns() != s.Columns() || o.replay.Rows() != s.Rows() {
-		o.replay = vt.NewScreen(s.Columns(), s.Rows())
+	if replay == nil || replay.Columns() != s.Columns() || replay.Rows() != s.Rows() {
+		replay = vt.NewScreen(s.Columns(), s.Rows())
 	}
-	o.replay.Write(out)
+	replay.Write(out)
 	for y := range s.Rows() {
 		for x := range s.Columns() {
-			want, got := s.Cell(x, y), o.replay.Cell(x, y)
-			if want.Rune != got.Rune || want.Continuation != got.Continuation || !want.Style.Equal(got.Style) {
-				o.t.Fatalf("seed %d step %d: ANSI replay mismatch at (%d,%d): got %s want %s", o.sc.seed, step, x, y, formatCell(got), formatCell(want))
+			want, got := s.Cell(x, y), replay.Cell(x, y)
+			if want.Rune != got.Rune || want.Continuation != got.Continuation || (styles && !want.Style.Equal(got.Style)) {
+				o.t.Fatalf("seed %d step %d: ANSI replay (styles=%t) mismatch at (%d,%d): got %s want %s", o.sc.seed, step, styles, x, y, formatCell(got), formatCell(want))
 			}
 		}
 	}
+	return replay
 }
 
 func runOracleScenario(t *testing.T, idx int) string {

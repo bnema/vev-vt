@@ -293,11 +293,10 @@ func TestWideRunCursorTrackingAndEL(t *testing.T) {
 		}
 	})
 
-	t.Run("rect splitting a wide pair invalidates tracking", func(t *testing.T) {
+	t.Run("rect splitting a wide pair is widened to the whole pair", func(t *testing.T) {
 		// A damage rect that ends on a wide head whose continuation lies
-		// outside the rect makes the terminal advance one column further than
-		// the rect width accounts for. Tracking must be dropped: the next
-		// rect must be positioned with absolute CUP, not a relative move.
+		// outside the rect is widened to cover the pair, so the terminal
+		// advance matches the span and tracking stays exact.
 		r := New(Capabilities{})
 		base := NewFrame(8, 1)
 		if _, err := r.Draw(base, []Damage{FullRedraw()}); err != nil {
@@ -314,9 +313,8 @@ func TestWideRunCursorTrackingAndEL(t *testing.T) {
 			{Kind: DamageText, X: 4, Y: 0, Width: 1, Height: 1, Count: 1},
 		}
 		got := drawGolden(t, r, frame, damage)
-		// After A你 the real cursor is at col 3, not col 2: a relative CUF
-		// would be off by one, so the second rect must use absolute CUP.
-		want := "\x1b[1;1HA你\x1b[1;5HB\x1b[0m"
+		// After A你 the cursor is known at col 3, so one CUF reaches col 4.
+		want := "\x1b[1;1HA你\x1b[CB\x1b[0m"
 		if got != want {
 			t.Fatalf("output = %q, want %q", got, want)
 		}
@@ -425,7 +423,7 @@ func TestCanonicalDamagePreservesWideHeadTracking(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := string(out), "\x1b[1;1HA你\x1b[1;5HB\x1b[0m"; got != want {
+	if got, want := string(out), "\x1b[1;1HA你\x1b[CB\x1b[0m"; got != want {
 		t.Fatalf("output = %q, want %q", got, want)
 	}
 }
