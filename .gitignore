@@ -1,5 +1,6 @@
 # Local build and test artifacts
 /vev-vt
+*.test
 /coverage.out
 /testdata/generated/
 /node_modules/
