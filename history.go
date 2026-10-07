@@ -511,18 +511,38 @@ func (h *History) reserveTailRow(width int) (start, end int) {
 			prealloc = min(prealloc, h.maxBytes/renderer.StoredCellLogicalBytes, uint64(width)*uint64(h.chunkRows))
 			capacity = max(capacity, max(width, int(prealloc)))
 		}
-		cells := make([]renderer.Cell, len(h.tailCells), capacity)
-		copy(cells, h.tailCells)
-		h.tailCells = cells
-		offset := 0
-		for i := range h.tail {
-			rowWidth := len(h.tail[i])
-			h.tail[i] = h.tailCells[offset : offset+rowWidth : offset+rowWidth]
-			offset += rowWidth
-		}
+		h.rebaseTail(capacity)
 	}
 	h.tailCells = h.tailCells[:end]
 	return start, end
+}
+
+// rebaseTail moves the mutable tail rows into fresh storage of the given
+// capacity (at least the used length) and re-slices every row into it.
+func (h *History) rebaseTail(capacity int) {
+	cells := make([]renderer.Cell, len(h.tailCells), capacity)
+	copy(cells, h.tailCells)
+	h.tailCells = cells
+	offset := 0
+	for i := range h.tail {
+		rowWidth := len(h.tail[i])
+		h.tail[i] = h.tailCells[offset : offset+rowWidth : offset+rowWidth]
+		offset += rowWidth
+	}
+}
+
+// trimIdleTail releases mutable-tail capacity beyond the rows it holds. Tail
+// cells use the wide semantic layout, so preallocated or recycled capacity is
+// the largest idle cost of a pane; the next append regrows it on demand.
+func (h *History) trimIdleTail() {
+	if cap(h.tailCells) == len(h.tailCells) {
+		return
+	}
+	if len(h.tailCells) == 0 {
+		h.tailCells = nil
+		return
+	}
+	h.rebaseTail(len(h.tailCells))
 }
 
 func (h *History) appendTailRow(row []renderer.Cell) {

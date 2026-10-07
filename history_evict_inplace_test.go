@@ -82,6 +82,29 @@ func TestHistoryInPlaceEvictionAccountingMatchesFreshBuild(t *testing.T) {
 	require.Equal(t, sum, h.LogicalBytes())
 }
 
+// An idle pass releases spare mutable-tail capacity without changing content,
+// and later appends regrow it.
+func TestHistoryCompressIdleTrimsTailCapacity(t *testing.T) {
+	for _, tailRows := range []int{0, 3} {
+		t.Run(fmt.Sprintf("tail-%d", tailRows), func(t *testing.T) {
+			h := NewHistory(HistoryConfig{MaxRows: 64, MaxBytes: 1 << 20, ChunkRows: 8})
+			for i := range 16 + tailRows {
+				require.NoError(t, h.Append(styledRow(fmt.Sprintf("r%03d", i), i%4+1), LineBound{End: 4}))
+			}
+			before := rangeTextsNoT(h.View())
+			bytes := h.LogicalBytes()
+			_, err := h.CompressIdle(1)
+			require.NoError(t, err)
+			require.Equal(t, len(h.tailCells), cap(h.tailCells))
+			require.Equal(t, before, rangeTextsNoT(h.View()))
+			require.Equal(t, bytes, h.LogicalBytes())
+			require.NoError(t, h.Append(styledRow("next", 1), LineBound{End: 4}))
+			got := rangeTextsNoT(h.View())
+			require.Equal(t, append(before, "next"), got)
+		})
+	}
+}
+
 func TestStyleSet(t *testing.T) {
 	style := func(i int) renderer.Style { return renderer.Style{Foreground: i % 256, Bold: i >= 256} }
 	tests := []struct {

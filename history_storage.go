@@ -168,9 +168,14 @@ func (p *sealedPage) compressIfIdle() (bool, error) {
 // CompressIdle visits at most maxPages sealed pages. Call it from the history
 // owner's idle scheduler, never concurrently with append/eviction. A page must
 // remain unread across two visits; the newest sealed chunk and mutable tail are
-// kept hot. There are no internal goroutines, clocks, pooling or mmap mappings.
+// kept hot, though unused mutable-tail capacity is released. There are no
+// internal goroutines, clocks, pooling or mmap mappings.
 func (h *History) CompressIdle(maxPages int) (int, error) {
-	if h == nil || maxPages <= 0 || len(h.chunks) < 2 {
+	if h == nil {
+		return 0, nil
+	}
+	h.trimIdleTail()
+	if maxPages <= 0 || len(h.chunks) < 2 {
 		return 0, nil
 	}
 	eligible := len(h.chunks) - 1
