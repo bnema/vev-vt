@@ -28,6 +28,7 @@ significant change.
 | Area | Package | Benchmarks |
 |---|---|---|
 | VT parsing and screen writes | `.` | `BenchmarkScreenPrintableASCII`, `BenchmarkScreenMixedUTF8`, `BenchmarkScreenCSIHeavy`, `BenchmarkScreenShellRedrawBurst`, `BenchmarkScreenFullscreenScrollRegion`, `BenchmarkScreenKittyAPC` |
+| Output flood into full history | `.` | `BenchmarkScreenScrollbackFlood` (history limit 0, 10k and 50k rows) |
 | Damage capture and resize | `.` | `BenchmarkScreenCaptureDamage`, `BenchmarkScreenResizeReflowViewport` |
 | History build, views and storage | `.` | `BenchmarkHistoryBuild10Kx120`, `BenchmarkHistoryView10KRows*`, `BenchmarkHistoryRetained10Kx120`, see [storage-optimization.md](storage-optimization.md) |
 | ANSI renderer | `./ansi` | `BenchmarkRendererFullFrameDraw`, `BenchmarkRendererIncrementalOneCell`, `BenchmarkRendererFragmentedDamage`, `BenchmarkRendererBroadRegularDamage`, `BenchmarkRendererIncrementalNoBytePrepareCommit` |
