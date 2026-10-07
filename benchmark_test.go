@@ -3,6 +3,7 @@ package vt
 import (
 	"bytes"
 	"encoding/base64"
+	"fmt"
 	"testing"
 
 	renderer "github.com/bnema/vev-vt/core"
@@ -254,6 +255,41 @@ func BenchmarkScreenKittyAPC(b *testing.B) {
 				} else {
 					s.Write(apc)
 				}
+				s.ClearDamage()
+			}
+		})
+	}
+}
+
+// scrollbackFloodChunk is 1000 colored 160-column lines ending in CRLF, the
+// shape of a build log or `yes`-style flood scrolling into history.
+func scrollbackFloodChunk() []byte {
+	var chunk bytes.Buffer
+	line := bytes.Repeat([]byte("x"), 140)
+	for i := range 1000 {
+		fmt.Fprintf(&chunk, "\x1b[3%dmflood %06d %s\x1b[0m\r\n", i%8, i, line)
+	}
+	return chunk.Bytes()
+}
+
+// BenchmarkScreenScrollbackFlood measures steady-state output once history is
+// full, so every new line evicts the oldest retained row.
+func BenchmarkScreenScrollbackFlood(b *testing.B) {
+	chunk := scrollbackFloodChunk()
+	for _, rows := range []int{0, 10_000, 50_000} {
+		b.Run(fmt.Sprintf("history-%d", rows), func(b *testing.B) {
+			s := NewScreen(160, 45)
+			if rows > 0 {
+				s = NewScreenWithHistory(160, 45, HistoryConfig{MaxRows: rows, MaxBytes: 1 << 30})
+			}
+			for range rows/1000 + 1 {
+				s.Write(chunk)
+			}
+			s.ClearDamage()
+			b.SetBytes(int64(len(chunk)))
+			b.ReportAllocs()
+			for b.Loop() {
+				s.Write(chunk)
 				s.ClearDamage()
 			}
 		})

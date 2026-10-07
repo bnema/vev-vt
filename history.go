@@ -41,7 +41,7 @@ type History struct {
 	tailPageWidth     int
 	tailPageRows      int
 	tailPageStyles    map[renderer.Style]struct{}
-	styleScratch      map[renderer.Style]struct{}
+	styleScratch      styleSet
 	payloadScratch    map[renderer.CellPayload]struct{}
 	tailPagePayloads  map[renderer.CellPayload]struct{}
 	styleRowScratch   map[renderer.Style]int
@@ -50,6 +50,10 @@ type History struct {
 	logicalBytes      uint64
 	nextRowID         RowID
 	compressionCursor int
+	// privateHead is the oldest sealed chunk's wrapper when it was created by
+	// eviction and no view has captured it since. Eviction may then advance it
+	// in place instead of allocating a new wrapper per evicted row.
+	privateHead *HistoryChunk
 }
 
 // HistoryChunk is an immutable compact slab of equal-width history rows. Its
@@ -270,62 +274,45 @@ func historyChunksLogicalBytes(chunks []*HistoryChunk) uint64 {
 
 func (h *History) prepareRowStyles(row []renderer.Cell) uint64 {
 	clear(h.payloadScratch)
-	if h.styleScratch == nil {
-		h.styleScratch = make(map[renderer.Style]struct{})
-	} else {
-		clear(h.styleScratch)
-	}
-	if len(row) > 0 {
-		firstRaw := row[0].Style
-		same := true
-		for _, cell := range row {
-			h.recordPayloadScratch(cell.Payload)
-			if cell.Style != firstRaw {
-				same = false
-			}
+	h.styleScratch.reset()
+	defaultStyle := renderer.DefaultStyle()
+	// A run of identical raw styles canonicalizes identically, so only the
+	// first cell of each run pays for Canonical and the set insert.
+	var previous renderer.Style
+	for i, cell := range row {
+		h.recordPayloadScratch(cell.Payload)
+		if i > 0 && cell.Style == previous {
+			continue
 		}
-		if same {
-			first := firstRaw.Canonical()
-			if first != renderer.DefaultStyle() {
-				h.styleScratch[first] = struct{}{}
-			}
-		} else {
-			for _, cell := range row {
-				style := cell.Style.Canonical()
-				if style != renderer.DefaultStyle() {
-					h.styleScratch[style] = struct{}{}
-				}
-			}
+		previous = cell.Style
+		if style := cell.Style.Canonical(); style != defaultStyle {
+			h.styleScratch.add(style)
 		}
 	}
-	return historyRowBaseLogicalBytes(len(row)) + renderer.StyleRecordLogicalBytes + uint64(len(h.styleScratch))*renderer.StyleRecordLogicalBytes + h.rowPayloadBytes()
+	return historyRowBaseLogicalBytes(len(row)) + renderer.StyleRecordLogicalBytes + uint64(h.styleScratch.len())*renderer.StyleRecordLogicalBytes + h.rowPayloadBytes()
 }
 
 func (h *History) prepareChunkRowStyles(chunk *HistoryChunk, row int) uint64 {
 	clear(h.payloadScratch)
-	if h.styleScratch == nil {
-		h.styleScratch = make(map[renderer.Style]struct{})
-	} else {
-		clear(h.styleScratch)
-	}
+	h.styleScratch.reset()
+	defaultStyle := renderer.DefaultStyle()
 	for column := range chunk.width {
 		cell := chunk.cell(row, column)
 		h.recordPayloadScratch(cell.Payload)
-		style := cell.Style.Canonical()
-		if style != renderer.DefaultStyle() {
-			h.styleScratch[style] = struct{}{}
+		if style := cell.Style.Canonical(); style != defaultStyle {
+			h.styleScratch.add(style)
 		}
 	}
-	return historyRowBaseLogicalBytes(chunk.width) + renderer.StyleRecordLogicalBytes + uint64(len(h.styleScratch))*renderer.StyleRecordLogicalBytes + h.rowPayloadBytes()
+	return historyRowBaseLogicalBytes(chunk.width) + renderer.StyleRecordLogicalBytes + uint64(h.styleScratch.len())*renderer.StyleRecordLogicalBytes + h.rowPayloadBytes()
 }
 
 func (h *History) tailAppendDelta(width int) uint64 {
 	newPage := h.tailPageRows == 0 || h.tailPageWidth != width || h.tailPageRows >= maxHistorySlabRows(width)
 	delta := historyRowBaseLogicalBytes(width)
 	if newPage {
-		return delta + renderer.StyleRecordLogicalBytes + uint64(len(h.styleScratch))*renderer.StyleRecordLogicalBytes + h.rowPayloadBytes()
+		return delta + renderer.StyleRecordLogicalBytes + uint64(h.styleScratch.len())*renderer.StyleRecordLogicalBytes + h.rowPayloadBytes()
 	}
-	for style := range h.styleScratch {
+	for style := range h.styleScratch.all() {
 		if _, ok := h.tailPageStyles[style]; !ok {
 			delta += renderer.StyleRecordLogicalBytes
 		}
@@ -351,7 +338,7 @@ func (h *History) recordTailRowStyles(width int) {
 		}
 		h.tailPagePayloads[p] = struct{}{}
 	}
-	for style := range h.styleScratch {
+	for style := range h.styleScratch.all() {
 		h.tailPageStyles[style] = struct{}{}
 	}
 	h.tailPageRows++
@@ -468,7 +455,13 @@ func (h *History) allocateRowID() (RowID, error) {
 	return id, nil
 }
 
+// hasRowID reports whether id is retained. Every retained ID is below
+// nextRowID (appendRow advances it and restore validates it), so the newest-ID
+// case used by screen eviction answers without scanning retained rows.
 func (h *History) hasRowID(id RowID) bool {
+	if id >= h.nextRowID {
+		return false
+	}
 	for _, chunk := range h.chunks {
 		if slices.Contains(chunk.rowIDs, id) {
 			return true
@@ -589,14 +582,19 @@ func (h *History) evictFor(row []renderer.Cell) {
 		if h.rows <= h.maxRows-1 && h.logicalBytes <= h.maxBytes-delta {
 			return
 		}
-		h.evictOldest()
-		h.prepareRowStyles(row)
+		// Only a tail eviction rebuilds tail accounting, which reuses the row
+		// scratch; sealed-chunk eviction leaves this row's styles intact.
+		if h.evictOldest() {
+			h.prepareRowStyles(row)
+		}
 	}
 }
 
-func (h *History) evictOldest() {
+// evictOldest drops the oldest retained row. It reports whether it rebuilt
+// tail accounting, which overwrites the row style and payload scratch.
+func (h *History) evictOldest() (scratchClobbered bool) {
 	if h.rows == 0 {
-		return
+		return false
 	}
 	if len(h.chunks) > 0 {
 		chunk := h.chunks[0]
@@ -604,6 +602,9 @@ func (h *History) evictOldest() {
 		h.rows--
 		h.cells -= chunk.width
 		if chunk.count == 1 {
+			if chunk == h.privateHead {
+				h.privateHead = nil
+			}
 			h.logicalBytes -= oldBytes
 			copy(h.chunks, h.chunks[1:])
 			h.chunks[len(h.chunks)-1] = nil
@@ -611,14 +612,20 @@ func (h *History) evictOldest() {
 		} else {
 			// Preserve cell storage while replacing only the chunk wrapper: a
 			// retained view may still refer to the original immutable chunk. The
-			// wrapper tracks only styles still used by its retained suffix.
-			h.chunks[0] = chunk.withoutFirstRow()
+			// wrapper tracks only styles still used by its retained suffix. A
+			// wrapper no view has seen is advanced in place.
+			if chunk == h.privateHead {
+				chunk.dropFirstRow()
+			} else {
+				h.chunks[0] = chunk.withoutFirstRow()
+				h.privateHead = h.chunks[0]
+			}
 			h.logicalBytes -= oldBytes - historyChunkLogicalBytes(h.chunks[0])
 		}
-		return
+		return false
 	}
 	if len(h.tail) == 0 {
-		return
+		return false
 	}
 	h.cachedTail = nil
 	row := h.tail[0]
@@ -633,6 +640,7 @@ func (h *History) evictOldest() {
 	h.tailBounds = growBounds(h.tailBounds, len(h.tail)+1)[1:]
 	h.tailIDs = growRowIDs(h.tailIDs, len(h.tail)+1)[1:]
 	h.rebuildTailAccounting()
+	return true
 }
 
 // SealAndView rotates the mutable tail into an immutable chunk, then captures
@@ -660,6 +668,7 @@ func (h *History) View() HistoryView {
 	if h.rows == 0 {
 		return HistoryView{nextRowID: h.nextRowID}
 	}
+	h.privateHead = nil
 	chunks := make([]*HistoryChunk, len(h.chunks), len(h.chunks)+1)
 	copy(chunks, h.chunks)
 	if len(h.tail) > 0 {
@@ -677,6 +686,7 @@ func (h *History) SnapshotView() HistorySnapshotView {
 	if h.rows == 0 {
 		return HistorySnapshotView{nextRowID: h.nextRowID}
 	}
+	h.privateHead = nil
 	tailChunks := newHistoryChunks(h.tail, h.tailBounds, h.tailIDs)
 	return HistorySnapshotView{
 		chunks: append([]*HistoryChunk(nil), h.chunks...),

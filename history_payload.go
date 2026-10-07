@@ -31,16 +31,22 @@ func (c *HistoryChunk) recordPayloads() {
 }
 
 func (c *HistoryChunk) withoutFirstRow() *HistoryChunk {
-	payloadBytes := c.payloadBytes
+	next := *c
+	next.dropFirstRow()
+	return &next
+}
+
+// dropFirstRow advances the wrapper past its first row in place. Only a wrapper
+// no view has captured may be mutated; see History.privateHead.
+func (c *HistoryChunk) dropFirstRow() {
 	if len(c.payloadDrops) != 0 {
-		payloadBytes -= c.payloadDrops[c.start]
+		c.payloadBytes -= c.payloadDrops[c.start]
 	}
-	return &HistoryChunk{
-		page: c.page, start: c.start + 1, count: c.count - 1, width: c.width,
-		bounds: c.bounds[1:], rowIDs: c.rowIDs[1:],
-		styleDrops: c.styleDrops, styleCount: c.styleCount - c.styleDrops[c.start],
-		payloadDrops: c.payloadDrops, payloadBytes: payloadBytes,
-	}
+	c.styleCount -= c.styleDrops[c.start]
+	c.start++
+	c.count--
+	c.bounds = c.bounds[1:]
+	c.rowIDs = c.rowIDs[1:]
 }
 
 func (h *History) recordPayloadScratch(p renderer.CellPayload) {
