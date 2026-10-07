@@ -267,6 +267,29 @@ func (f Frame) Cell(x, y int) Cell {
 }
 func (f Frame) At(x, y int) Cell { return f.Cell(x, y) }
 
+// AppendRowText appends one rune per non-continuation cell of row y to runes,
+// and that cell's column to columns, and returns both extended slices. A zero
+// rune is reported as a space. It reads only runes and flags, so text scans
+// avoid materializing styled cells.
+func (f Frame) AppendRowText(runes []rune, columns []int, y int) ([]rune, []int) {
+	if f.Width == 0 {
+		return runes, columns
+	}
+	start := f.offset(0, y)
+	for x, stored := range f.page.cells[start : start+f.Width] {
+		if stored.flags&continuationFlag != 0 {
+			continue
+		}
+		r := rune(stored.rune)
+		if r == 0 {
+			r = ' '
+		}
+		runes = append(runes, r)
+		columns = append(columns, x)
+	}
+	return runes, columns
+}
+
 // IsContinuation reports whether (x,y) is the right half of a wide pair
 // without materializing the cell.
 func (f Frame) IsContinuation(x, y int) bool {

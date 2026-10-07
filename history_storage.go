@@ -65,19 +65,28 @@ func (p *sealedPage) decode() (renderer.Frame, error) {
 		return invalid(errors.New("missing backing"))
 	}
 	source := bytes.NewReader(p.compressed)
-	r, err := zlib.NewReader(source)
+	r, err := pageDecompressor(source)
 	if err != nil {
 		return invalid(err)
 	}
-	data, readErr := io.ReadAll(io.LimitReader(r, int64(p.encodedSize)+1))
-	closeErr := r.Close()
-	if readErr != nil {
-		return invalid(readErr)
+	defer pageDecompressorPool.Put(r)
+	// Read exactly the recorded size, then require a clean end of stream (which
+	// also verifies the zlib checksum) with no trailing compressed bytes.
+	data := make([]byte, p.encodedSize)
+	if _, err := io.ReadFull(r, data); err != nil {
+		return invalid(err)
 	}
-	if closeErr != nil {
-		return invalid(closeErr)
+	var extra [1]byte
+	if n, err := r.Read(extra[:]); n != 0 || err != io.EOF {
+		if err == nil || err == io.EOF {
+			err = errors.New("backing length mismatch")
+		}
+		return invalid(err)
 	}
-	if len(data) != p.encodedSize || source.Len() != 0 {
+	if err := r.Close(); err != nil {
+		return invalid(err)
+	}
+	if source.Len() != 0 {
 		return invalid(errors.New("backing length mismatch"))
 	}
 	view, err := UnmarshalHistory(data)
@@ -111,6 +120,19 @@ func (c *HistoryChunk) Restore() error {
 	}
 	_, err := c.page.readFrame(true)
 	return err
+}
+
+// pageDecompressorPool reuses zlib readers; each one owns a 32 KiB window.
+var pageDecompressorPool sync.Pool
+
+func pageDecompressor(source io.Reader) (io.ReadCloser, error) {
+	if pooled, ok := pageDecompressorPool.Get().(io.ReadCloser); ok {
+		if err := pooled.(zlib.Resetter).Reset(source, nil); err != nil {
+			return nil, err
+		}
+		return pooled, nil
+	}
+	return zlib.NewReader(source)
 }
 
 // pageCompressorPool reuses BestSpeed writers; each one owns ~600 KiB of

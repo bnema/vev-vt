@@ -105,6 +105,64 @@ func TestHistoryCompressIdleTrimsTailCapacity(t *testing.T) {
 	}
 }
 
+// RangeText must agree with Range on every row, including wide pairs, zero
+// runes, evicted prefixes and cold pages.
+func TestHistoryRangeTextMatchesRange(t *testing.T) {
+	build := func(cold bool) HistoryView {
+		h := NewHistory(HistoryConfig{MaxRows: 20, MaxBytes: 1 << 20, ChunkRows: 4})
+		for i := range 27 {
+			row := historyRow(fmt.Sprintf("r%02d", i))
+			row = append(row,
+				renderer.Cell{Rune: '界'}, renderer.Cell{Continuation: true}, // wide pair
+				renderer.Cell{}, // zero rune reads as a space
+				renderer.Cell{Rune: 'x'})
+			require.NoError(t, h.Append(row, LineBound{End: len(row)}))
+		}
+		if cold {
+			for range 2 {
+				_, err := h.CompressIdle(100)
+				require.NoError(t, err)
+			}
+		}
+		return h.View()
+	}
+	for _, cold := range []bool{false, true} {
+		t.Run(fmt.Sprintf("cold-%v", cold), func(t *testing.T) {
+			view := build(cold)
+			type rowText struct {
+				runes   []rune
+				columns []int
+				width   int
+			}
+			var want []rowText
+			require.NoError(t, view.Range(func(row []renderer.Cell) bool {
+				w := rowText{width: len(row)}
+				for x, c := range row {
+					if c.Continuation {
+						continue
+					}
+					r := c.Rune
+					if r == 0 {
+						r = ' '
+					}
+					w.runes = append(w.runes, r)
+					w.columns = append(w.columns, x)
+				}
+				want = append(want, w)
+				return true
+			}))
+			var got []rowText
+			require.NoError(t, view.RangeText(func(i int, runes []rune, columns []int, width int) bool {
+				require.Equal(t, len(got), i)
+				got = append(got, rowText{append([]rune(nil), runes...), append([]int(nil), columns...), width})
+				return true
+			}))
+			require.Equal(t, want, got)
+			require.Len(t, got, 20)
+		})
+	}
+}
+
 func TestStyleSet(t *testing.T) {
 	style := func(i int) renderer.Style { return renderer.Style{Foreground: i % 256, Bold: i >= 256} }
 	tests := []struct {

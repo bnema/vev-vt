@@ -38,6 +38,32 @@ func (v HistoryView) CopyRow(y int, dst []renderer.Cell) int {
 	return n
 }
 
+// RangeText streams each row's text in order without allocating per row. For
+// row i of the given cell width, runes holds one rune per non-continuation
+// cell (zero runes read as a space) and columns holds the cell column of each
+// rune. Both slices are only valid during the callback. Like Range, it
+// restores at most one cold page at a time and does not populate the page
+// cache.
+func (v HistoryView) RangeText(yield func(i int, runes []rune, columns []int, width int) bool) error {
+	var runes []rune
+	var columns []int
+	i := 0
+	for _, chunk := range v.chunks {
+		frame, err := chunk.page.readFrame(false)
+		if err != nil {
+			return err
+		}
+		for row := range chunk.len() {
+			runes, columns = frame.AppendRowText(runes[:0], columns[:0], chunk.start+row)
+			if !yield(i, runes, columns, chunk.width) {
+				return nil
+			}
+			i++
+		}
+	}
+	return nil
+}
+
 func (v HistoryView) locateRow(y int) (*HistoryChunk, int) {
 	if y < 0 {
 		return nil, 0
