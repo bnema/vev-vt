@@ -267,6 +267,12 @@ func (f Frame) Cell(x, y int) Cell {
 }
 func (f Frame) At(x, y int) Cell { return f.Cell(x, y) }
 
+// IsContinuation reports whether (x,y) is the right half of a wide pair
+// without materializing the cell.
+func (f Frame) IsContinuation(x, y int) bool {
+	return f.page.cells[f.offset(x, y)].flags&continuationFlag != 0
+}
+
 func (f Frame) Set(x, y int, cell Cell) {
 	index := f.offset(x, y)
 	payloadID := f.internPayload(cell.Payload)

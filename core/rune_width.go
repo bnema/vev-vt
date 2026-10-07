@@ -13,6 +13,9 @@ import "unicode"
 // sequences are out of scope: combining marks report width 0 (current
 // behavior), ZWJ sequences are not coalesced (each rune is measured on its own).
 func RuneWidth(r rune) int {
+	if r >= 0x20 && r < 0x7F { // printable ASCII, the common case
+		return 1
+	}
 	switch {
 	case r < 0x20 || r == 0x7F || (r >= 0x80 && r <= 0x9F):
 		return 0

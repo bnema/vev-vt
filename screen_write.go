@@ -107,7 +107,7 @@ func (s *Screen) putPrintable(r rune) {
 	insertDamageX := s.Col
 	insertDamageWidth := 0
 	if s.insertMode {
-		leftSplit := s.Col > 0 && s.frame.At(s.Col, s.Row).Continuation
+		leftSplit := s.Col > 0 && s.frame.IsContinuation(s.Col, s.Row)
 		s.frame.CopyRow(s.Row, s.Col+w, s.Col, s.frame.Width-s.Col-w)
 		s.frame.FillRow(s.Row, s.Col, s.Col+w, renderer.BlankCell())
 		s.repairRow(s.Row)
@@ -120,15 +120,16 @@ func (s *Screen) putPrintable(r rune) {
 
 	// Determine the range of cells actually modified, extending over any wide
 	// pair the write lands on so no orphaned half is left behind.
+	// Cells inside [Col, Col+w) are overwritten below, so only the orphaned
+	// halves just outside it need blanking.
 	lo, hi := s.Col, s.Col+w-1
-	if s.frame.At(s.Col, s.Row).Continuation {
+	if s.frame.IsContinuation(s.Col, s.Row) {
 		lo = s.Col - 1
+		s.frame.Set(lo, s.Row, renderer.BlankCell())
 	}
-	if right := s.Col + w; right < s.frame.Width && s.frame.At(right, s.Row).Continuation {
+	if right := s.Col + w; right < s.frame.Width && s.frame.IsContinuation(right, s.Row) {
 		hi = right
-	}
-	for x := lo; x <= hi; x++ {
-		s.frame.Set(x, s.Row, renderer.BlankCell())
+		s.frame.Set(right, s.Row, renderer.BlankCell())
 	}
 	s.frame.Set(s.Col, s.Row, renderer.Cell{Rune: r, Style: s.Style})
 	s.buffer.content(s.Row, s.Col+w)
