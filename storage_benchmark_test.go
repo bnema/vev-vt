@@ -78,6 +78,9 @@ func BenchmarkColdHistoryRetained10Kx120(b *testing.B) {
 					}
 				}
 				benchmarkStorageHistorySink = h
+				// Two cycles drain the compressor sync.Pool, so only the
+				// history itself is measured.
+				runtime.GC()
 				runtime.GC()
 				runtime.ReadMemStats(&after)
 				if after.HeapAlloc >= before.HeapAlloc {

@@ -113,6 +113,16 @@ func (c *HistoryChunk) Restore() error {
 	return err
 }
 
+// pageCompressorPool reuses BestSpeed writers; each one owns ~600 KiB of
+// deflate state that would otherwise be allocated per compressed page.
+var pageCompressorPool = sync.Pool{New: func() any {
+	w, err := zlib.NewWriterLevel(io.Discard, zlib.BestSpeed)
+	if err != nil {
+		panic(err) // BestSpeed is a valid level
+	}
+	return w
+}}
+
 func (p *sealedPage) compressIfIdle() (bool, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -143,12 +153,13 @@ func (p *sealedPage) compressIfIdle() (bool, error) {
 		return false, errors.New("history page exceeds encoded backing limit")
 	}
 	var out bytes.Buffer
-	w, err := zlib.NewWriterLevel(&out, zlib.BestSpeed)
-	if err != nil {
-		return false, err
-	}
+	w := pageCompressorPool.Get().(*zlib.Writer)
+	w.Reset(&out)
+	defer func() {
+		w.Reset(io.Discard)
+		pageCompressorPool.Put(w)
+	}()
 	if _, err := w.Write(raw); err != nil {
-		_ = w.Close()
 		return false, err
 	}
 	if err := w.Close(); err != nil {
