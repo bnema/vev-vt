@@ -184,8 +184,11 @@ func (s *Screen) Write(data []byte) {
 	if len(s.escapeBuf) == 0 {
 		s.trimEscapeBuffers()
 	} else if isKittyEscapeContinuation(s.escapeBuf, data) {
-		// A Kitty APC sits between any earlier graphic and what follows.
-		s.lastPrinted = 0
+		// A Kitty APC sits between any earlier graphic and what follows. An
+		// empty write has not identified the buffered escape yet.
+		if len(data) > 0 {
+			s.lastPrinted = 0
+		}
 		prefix := s.escapeBuf
 		s.escapeBuf = nil
 		data = s.continueKittyEscape(prefix, data)

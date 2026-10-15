@@ -60,11 +60,23 @@ func TestSoftResetCursorAppearance(t *testing.T) {
 }
 
 func TestRepeatSplitAcrossWrites(t *testing.T) {
-	s := NewScreen(10, 1)
-	s.Write([]byte("a\x1b["))
-	s.Write([]byte("2b"))
-	if got := strings.TrimRight(lineText(s, 0), " "); got != "aaa" {
-		t.Fatalf("line = %q, want %q", got, "aaa")
+	tests := []struct {
+		name   string
+		writes []string
+	}{
+		{name: "split inside CSI", writes: []string{"a\x1b[", "2b"}},
+		{name: "empty write after lone ESC", writes: []string{"a\x1b", "", "[2b"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := NewScreen(10, 1)
+			for _, w := range tt.writes {
+				s.Write([]byte(w))
+			}
+			if got := strings.TrimRight(lineText(s, 0), " "); got != "aaa" {
+				t.Fatalf("line = %q, want %q", got, "aaa")
+			}
+		})
 	}
 }
 
