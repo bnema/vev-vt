@@ -18,6 +18,8 @@ type screenState struct {
 	originMode          bool
 	insertMode          bool
 	kittyKeyboard       kittyKeyboardStack
+	charsets            [2]byte
+	shiftOut            bool
 }
 
 // SyncUpdateActive reports whether DEC private mode 2026 (synchronized update)
@@ -121,8 +123,30 @@ func (s *Screen) reset() {
 	s.bracketedPaste = false
 	s.kittyKeyboard = nil
 	s.colorSchemeMode = false
+	s.charsets = [2]byte{}
+	s.shiftOut = false
+	s.lastPrinted = 0
 	s.resetScrollRegion()
 	s.fullRedraw()
+}
+
+// softReset implements DECSTR (CSI ! p): it resets modes, rendition, margins,
+// cursor appearance, and character sets without touching screen contents or
+// the cursor position. Like xterm, the saved cursor becomes home with the
+// reset state.
+func (s *Screen) softReset() {
+	s.Style = renderer.DefaultStyle()
+	s.originMode = false
+	s.insertMode = false
+	s.autoWrapMode = true
+	s.applicationCursorMode = false
+	s.cursorVisible = true
+	s.cursorStyle = 0
+	s.cursorStyleSet = false
+	s.charsets = [2]byte{}
+	s.shiftOut = false
+	s.savedCursor = cursorState{style: s.Style, autoWrapMode: true, saved: true}
+	s.resetScrollRegion()
 }
 
 func (s *Screen) setScrollRegion(parts []int) {
@@ -187,7 +211,8 @@ func (s *Screen) setMode(private bool, parts []int, enabled bool) {
 			if enabled {
 				s.enterAlternateScreen()
 			} else {
-				s.exitAlternateScreen()
+				// Only 1049 saves and restores cursor state, which includes charsets.
+				s.exitAlternateScreen(mode == 1049)
 			}
 		case 2026:
 			s.syncUpdateActive = enabled
@@ -228,6 +253,8 @@ func (s *Screen) enterAlternateScreen() {
 			originMode:          s.originMode,
 			insertMode:          s.insertMode,
 			kittyKeyboard:       s.kittyKeyboard,
+			charsets:            s.charsets,
+			shiftOut:            s.shiftOut,
 		}
 		// The main and alternate screens keep independent keyboard stacks.
 		s.kittyKeyboard = nil
@@ -243,7 +270,7 @@ func (s *Screen) enterAlternateScreen() {
 	s.fullRedraw()
 }
 
-func (s *Screen) exitAlternateScreen() {
+func (s *Screen) exitAlternateScreen(restoreCharsets bool) {
 	if s.alternate == nil {
 		return
 	}
@@ -261,6 +288,10 @@ func (s *Screen) exitAlternateScreen() {
 	s.originMode = state.originMode
 	s.insertMode = state.insertMode
 	s.kittyKeyboard = state.kittyKeyboard
+	if restoreCharsets {
+		s.charsets = state.charsets
+		s.shiftOut = state.shiftOut
+	}
 	s.alternate = nil
 	s.fullRedraw()
 }

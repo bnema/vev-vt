@@ -3,13 +3,23 @@ package vt
 import renderer "github.com/bnema/vev-vt/core"
 
 func (s *Screen) putRune(r rune) {
+	if r < 0x20 || (r >= 0x7f && r <= 0x9f) {
+		// REP only repeats a graphic character that directly precedes it.
+		s.lastPrinted = 0
+	}
 	switch r {
 	case '\a':
 		if s.OnBell != nil {
 			s.OnBell()
 		}
 		return
-	case 0x00, 0x0e, 0x0f, 0x7f:
+	case 0x0e:
+		s.shiftOut = true
+		return
+	case 0x0f:
+		s.shiftOut = false
+		return
+	case 0x00, 0x7f:
 		return
 	case '\r':
 		s.Col = 0
@@ -35,7 +45,7 @@ func (s *Screen) putRune(r rune) {
 			return
 		}
 		if r >= 0x20 {
-			s.putPrintable(r)
+			s.putPrintable(s.translateCharset(r))
 		}
 	}
 }
@@ -61,6 +71,7 @@ func (s *Screen) putPrintable(r rune) {
 	if s.frame.Width == 0 || s.frame.Height == 0 {
 		return
 	}
+	s.lastPrinted = r
 	// Deferred wrap: cursor sits past the last column. Disabling DECAWM
 	// cancels a pending wrap and leaves subsequent output at the right margin.
 	if s.Col >= s.frame.Width {
