@@ -229,6 +229,8 @@ func (s *Screen) Write(data []byte) {
 		if data[0] == 0x1b {
 			consumed, partial := s.consumeEscape(data)
 			if consumed > 0 {
+				// A completed sequence (including REP itself) ends REP eligibility.
+				s.lastPrinted = 0
 				data = data[consumed:]
 				continue
 			}

@@ -18,6 +18,8 @@ type screenState struct {
 	originMode          bool
 	insertMode          bool
 	kittyKeyboard       kittyKeyboardStack
+	charsets            [2]byte
+	shiftOut            bool
 }
 
 // SyncUpdateActive reports whether DEC private mode 2026 (synchronized update)
@@ -129,17 +131,21 @@ func (s *Screen) reset() {
 }
 
 // softReset implements DECSTR (CSI ! p): it resets modes, rendition, margins,
-// and character sets without touching screen contents or the cursor position.
+// cursor appearance, and character sets without touching screen contents or
+// the cursor position. Like xterm, the saved cursor becomes home with the
+// reset state.
 func (s *Screen) softReset() {
 	s.Style = renderer.DefaultStyle()
-	s.savedCursor = cursorState{}
 	s.originMode = false
 	s.insertMode = false
 	s.autoWrapMode = true
 	s.applicationCursorMode = false
 	s.cursorVisible = true
+	s.cursorStyle = 0
+	s.cursorStyleSet = false
 	s.charsets = [2]byte{}
 	s.shiftOut = false
+	s.savedCursor = cursorState{style: s.Style, autoWrapMode: true, saved: true}
 	s.resetScrollRegion()
 }
 
@@ -246,6 +252,8 @@ func (s *Screen) enterAlternateScreen() {
 			originMode:          s.originMode,
 			insertMode:          s.insertMode,
 			kittyKeyboard:       s.kittyKeyboard,
+			charsets:            s.charsets,
+			shiftOut:            s.shiftOut,
 		}
 		// The main and alternate screens keep independent keyboard stacks.
 		s.kittyKeyboard = nil
@@ -279,6 +287,8 @@ func (s *Screen) exitAlternateScreen() {
 	s.originMode = state.originMode
 	s.insertMode = state.insertMode
 	s.kittyKeyboard = state.kittyKeyboard
+	s.charsets = state.charsets
+	s.shiftOut = state.shiftOut
 	s.alternate = nil
 	s.fullRedraw()
 }

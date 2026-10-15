@@ -3,6 +3,10 @@ package vt
 import renderer "github.com/bnema/vev-vt/core"
 
 func (s *Screen) putRune(r rune) {
+	if r < 0x20 || (r >= 0x7f && r <= 0x9f) {
+		// REP only repeats a graphic character that directly precedes it.
+		s.lastPrinted = 0
+	}
 	switch r {
 	case '\a':
 		if s.OnBell != nil {

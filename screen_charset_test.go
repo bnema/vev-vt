@@ -21,7 +21,12 @@ func TestCharsetsAndRepeat(t *testing.T) {
 		{name: "REP repeats the last graphic char", input: "\x1b(0q\x1b[4b", want: "─────"},
 		{name: "REP defaults to one", input: "a\x1b[b", want: "aa"},
 		{name: "REP without a prior char is ignored", input: "\x1b[3bx", want: "x"},
-		{name: "REP after control repeats last graphic", input: "ab\r\x1b[2b", want: "bb"},
+		{name: "REP after a control is ignored", input: "ab\r\x1b[2b", want: "ab"},
+		{name: "REP after another sequence is ignored", input: "a\x1b[1m\x1b[2b", want: "a"},
+		{name: "consecutive REP repeats once", input: "a\x1b[b\x1b[b", want: "aa"},
+		{name: "DECSC and DECRC restore SO invocation", input: "\x1b)0\x0e\x1b7\x0f\x1b8q", want: "─"},
+		{name: "leaving the alternate screen restores charsets", input: "\x1b(0\x1b[?1049h\x1b(B\x1b[?1049lq", want: "─"},
+		{name: "DECSTR saved cursor restores home", input: "\x1b[1;5Hx\x1b[!p\x1b8y", want: "y   x"},
 		{name: "partial charset escape across writes", input: "\x1b(", want: ""},
 	}
 	for _, tt := range tests {
@@ -41,6 +46,23 @@ func TestCharsetDesignationSplitAcrossWrites(t *testing.T) {
 	s.Write([]byte("0q"))
 	if got := strings.TrimRight(lineText(s, 0), " "); got != "─" {
 		t.Fatalf("line = %q, want %q", got, "─")
+	}
+}
+
+func TestSoftResetCursorAppearance(t *testing.T) {
+	s := NewScreen(4, 1)
+	s.Write([]byte("\x1b[6 q\x1b[?25l\x1b[!p"))
+	if s.cursorStyleSet || s.cursorStyle != 0 || !s.cursorVisible {
+		t.Fatalf("cursor style=%d set=%v visible=%v, want defaults", s.cursorStyle, s.cursorStyleSet, s.cursorVisible)
+	}
+}
+
+func TestRepeatSplitAcrossWrites(t *testing.T) {
+	s := NewScreen(10, 1)
+	s.Write([]byte("a\x1b["))
+	s.Write([]byte("2b"))
+	if got := strings.TrimRight(lineText(s, 0), " "); got != "aaa" {
+		t.Fatalf("line = %q, want %q", got, "aaa")
 	}
 }
 
