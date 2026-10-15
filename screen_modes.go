@@ -211,7 +211,8 @@ func (s *Screen) setMode(private bool, parts []int, enabled bool) {
 			if enabled {
 				s.enterAlternateScreen()
 			} else {
-				s.exitAlternateScreen()
+				// Only 1049 saves and restores cursor state, which includes charsets.
+				s.exitAlternateScreen(mode == 1049)
 			}
 		case 2026:
 			s.syncUpdateActive = enabled
@@ -269,7 +270,7 @@ func (s *Screen) enterAlternateScreen() {
 	s.fullRedraw()
 }
 
-func (s *Screen) exitAlternateScreen() {
+func (s *Screen) exitAlternateScreen(restoreCharsets bool) {
 	if s.alternate == nil {
 		return
 	}
@@ -287,8 +288,10 @@ func (s *Screen) exitAlternateScreen() {
 	s.originMode = state.originMode
 	s.insertMode = state.insertMode
 	s.kittyKeyboard = state.kittyKeyboard
-	s.charsets = state.charsets
-	s.shiftOut = state.shiftOut
+	if restoreCharsets {
+		s.charsets = state.charsets
+		s.shiftOut = state.shiftOut
+	}
 	s.alternate = nil
 	s.fullRedraw()
 }

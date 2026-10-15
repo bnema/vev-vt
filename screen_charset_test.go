@@ -25,7 +25,9 @@ func TestCharsetsAndRepeat(t *testing.T) {
 		{name: "REP after another sequence is ignored", input: "a\x1b[1m\x1b[2b", want: "a"},
 		{name: "consecutive REP repeats once", input: "a\x1b[b\x1b[b", want: "aa"},
 		{name: "DECSC and DECRC restore SO invocation", input: "\x1b)0\x0e\x1b7\x0f\x1b8q", want: "─"},
-		{name: "leaving the alternate screen restores charsets", input: "\x1b(0\x1b[?1049h\x1b(B\x1b[?1049lq", want: "─"},
+		{name: "leaving 1049 restores charsets", input: "\x1b(0\x1b[?1049h\x1b(B\x1b[?1049lq", want: "─"},
+		{name: "leaving 47 keeps current charsets", input: "\x1b(0\x1b[?47h\x1b(B\x1b[?47lq", want: "q"},
+		{name: "leaving 1047 keeps current charsets", input: "\x1b(0\x1b[?1047h\x1b(B\x1b[?1047lq", want: "q"},
 		{name: "DECSTR saved cursor restores home", input: "\x1b[1;5Hx\x1b[!p\x1b8y", want: "y   x"},
 		{name: "partial charset escape across writes", input: "\x1b(", want: ""},
 	}
@@ -63,6 +65,16 @@ func TestRepeatSplitAcrossWrites(t *testing.T) {
 	s.Write([]byte("2b"))
 	if got := strings.TrimRight(lineText(s, 0), " "); got != "aaa" {
 		t.Fatalf("line = %q, want %q", got, "aaa")
+	}
+}
+
+func TestRepeatAfterFragmentedKittyAPCIsIgnored(t *testing.T) {
+	s := NewScreen(10, 1)
+	s.Write([]byte("a\x1b_G"))
+	s.Write([]byte("a=q,i=1;\x1b\\"))
+	s.Write([]byte("\x1b[2b"))
+	if got := strings.TrimRight(lineText(s, 0), " "); got != "a" {
+		t.Fatalf("line = %q, want %q", got, "a")
 	}
 }
 

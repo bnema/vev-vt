@@ -184,6 +184,8 @@ func (s *Screen) Write(data []byte) {
 	if len(s.escapeBuf) == 0 {
 		s.trimEscapeBuffers()
 	} else if isKittyEscapeContinuation(s.escapeBuf, data) {
+		// A Kitty APC sits between any earlier graphic and what follows.
+		s.lastPrinted = 0
 		prefix := s.escapeBuf
 		s.escapeBuf = nil
 		data = s.continueKittyEscape(prefix, data)
@@ -218,6 +220,7 @@ func (s *Screen) Write(data []byte) {
 		}
 	}
 	if s.kittyDiscard {
+		s.lastPrinted = 0
 		consumed := s.consumeKittyDiscard(data)
 		data = data[consumed:]
 		if s.kittyDiscard {
