@@ -14,6 +14,8 @@ type cursorState struct {
 	originMode   bool
 	insertMode   bool
 	autoWrapMode bool
+	charsets     [2]byte
+	shiftOut     bool
 	saved        bool
 }
 
@@ -78,7 +80,8 @@ func (s *Screen) saveCursor() {
 	s.savedCursor = cursorState{
 		row: s.Row, col: s.Col, style: s.Style,
 		originMode: s.originMode, insertMode: s.insertMode,
-		autoWrapMode: s.autoWrapMode, saved: true,
+		autoWrapMode: s.autoWrapMode, charsets: s.charsets,
+		shiftOut: s.shiftOut, saved: true,
 	}
 }
 
@@ -92,4 +95,6 @@ func (s *Screen) restoreCursor() {
 	s.originMode = s.savedCursor.originMode
 	s.insertMode = s.savedCursor.insertMode
 	s.autoWrapMode = s.savedCursor.autoWrapMode
+	s.charsets = s.savedCursor.charsets
+	s.shiftOut = s.savedCursor.shiftOut
 }

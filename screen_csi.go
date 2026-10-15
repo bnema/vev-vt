@@ -63,6 +63,10 @@ func (s *Screen) applyCSI(params string, cmd byte) {
 			s.respond(resp)
 		}
 	case 'p':
+		if params == "!" {
+			s.softReset()
+			return
+		}
 		if modeText, ok := strings.CutSuffix(params, "$"); ok {
 			if private {
 				modeText = strings.TrimPrefix(modeText, "?")
@@ -82,6 +86,15 @@ func (s *Screen) applyCSI(params string, cmd byte) {
 			resp = strconv.AppendInt(resp, int64(state), 10)
 			resp = append(resp, "$y"...)
 			s.respond(resp)
+		}
+	case 'b':
+		// REP repeats the last printed graphic character; ncurses relies on it
+		// for long runs when terminfo advertises rep (xterm-256color does).
+		if private || s.lastPrinted == 0 {
+			return
+		}
+		for n := min(firstPositive(parts, 1), maxRepeat(s.frame.Width, s.frame.Height)); n > 0; n-- {
+			s.putPrintable(s.lastPrinted)
 		}
 	case 'm':
 		if strings.HasPrefix(params, ">") {

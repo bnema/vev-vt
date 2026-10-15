@@ -121,8 +121,26 @@ func (s *Screen) reset() {
 	s.bracketedPaste = false
 	s.kittyKeyboard = nil
 	s.colorSchemeMode = false
+	s.charsets = [2]byte{}
+	s.shiftOut = false
+	s.lastPrinted = 0
 	s.resetScrollRegion()
 	s.fullRedraw()
+}
+
+// softReset implements DECSTR (CSI ! p): it resets modes, rendition, margins,
+// and character sets without touching screen contents or the cursor position.
+func (s *Screen) softReset() {
+	s.Style = renderer.DefaultStyle()
+	s.savedCursor = cursorState{}
+	s.originMode = false
+	s.insertMode = false
+	s.autoWrapMode = true
+	s.applicationCursorMode = false
+	s.cursorVisible = true
+	s.charsets = [2]byte{}
+	s.shiftOut = false
+	s.resetScrollRegion()
 }
 
 func (s *Screen) setScrollRegion(parts []int) {

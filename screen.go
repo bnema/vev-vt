@@ -106,6 +106,12 @@ type Screen struct {
 	colorSchemeMode       bool
 	colorSchemeLight      bool
 	colorSchemeSet        bool
+	// charsets holds the final byte designated to G0 and G1 (ESC ( F and
+	// ESC ) F); shiftOut selects G1 into GL (SO) instead of G0 (SI).
+	charsets [2]byte
+	shiftOut bool
+	// lastPrinted is the last graphic rune written, repeated by REP.
+	lastPrinted rune
 }
 
 func NewScreen(width, height int) *Screen {
@@ -423,6 +429,12 @@ func (s *Screen) consumeEscape(data []byte) (consumed int, partial bool) {
 	case '(', ')', '*', '+', '-', '.', '/':
 		if len(data) < 3 {
 			return 0, true
+		}
+		switch data[1] {
+		case '(':
+			s.charsets[0] = data[2]
+		case ')':
+			s.charsets[1] = data[2]
 		}
 		return 3, false
 	default:
