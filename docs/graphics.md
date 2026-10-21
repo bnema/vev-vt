@@ -18,6 +18,10 @@ how to display it. This library does not open a window.
 - Direct image transmission, display, placement, queries and supported deletion.
 - Chunked Base64 data, with optional zlib compression.
 - Cropping, cell-based placement, pixel offsets and z-index.
+- Placements with only `c=` or only `r=` keep the displayed region's aspect
+  ratio: the other value is the rounded-up size derived from the cell pixel
+  size (1:2 width:height when the screen pixel size is unknown), at least 1.
+  `c=0` and `r=0` mean unset.
 - Movement and clipping as terminal rows scroll.
 
 Images are stored separately from text history. The `graphics` package contains

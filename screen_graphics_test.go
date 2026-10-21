@@ -1,7 +1,10 @@
 package vt
 
 import (
+	"bytes"
 	"encoding/base64"
+	"image"
+	"image/png"
 	"math"
 	"runtime"
 	"strconv"
@@ -462,4 +465,31 @@ func TestScreenKittyGraphicsDoesNotAliasCallerWriteBuffer(t *testing.T) {
 		screen.Write([]byte("\x1b_Gm=0;BA==\x1b\\"))
 		require.Equal(t, [][]byte{{1, 2, 3, 4}}, screenAssetBytes(t, screen))
 	})
+}
+
+func TestScreenKittySingleColumnOrRowPlacement(t *testing.T) {
+	var buf bytes.Buffer
+	require.NoError(t, png.Encode(&buf, image.NewRGBA(image.Rect(0, 0, 4, 4))))
+	payload := base64.StdEncoding.EncodeToString(buf.Bytes())
+	tests := []struct {
+		name       string
+		header     string
+		cols, rows int64
+	}{
+		{"columns only", "c=5", 5, 3},
+		{"rows only", "r=3", 6, 3},
+		{"both", "c=5,r=3", 5, 3},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			screen := NewScreen(100, 30)
+			screen.Write([]byte("\x1b_Ga=T,f=100,C=1," + tt.header + ";" + payload + "\x1b\\"))
+			usage := screen.GraphicsSnapshot().Usage()
+			require.Equal(t, uint64(1), usage.Assets)
+			require.Equal(t, uint64(1), usage.Placements)
+			cells := screen.GraphicsSnapshot().Placements()[0].Cells()
+			require.Equal(t, tt.cols, cells.Width)
+			require.Equal(t, tt.rows, cells.Height)
+		})
+	}
 }

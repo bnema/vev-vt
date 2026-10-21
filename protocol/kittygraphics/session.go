@@ -7,6 +7,7 @@ import (
 	"image/png"
 	"io"
 	"math"
+	"math/big"
 	"strconv"
 
 	"github.com/bnema/vev-vt/graphics"
@@ -20,6 +21,8 @@ type placementKey struct {
 type placementOrigin struct {
 	x, y uint64
 	set  bool
+	// cellW and cellH are the cell size in pixels, or zero when unknown.
+	cellW, cellH int64
 }
 
 type upload struct {
@@ -191,7 +194,25 @@ func (s *Session) SetPendingPlacement(x, y uint64) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.origin = placementOrigin{x: x, y: y, set: true}
+	s.origin.x, s.origin.y, s.origin.set = x, y, true
+	if s.upload != nil {
+		s.upload.origin = s.origin
+	}
+}
+
+// SetCellPixels supplies the terminal cell size in pixels. It is used to keep
+// the aspect ratio when a placement gives only one of c/r. Non-positive values
+// mean the size is unknown and a default 1:2 (width:height) cell is assumed.
+func (s *Session) SetCellPixels(width, height int) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if width <= 0 || height <= 0 {
+		width, height = 0, 0
+	}
+	s.origin.cellW, s.origin.cellH = int64(width), int64(height)
 	if s.upload != nil {
 		s.upload.origin = s.origin
 	}
@@ -593,22 +614,72 @@ func placementSpec(c Controls, assetID graphics.AssetID, width, height int64, or
 	if !ok || clipped != source {
 		return graphics.PlacementSpec{}, graphics.ErrInvalidPlacement
 	}
+	// As in Kitty, c=0 and r=0 mean "unset". When only one is set, the other
+	// is derived to keep the aspect ratio of the displayed source rectangle.
 	var cells graphics.CellRect
-	if c.HasColumns || c.HasRows {
-		if !c.HasColumns || !c.HasRows || c.Columns == 0 || c.Rows == 0 || c.Columns > math.MaxInt64 || c.Rows > math.MaxInt64 {
+	hasCells := (c.HasColumns && c.Columns != 0) || (c.HasRows && c.Rows != 0)
+	if hasCells {
+		if c.Columns > math.MaxInt64 || c.Rows > math.MaxInt64 {
 			return graphics.PlacementSpec{}, fmt.Errorf("%w: c/r", ErrInvalidCommand)
 		}
-		cells = graphics.CellRect{X: signedCoordinateInt(c.CellOffsetX, c.HasCellOffsetX), Y: signedCoordinateInt(c.CellOffsetY, c.HasCellOffsetY), Width: int64(c.Columns), Height: int64(c.Rows)}
+		columns, rows := int64(c.Columns), int64(c.Rows)
+		if !c.HasColumns {
+			columns = 0
+		}
+		if !c.HasRows {
+			rows = 0
+		}
+		// Unknown cell size: assume a 1:2 (width:height) cell, which is only
+		// used for its ratio.
+		cellW, cellH := origin.cellW, origin.cellH
+		if cellW <= 0 || cellH <= 0 {
+			cellW, cellH = 1, 2
+		}
+		var ok bool
+		if columns == 0 {
+			columns, ok = deriveCells(rows, source.Height, source.Width, cellH, cellW)
+		} else if rows == 0 {
+			rows, ok = deriveCells(columns, source.Width, source.Height, cellW, cellH)
+		} else {
+			ok = true
+		}
+		if !ok {
+			return graphics.PlacementSpec{}, ErrIntegerOverflow
+		}
+		cells = graphics.CellRect{X: signedCoordinateInt(c.CellOffsetX, c.HasCellOffsetX), Y: signedCoordinateInt(c.CellOffsetY, c.HasCellOffsetY), Width: columns, Height: rows}
 		if !cells.Valid() {
 			return graphics.PlacementSpec{}, graphics.ErrInvalidRect
 		}
 	}
-	spec := graphics.PlacementSpec{Asset: assetID, Source: source, Destination: destination, Cells: cells, HasCells: c.HasColumns || c.HasRows}
+	spec := graphics.PlacementSpec{Asset: assetID, Source: source, Destination: destination, Cells: cells, HasCells: hasCells}
 	if c.HasLayer {
 		spec.Layer = c.Layer
 		spec.HasLayer = true
 	}
 	return spec, nil
+}
+
+// deriveCells returns the cell count along the unspecified axis that preserves
+// the source aspect ratio: ceil(given*givenCell*otherSrc / (givenSrc*otherCell)),
+// at least 1. The boolean is false if the result does not fit in int64.
+func deriveCells(given, givenSrc, otherSrc, givenCell, otherCell int64) (int64, bool) {
+	num := new(big.Int).Mul(big.NewInt(given), big.NewInt(givenCell))
+	num.Mul(num, big.NewInt(otherSrc))
+	den := new(big.Int).Mul(big.NewInt(givenSrc), big.NewInt(otherCell))
+	if den.Sign() <= 0 {
+		return 0, false
+	}
+	q, r := new(big.Int).QuoRem(num, den, new(big.Int))
+	if r.Sign() != 0 {
+		q.Add(q, big.NewInt(1))
+	}
+	if q.Sign() == 0 {
+		return 1, true
+	}
+	if !q.IsInt64() {
+		return 0, false
+	}
+	return q.Int64(), true
 }
 
 func (s *Session) place(c Controls, imageID uint64, assetID graphics.AssetID, origin placementOrigin) ([][]byte, *Mutation, error) {

@@ -519,6 +519,8 @@ func (s *Screen) dispatchKittyGraphics(apc []byte) {
 	}
 	if display {
 		s.graphics.kitty.SetPendingPlacement(s.kittyCursorX(), s.kittyCursorY())
+		cellWidth, cellHeight, _ := s.kittyCellPixels()
+		s.graphics.kitty.SetCellPixels(cellWidth, cellHeight)
 	}
 	if display && controls.HasMore && controls.More == 1 {
 		copy := controls
@@ -627,6 +629,10 @@ func (s *Screen) kittyPlacementGridSize(c kittygraphics.Controls, mutation kitty
 	placement, ok := s.graphics.scene.Snapshot().Placement(mutation.ScenePlacementID)
 	if !ok {
 		return columns, rows
+	}
+	// Cell counts derived from a single c/r are already stored on the placement.
+	if cells := placement.Cells(); !cells.Empty() {
+		return max(kittyCursorAdvance(uint64(cells.Width)), 1), max(kittyCursorAdvance(uint64(cells.Height)), 1)
 	}
 	cellWidth, cellHeight, pixelsKnown := s.kittyCellPixels()
 	if !pixelsKnown {

@@ -584,3 +584,66 @@ func FuzzSessionNeverPanics(f *testing.F) {
 		_, _ = s.Finish()
 	})
 }
+
+func placeWithControls(t *testing.T, cellW, cellH int, imgW, imgH int, header string, chunked bool) graphics.PlacementView {
+	t.Helper()
+	scene := graphics.NewScene(graphics.Limits{})
+	session := NewSession(scene)
+	session.SetCellPixels(cellW, cellH)
+	payload := base64.StdEncoding.EncodeToString(pngBytes(t, imgW, imgH))
+	if chunked {
+		half := len(payload) / 2 / 4 * 4
+		if _, err := session.Feed(apc(header+",m=1", payload[:half])); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := session.Feed(apc("m=0", payload[half:])); err != nil {
+			t.Fatal(err)
+		}
+	} else if _, err := session.Feed(apc(header, payload)); err != nil {
+		t.Fatal(err)
+	}
+	placements := scene.Snapshot().Placements()
+	if len(placements) != 1 || scene.Snapshot().Usage().Assets != 1 {
+		t.Fatalf("usage = %#v", scene.Snapshot().Usage())
+	}
+	return placements[0]
+}
+
+func TestPlacementSingleColumnOrRowDerivesOther(t *testing.T) {
+	tests := []struct {
+		name         string
+		cellW, cellH int
+		imgW, imgH   int
+		header       string
+		chunked      bool
+		cols, rows   int64
+	}{
+		{"columns only", 10, 20, 4, 4, "a=T,f=100,C=1,c=5", false, 5, 3},
+		{"rows only", 10, 20, 4, 4, "a=T,f=100,C=1,r=3", false, 6, 3},
+		{"both", 10, 20, 4, 4, "a=T,f=100,C=1,c=5,r=3", false, 5, 3},
+		{"wide image columns only", 10, 20, 40, 10, "a=T,f=100,C=1,c=8", false, 8, 1},
+		{"crop columns only", 10, 20, 8, 8, "a=T,f=100,C=1,c=4,w=8,h=4", false, 4, 1},
+		{"crop rows only", 10, 20, 8, 8, "a=T,f=100,C=1,r=2,w=8,h=4", false, 8, 2},
+		{"unknown cell size assumes 1:2", 0, 0, 4, 4, "a=T,f=100,C=1,c=4", false, 4, 2},
+		{"unknown cell size rows only", 0, 0, 4, 4, "a=T,f=100,C=1,r=2", false, 4, 2},
+		{"minimum one", 10, 20, 100, 1, "a=T,f=100,C=1,c=2", false, 2, 1},
+		{"zero means unset", 10, 20, 4, 4, "a=T,f=100,C=1,c=5,r=0", false, 5, 3},
+		{"chunked rows only", 10, 20, 4, 4, "a=T,f=100,C=1,r=3", true, 6, 3},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := placeWithControls(t, tt.cellW, tt.cellH, tt.imgW, tt.imgH, tt.header, tt.chunked)
+			cells := p.Cells()
+			if cells.Width != tt.cols || cells.Height != tt.rows {
+				t.Fatalf("cells = %dx%d, want %dx%d", cells.Width, cells.Height, tt.cols, tt.rows)
+			}
+		})
+	}
+}
+
+func TestPlacementZeroColumnsAndRowsMeansAuto(t *testing.T) {
+	p := placeWithControls(t, 10, 20, 4, 4, "a=T,f=100,C=1,c=0,r=0", false)
+	if !p.Cells().Empty() {
+		t.Fatalf("cells = %#v, want none", p.Cells())
+	}
+}
