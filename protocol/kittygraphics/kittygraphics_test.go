@@ -647,3 +647,27 @@ func TestPlacementZeroColumnsAndRowsMeansAuto(t *testing.T) {
 		t.Fatalf("cells = %#v, want none", p.Cells())
 	}
 }
+
+func TestDeriveCells(t *testing.T) {
+	const maxInt64 = int64(^uint64(0) >> 1)
+	tests := []struct {
+		name                                            string
+		given, givenSrc, otherSrc, givenCell, otherCell int64
+		want                                            int64
+		wantOK                                          bool
+	}{
+		{"exact division", 4, 4, 4, 10, 20, 2, true},
+		{"rounds up", 5, 4, 4, 10, 20, 3, true},
+		{"tiny result is at least one", 1, 1000, 1, 1, 1, 1, true},
+		{"overflow", maxInt64, 1, 1000, 1000, 1, 0, false},
+		{"zero source", 5, 0, 4, 10, 20, 0, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := deriveCells(tt.given, tt.givenSrc, tt.otherSrc, tt.givenCell, tt.otherCell)
+			if got != tt.want || ok != tt.wantOK {
+				t.Fatalf("deriveCells = %d, %v; want %d, %v", got, ok, tt.want, tt.wantOK)
+			}
+		})
+	}
+}

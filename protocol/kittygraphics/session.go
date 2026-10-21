@@ -660,21 +660,19 @@ func placementSpec(c Controls, assetID graphics.AssetID, width, height int64, or
 }
 
 // deriveCells returns the cell count along the unspecified axis that preserves
-// the source aspect ratio: ceil(given*givenCell*otherSrc / (givenSrc*otherCell)),
-// at least 1. The boolean is false if the result does not fit in int64.
+// the source aspect ratio: ceil(given*givenCell*otherSrc / (givenSrc*otherCell)).
+// All inputs are positive, so the result is at least 1. The boolean is false
+// if an input is not positive or the result does not fit in int64.
 func deriveCells(given, givenSrc, otherSrc, givenCell, otherCell int64) (int64, bool) {
+	if given <= 0 || givenSrc <= 0 || otherSrc <= 0 || givenCell <= 0 || otherCell <= 0 {
+		return 0, false
+	}
 	num := new(big.Int).Mul(big.NewInt(given), big.NewInt(givenCell))
 	num.Mul(num, big.NewInt(otherSrc))
 	den := new(big.Int).Mul(big.NewInt(givenSrc), big.NewInt(otherCell))
-	if den.Sign() <= 0 {
-		return 0, false
-	}
 	q, r := new(big.Int).QuoRem(num, den, new(big.Int))
 	if r.Sign() != 0 {
 		q.Add(q, big.NewInt(1))
-	}
-	if q.Sign() == 0 {
-		return 1, true
 	}
 	if !q.IsInt64() {
 		return 0, false

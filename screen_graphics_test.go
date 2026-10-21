@@ -471,25 +471,37 @@ func TestScreenKittySingleColumnOrRowPlacement(t *testing.T) {
 	var buf bytes.Buffer
 	require.NoError(t, png.Encode(&buf, image.NewRGBA(image.Rect(0, 0, 4, 4))))
 	payload := base64.StdEncoding.EncodeToString(buf.Bytes())
+	// 4x4 image. Unknown pixel size uses a 1:2 cell; the 10x20 cell geometry
+	// comes from SetGeometry. Without C=1 the cursor moves past the placement.
 	tests := []struct {
-		name       string
-		header     string
-		cols, rows int64
+		name             string
+		geometry         bool
+		commands         string
+		cols, rows       int64
+		wantCol, wantRow int
 	}{
-		{"columns only", "c=5", 5, 3},
-		{"rows only", "r=3", 6, 3},
-		{"both", "c=5,r=3", 5, 3},
+		{"columns only", false, "a=T,f=100,c=5;" + payload, 5, 3, 5, 2},
+		{"rows only", false, "a=T,f=100,r=3;" + payload, 6, 3, 6, 2},
+		{"zero rows is unset", false, "a=T,f=100,c=5,r=0;" + payload, 5, 3, 5, 2},
+		{"zero columns is unset", false, "a=T,f=100,c=0,r=3;" + payload, 6, 3, 6, 2},
+		{"known cell pixels", true, "a=T,f=100,c=4;" + payload, 4, 2, 4, 1},
+		{"put existing image", false, "a=t,i=7,f=100;" + payload + "\x1b\\\x1b_Ga=p,i=7,q=2,c=5", 5, 3, 5, 2},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			screen := NewScreen(100, 30)
-			screen.Write([]byte("\x1b_Ga=T,f=100,C=1," + tt.header + ";" + payload + "\x1b\\"))
+			if tt.geometry {
+				screen.SetGeometry(Geometry{Cols: 100, Rows: 30, PixelWidth: 1000, PixelHeight: 600})
+			}
+			screen.Write([]byte("\x1b_G" + tt.commands + "\x1b\\"))
 			usage := screen.GraphicsSnapshot().Usage()
 			require.Equal(t, uint64(1), usage.Assets)
 			require.Equal(t, uint64(1), usage.Placements)
 			cells := screen.GraphicsSnapshot().Placements()[0].Cells()
 			require.Equal(t, tt.cols, cells.Width)
 			require.Equal(t, tt.rows, cells.Height)
+			require.Equal(t, tt.wantCol, screen.Col)
+			require.Equal(t, tt.wantRow, screen.Row)
 		})
 	}
 }

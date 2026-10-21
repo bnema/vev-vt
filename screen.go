@@ -616,14 +616,17 @@ func (s *Screen) advanceKittyCursorRows(rows int) {
 }
 
 func (s *Screen) kittyPlacementGridSize(c kittygraphics.Controls, mutation kittygraphics.Mutation) (columns, rows int) {
+	// c=0 and r=0 mean unset, as in Kitty.
+	hasColumns := c.HasColumns && c.Columns != 0
+	hasRows := c.HasRows && c.Rows != 0
 	columns, rows = 1, 1
-	if c.HasColumns {
+	if hasColumns {
 		columns = max(kittyCursorAdvance(c.Columns), 1)
 	}
-	if c.HasRows {
+	if hasRows {
 		rows = max(kittyCursorAdvance(c.Rows), 1)
 	}
-	if c.HasColumns && c.HasRows || s.graphics == nil || s.graphics.scene == nil {
+	if hasColumns && hasRows || s.graphics == nil || s.graphics.scene == nil {
 		return columns, rows
 	}
 	placement, ok := s.graphics.scene.Snapshot().Placement(mutation.ScenePlacementID)
@@ -639,11 +642,11 @@ func (s *Screen) kittyPlacementGridSize(c kittygraphics.Controls, mutation kitty
 		return columns, rows
 	}
 	destination := placement.Destination()
-	if !c.HasColumns {
+	if !hasColumns {
 		offset := destination.X % int64(cellWidth)
 		columns = kittyPixelCellSpan(offset, destination.Width, cellWidth)
 	}
-	if !c.HasRows {
+	if !hasRows {
 		offset := destination.Y % int64(cellHeight)
 		rows = kittyPixelCellSpan(offset, destination.Height, cellHeight)
 	}
