@@ -966,3 +966,31 @@ func TestScreenLineBoundsDescribesTheLiveGrid(t *testing.T) {
 		})
 	}
 }
+
+func TestWriteBMPEmojiPresentation(t *testing.T) {
+	for _, emoji := range []rune{'✅', '❌'} {
+		for _, tt := range []struct {
+			name     string
+			prefix   string
+			col, row int
+		}{
+			{"start", "", 0, 0},
+			{"after narrow", "a", 1, 0},
+			{"last column wraps", "abc", 0, 1},
+		} {
+			t.Run(string(emoji)+"/"+tt.name, func(t *testing.T) {
+				s := NewScreen(4, 2)
+				s.Write([]byte(tt.prefix))
+				s.Write([]byte(string(emoji)))
+				assertCell(t, s, tt.col, tt.row, emoji)
+				assertContinuation(t, s, tt.col+1, tt.row)
+				require.Equal(t, tt.col+2, s.Col)
+				require.Equal(t, tt.row, s.Row)
+				if tt.row == 1 {
+					assertCell(t, s, 3, 0, ' ')
+				}
+				assertNoOrphanWideCells(t, s)
+			})
+		}
+	}
+}
