@@ -10,8 +10,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	vt "github.com/bnema/vev-vt"
-	"github.com/bnema/vev-vt/graphics"
+	vt "bnema.dev/vev-vt"
+	"bnema.dev/vev-vt/graphics"
 )
 
 //go:embed testdata/pngsuite-exif2c08.png.b64

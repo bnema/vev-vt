@@ -8,7 +8,7 @@ import (
 	"io"
 	"sync"
 
-	renderer "github.com/bnema/vev-vt/core"
+	renderer "bnema.dev/vev-vt/core"
 )
 
 // ErrHistoryCorrupt reports corruption of an internally compressed sealed page.

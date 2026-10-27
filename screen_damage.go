@@ -1,6 +1,6 @@
 package vt
 
-import renderer "github.com/bnema/vev-vt/core"
+import renderer "bnema.dev/vev-vt/core"
 
 // maxPendingDamage bounds metadata retained while no render transaction can
 // acknowledge a screen. Saturation falls back to one exact full redraw.

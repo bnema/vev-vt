@@ -17,7 +17,7 @@ that and passes the output to vev-vt.
 Requires Go 1.27 or newer.
 
 ```sh
-go get github.com/bnema/vev-vt
+go get bnema.dev/vev-vt
 ```
 
 **Alpha software:** APIs and saved-history formats can change between versions.
@@ -31,7 +31,7 @@ package main
 import (
     "fmt"
 
-    vt "github.com/bnema/vev-vt"
+    vt "bnema.dev/vev-vt"
 )
 
 func main() {

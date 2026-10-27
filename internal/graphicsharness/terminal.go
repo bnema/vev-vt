@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"image"
 
-	vt "github.com/bnema/vev-vt"
-	"github.com/bnema/vev-vt/graphics"
+	vt "bnema.dev/vev-vt"
+	"bnema.dev/vev-vt/graphics"
 )
 
 // RenderTerminal feeds terminal bytes into a fresh screen and composites its

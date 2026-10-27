@@ -4,7 +4,7 @@ import (
 	"iter"
 	"slices"
 
-	renderer "github.com/bnema/vev-vt/core"
+	renderer "bnema.dev/vev-vt/core"
 )
 
 // styleSetInline is the number of distinct styles kept in a linear slice

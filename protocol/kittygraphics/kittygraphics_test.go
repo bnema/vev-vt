@@ -13,7 +13,7 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/bnema/vev-vt/graphics"
+	"bnema.dev/vev-vt/graphics"
 )
 
 func apc(header, payload string) []byte {

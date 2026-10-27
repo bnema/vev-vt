@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/bnema/vev-vt/core"
+	"bnema.dev/vev-vt/core"
 )
 
 // UpdateSchemaVersion identifies the browser update contract.

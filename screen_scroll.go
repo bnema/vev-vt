@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"math"
 
-	renderer "github.com/bnema/vev-vt/core"
-	"github.com/bnema/vev-vt/graphics"
+	renderer "bnema.dev/vev-vt/core"
+	"bnema.dev/vev-vt/graphics"
 )
 
 // index moves to the next physical row, scrolling the region when the cursor

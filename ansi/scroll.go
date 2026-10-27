@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"strconv"
 
-	"github.com/bnema/vev-vt/core"
+	"bnema.dev/vev-vt/core"
 )
 
 func findSafeScroll(frame CellSource, damage []Damage) (Damage, bool) {

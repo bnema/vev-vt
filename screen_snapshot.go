@@ -1,8 +1,8 @@
 package vt
 
 import (
-	renderer "github.com/bnema/vev-vt/core"
-	"github.com/bnema/vev-vt/graphics"
+	renderer "bnema.dev/vev-vt/core"
+	"bnema.dev/vev-vt/graphics"
 )
 
 // CursorSnapshot is the cursor state captured with a visible screen snapshot.

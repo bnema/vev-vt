@@ -1,6 +1,6 @@
 package ansi
 
-import "github.com/bnema/vev-vt/core"
+import "bnema.dev/vev-vt/core"
 
 type DamageKind = core.DamageKind
 type Damage = core.Damage

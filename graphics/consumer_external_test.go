@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/bnema/vev-vt/graphics"
+	"bnema.dev/vev-vt/graphics"
 )
 
 func TestExternalConsumerCanBuildAndReadImmutableScene(t *testing.T) {

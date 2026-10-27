@@ -3,7 +3,7 @@ package vt
 import (
 	"encoding/binary"
 
-	renderer "github.com/bnema/vev-vt/core"
+	renderer "bnema.dev/vev-vt/core"
 )
 
 func appendHistoryPayload(dst []byte, value renderer.CellPayload) []byte {

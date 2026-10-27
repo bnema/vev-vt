@@ -5,7 +5,7 @@ import (
 	"math"
 	"testing"
 
-	renderer "github.com/bnema/vev-vt/core"
+	renderer "bnema.dev/vev-vt/core"
 )
 
 func requireHistoryAppend(t testing.TB, history *History, row []renderer.Cell) {

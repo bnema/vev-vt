@@ -3,8 +3,8 @@ package vt_test
 import (
 	"testing"
 
-	vt "github.com/bnema/vev-vt"
-	"github.com/bnema/vev-vt/core"
+	vt "bnema.dev/vev-vt"
+	"bnema.dev/vev-vt/core"
 )
 
 func TestExternalLineEvictionCallbackReceivesStableCopy(t *testing.T) {

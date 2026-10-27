@@ -1,6 +1,6 @@
 package vt
 
-import renderer "github.com/bnema/vev-vt/core"
+import renderer "bnema.dev/vev-vt/core"
 
 // RecoveryTranscriptSnapshot owns compact viewport pages to replay after
 // retained history. No semantic row slices are retained by the snapshot.

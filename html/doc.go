@@ -1,5 +1,5 @@
 // Package html prepares safe, transactional browser updates from the
-// frontend-neutral github.com/bnema/vev-vt/core model.
+// frontend-neutral bnema.dev/vev-vt/core model.
 //
 // Renderer state is single-owner and is not internally synchronized. Prepare
 // allows exactly one outstanding draw. The consumer must call Commit only

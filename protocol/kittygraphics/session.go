@@ -10,7 +10,7 @@ import (
 	"math/big"
 	"strconv"
 
-	"github.com/bnema/vev-vt/graphics"
+	"bnema.dev/vev-vt/graphics"
 )
 
 type placementKey struct {

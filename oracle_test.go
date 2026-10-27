@@ -15,11 +15,11 @@ import (
 	"strings"
 	"testing"
 
-	vt "github.com/bnema/vev-vt"
-	"github.com/bnema/vev-vt/ansi"
-	core "github.com/bnema/vev-vt/core"
-	"github.com/bnema/vev-vt/graphics"
-	"github.com/bnema/vev-vt/html"
+	vt "bnema.dev/vev-vt"
+	"bnema.dev/vev-vt/ansi"
+	core "bnema.dev/vev-vt/core"
+	"bnema.dev/vev-vt/graphics"
+	"bnema.dev/vev-vt/html"
 )
 
 // The differential oracle drives seeded terminal workloads through the public

@@ -1,4 +1,4 @@
-module github.com/bnema/vev-vt
+module bnema.dev/vev-vt
 
 go 1.27
 

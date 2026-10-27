@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	renderer "github.com/bnema/vev-vt/core"
+	renderer "bnema.dev/vev-vt/core"
 )
 
 func TestResize(t *testing.T) {

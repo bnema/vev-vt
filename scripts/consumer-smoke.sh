@@ -15,9 +15,9 @@ module example.com/vev-vt-consumer
 
 go 1.27
 
-require github.com/bnema/vev-vt v0.0.0
+require bnema.dev/vev-vt v0.0.0
 
-replace github.com/bnema/vev-vt => $root
+replace bnema.dev/vev-vt => $root
 EOF
 cat >"$tmp/consumer/main.go" <<'EOF'
 package main
@@ -26,8 +26,8 @@ import (
 	"fmt"
 	"os"
 
-	vt "github.com/bnema/vev-vt"
-	"github.com/bnema/vev-vt/ansi"
+	vt "bnema.dev/vev-vt"
+	"bnema.dev/vev-vt/ansi"
 )
 
 func main() {

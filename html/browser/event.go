@@ -1,5 +1,5 @@
 // Package browser provides the static DOM runtime and strictly validated,
-// transport-neutral browser event values for github.com/bnema/vev-vt/html.
+// transport-neutral browser event values for bnema.dev/vev-vt/html.
 package browser
 
 import (
@@ -11,7 +11,7 @@ import (
 	"math"
 	"unicode/utf8"
 
-	htmlrenderer "github.com/bnema/vev-vt/html"
+	htmlrenderer "bnema.dev/vev-vt/html"
 )
 
 // EventSchemaVersion identifies the runtime-to-Go event contract.

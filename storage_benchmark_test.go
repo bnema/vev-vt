@@ -4,7 +4,7 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/bnema/vev-vt/core"
+	"bnema.dev/vev-vt/core"
 )
 
 const (

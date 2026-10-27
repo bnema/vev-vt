@@ -11,7 +11,7 @@ import (
 	"image/png"
 	"math/bits"
 
-	"github.com/bnema/vev-vt/graphics"
+	"bnema.dev/vev-vt/graphics"
 )
 
 const maxCanvasPixels = uint64(64 << 20)

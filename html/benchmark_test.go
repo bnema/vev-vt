@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/bnema/vev-vt/core"
+	"bnema.dev/vev-vt/core"
 )
 
 func BenchmarkRenderer(b *testing.B) {

@@ -6,7 +6,7 @@ import (
 	"math"
 	"slices"
 
-	renderer "github.com/bnema/vev-vt/core"
+	renderer "bnema.dev/vev-vt/core"
 )
 
 // ErrHistoryRowTooLarge is returned when one row cannot fit within the

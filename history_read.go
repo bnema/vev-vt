@@ -1,6 +1,6 @@
 package vt
 
-import renderer "github.com/bnema/vev-vt/core"
+import renderer "bnema.dev/vev-vt/core"
 
 // RowWidth returns the retained width of row y, or zero outside the view.
 // Unlike Row, it does not allocate or decode a semantic row.

@@ -1,8 +1,8 @@
 package vt
 
 import (
-	"github.com/bnema/vev-vt/graphics"
-	"github.com/bnema/vev-vt/protocol/kittygraphics"
+	"bnema.dev/vev-vt/graphics"
+	"bnema.dev/vev-vt/protocol/kittygraphics"
 )
 
 // screenGraphicsState owns the protocol adapter and scene for one VT screen

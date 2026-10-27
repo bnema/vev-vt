@@ -19,13 +19,13 @@ func TestHTMLProductionImportBoundary(t *testing.T) {
 		}
 	}
 
-	command = exec.Command("go", "list", "-deps", "github.com/bnema/vev-vt/core")
+	command = exec.Command("go", "list", "-deps", "bnema.dev/vev-vt/core")
 	output, err = command.CombinedOutput()
 	if err != nil {
 		t.Fatalf("go list core dependencies: %v\n%s", err, output)
 	}
 	for _, dependency := range strings.Fields(string(output)) {
-		if dependency == "github.com/bnema/vev-vt/html" || strings.HasPrefix(dependency, "github.com/bnema/vev-vt/html/") {
+		if dependency == "bnema.dev/vev-vt/html" || strings.HasPrefix(dependency, "bnema.dev/vev-vt/html/") {
 			t.Errorf("core imports concrete frontend %q", dependency)
 		}
 	}

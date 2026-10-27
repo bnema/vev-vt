@@ -5,7 +5,7 @@ import (
 	"math"
 	"unicode/utf8"
 
-	renderer "github.com/bnema/vev-vt/core"
+	renderer "bnema.dev/vev-vt/core"
 )
 
 func appendHistoryStyle(dst []byte, style renderer.Style) []byte {

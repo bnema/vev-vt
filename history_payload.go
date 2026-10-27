@@ -1,6 +1,6 @@
 package vt
 
-import renderer "github.com/bnema/vev-vt/core"
+import renderer "bnema.dev/vev-vt/core"
 
 func (c *HistoryChunk) recordPayloads() {
 	frame := c.frameView()

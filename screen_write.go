@@ -1,6 +1,6 @@
 package vt
 
-import renderer "github.com/bnema/vev-vt/core"
+import renderer "bnema.dev/vev-vt/core"
 
 func (s *Screen) putRune(r rune) {
 	if r < 0x20 || (r >= 0x7f && r <= 0x9f) {

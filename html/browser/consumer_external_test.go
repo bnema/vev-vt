@@ -3,7 +3,7 @@ package browser_test
 import (
 	"testing"
 
-	"github.com/bnema/vev-vt/html/browser"
+	"bnema.dev/vev-vt/html/browser"
 )
 
 func TestExternalBrowserConsumerUsesEmbeddedRuntimeAndNeutralEvents(t *testing.T) {

@@ -6,7 +6,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/bnema/vev-vt/core"
+	"bnema.dev/vev-vt/core"
 )
 
 // genericSource hides the concrete core.Frame type so the renderer must use

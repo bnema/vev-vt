@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	renderer "github.com/bnema/vev-vt/core"
+	renderer "bnema.dev/vev-vt/core"
 )
 
 func TestHistoryBoundsRetainedLogicalBytes(t *testing.T) {

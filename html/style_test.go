@@ -3,7 +3,7 @@ package html
 import (
 	"testing"
 
-	"github.com/bnema/vev-vt/core"
+	"bnema.dev/vev-vt/core"
 	"github.com/stretchr/testify/require"
 )
 

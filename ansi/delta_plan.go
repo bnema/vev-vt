@@ -1,6 +1,6 @@
 package ansi
 
-import "github.com/bnema/vev-vt/core"
+import "bnema.dev/vev-vt/core"
 
 // Span identifies a changed horizontal range in a logical frame row.
 type Span struct {

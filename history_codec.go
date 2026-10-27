@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"math"
 
-	renderer "github.com/bnema/vev-vt/core"
+	renderer "bnema.dev/vev-vt/core"
 )
 
 const (

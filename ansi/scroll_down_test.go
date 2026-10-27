@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"testing"
 
-	vt "github.com/bnema/vev-vt"
-	"github.com/bnema/vev-vt/ansi"
+	vt "bnema.dev/vev-vt"
+	"bnema.dev/vev-vt/ansi"
 )
 
 func TestBidirectionalScrollReplay(t *testing.T) {

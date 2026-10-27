@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/bnema/vev-vt/graphics"
+	"bnema.dev/vev-vt/graphics"
 	"github.com/stretchr/testify/require"
 )
 

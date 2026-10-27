@@ -1,8 +1,8 @@
 package vt
 
 import (
-	renderer "github.com/bnema/vev-vt/core"
-	"github.com/bnema/vev-vt/protocol/kittygraphics"
+	renderer "bnema.dev/vev-vt/core"
+	"bnema.dev/vev-vt/protocol/kittygraphics"
 )
 
 type screenState struct {

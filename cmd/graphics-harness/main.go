@@ -9,8 +9,8 @@ import (
 	"image/png"
 	"os"
 
-	vt "github.com/bnema/vev-vt"
-	"github.com/bnema/vev-vt/internal/graphicsharness"
+	vt "bnema.dev/vev-vt"
+	"bnema.dev/vev-vt/internal/graphicsharness"
 )
 
 func main() {

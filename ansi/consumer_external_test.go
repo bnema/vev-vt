@@ -4,9 +4,9 @@ import (
 	"bytes"
 	"testing"
 
-	vt "github.com/bnema/vev-vt"
-	"github.com/bnema/vev-vt/ansi"
-	"github.com/bnema/vev-vt/core"
+	vt "bnema.dev/vev-vt"
+	"bnema.dev/vev-vt/ansi"
+	"bnema.dev/vev-vt/core"
 )
 
 func TestExternalANSIConsumesScreenCellSource(t *testing.T) {

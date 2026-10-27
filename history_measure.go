@@ -3,7 +3,7 @@ package vt
 import (
 	"math"
 
-	"github.com/bnema/vev-vt/core"
+	"bnema.dev/vev-vt/core"
 )
 
 // MeasureHistoryBlob scans resource declarations without allocating. It is a

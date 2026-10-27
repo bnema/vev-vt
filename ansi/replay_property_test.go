@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	vt "github.com/bnema/vev-vt"
-	"github.com/bnema/vev-vt/ansi"
-	core "github.com/bnema/vev-vt/core"
+	vt "bnema.dev/vev-vt"
+	"bnema.dev/vev-vt/ansi"
+	core "bnema.dev/vev-vt/core"
 )
 
 type hiddenCellSource struct{ core.CellSource }

@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/bnema/vev-vt/core"
-	htmlrenderer "github.com/bnema/vev-vt/html"
+	"bnema.dev/vev-vt/core"
+	htmlrenderer "bnema.dev/vev-vt/html"
 )
 
 func TestExternalHTMLConsumerUsesOnlyCore(t *testing.T) {

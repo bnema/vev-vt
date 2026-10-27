@@ -1,6 +1,6 @@
 package vt
 
-import "github.com/bnema/vev-vt/core"
+import "bnema.dev/vev-vt/core"
 
 // The root package re-exports the frontend-neutral core model so screen,
 // history, and renderer consumers share one cell/style/frame representation.

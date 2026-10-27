@@ -4,7 +4,7 @@ import (
 	"strconv"
 	"testing"
 
-	renderer "github.com/bnema/vev-vt/core"
+	renderer "bnema.dev/vev-vt/core"
 	"github.com/stretchr/testify/require"
 )
 

@@ -1,5 +1,5 @@
 // Package ansi emits ANSI terminal output from the frontend-neutral
-// github.com/bnema/vev-vt/core model.
+// bnema.dev/vev-vt/core model.
 //
 // The package owns output planning, ANSI encoding, and a transactional renderer
 // shadow. Renderers consume the read-only CellSource contract. Cell, Style, RGB,

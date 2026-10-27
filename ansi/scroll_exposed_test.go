@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"testing"
 
-	vt "github.com/bnema/vev-vt"
-	"github.com/bnema/vev-vt/ansi"
+	vt "bnema.dev/vev-vt"
+	"bnema.dev/vev-vt/ansi"
 )
 
 // An embedded source exercises the generic path rather than Frame dispatch.

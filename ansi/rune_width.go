@@ -1,6 +1,6 @@
 package ansi
 
-import "github.com/bnema/vev-vt/core"
+import "bnema.dev/vev-vt/core"
 
 // RuneWidth is the terminal cell width function from the frontend-neutral
 // model package.
