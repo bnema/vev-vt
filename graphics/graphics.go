@@ -131,7 +131,9 @@ type AssetSpec = AssetBlob
 // specified; an unset axis was derived from the source aspect ratio. They are
 // kept from the existing placement when an update leaves Cells unchanged.
 // The flags imply non-empty Cells: they are stored as false when the
-// resolved Cells is empty.
+// resolved Cells is empty. A Destination scaled to Cells uses the cell size
+// known at placement time and, like placement positions, is not rescaled on
+// later cell-size changes.
 type PlacementSpec struct {
 	Asset           AssetID
 	Source          PixelRect
