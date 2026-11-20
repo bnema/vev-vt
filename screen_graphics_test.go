@@ -508,15 +508,16 @@ func TestScreenKittySingleColumnOrRowPlacement(t *testing.T) {
 
 func TestScreenKittyCellScaledPlacementScrollsWithRegion(t *testing.T) {
 	tests := []struct {
-		name    string
-		control string
-		wantY   int64
-		wantH   int64
+		name                 string
+		control              string
+		wantY                int64
+		wantH                int64
+		explicitC, explicitR bool
 	}{
 		// A 2x40 source natively spans rows 2-5 and would leave the 1-4
 		// region; scaled to one 10px row it stays inside and scrolls.
-		{"rows only scrolls inside region", "r=1", 10, 10},
-		{"both scrolls inside region", "c=1,r=1", 10, 10},
+		{"rows only scrolls inside region", "r=1", 10, 10, false, true},
+		{"both scrolls inside region", "c=1,r=1", 10, 10, true, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -535,6 +536,8 @@ func TestScreenKittyCellScaledPlacementScrollsWithRegion(t *testing.T) {
 			require.Len(t, after, 1)
 			require.Equal(t, tt.wantY, after[0].Destination().Y)
 			require.Equal(t, tt.wantH, after[0].Destination().Height)
+			require.Equal(t, tt.explicitC, after[0].ExplicitColumns())
+			require.Equal(t, tt.explicitR, after[0].ExplicitRows())
 		})
 	}
 }

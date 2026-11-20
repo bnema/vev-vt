@@ -22,6 +22,8 @@ type placementRecord struct {
 	source      PixelRect
 	destination PixelRect
 	cells       CellRect
+	explicitCol bool
+	explicitRow bool
 	layer       int64
 	order       uint64
 }
@@ -479,8 +481,10 @@ func (s *Scene) preparePlacement(state *sceneState, spec PlacementSpec, existing
 		return placementRecord{}, fmt.Errorf("place: %w", ErrInvalidPlacement)
 	}
 	cells := spec.Cells
+	explicitCol, explicitRow := spec.ExplicitColumns, spec.ExplicitRows
 	if existing != nil && !spec.HasCells && cells == (CellRect{}) {
 		cells = existing.cells
+		explicitCol, explicitRow = existing.explicitCol, existing.explicitRow
 	}
 	if cells != (CellRect{}) && (!cells.Valid() || cells.Empty()) {
 		return placementRecord{}, fmt.Errorf("place: %w", ErrInvalidPlacement)
@@ -489,7 +493,7 @@ func (s *Scene) preparePlacement(state *sceneState, spec PlacementSpec, existing
 	if existing != nil && !spec.HasLayer {
 		layer = existing.layer
 	}
-	return placementRecord{asset: asset, source: source, destination: destination, cells: cells, layer: layer}, nil
+	return placementRecord{asset: asset, source: source, destination: destination, cells: cells, explicitCol: explicitCol, explicitRow: explicitRow, layer: layer}, nil
 }
 
 func containsRect(outer, inner PixelRect) bool {
@@ -701,6 +705,8 @@ type PlacementView struct {
 	source      PixelRect
 	destination PixelRect
 	cells       CellRect
+	explicitCol bool
+	explicitRow bool
 	layer       int64
 }
 
@@ -713,15 +719,25 @@ func (p PlacementView) Source() PixelRect      { return p.source }
 func (p PlacementView) Destination() PixelRect { return p.destination }
 func (p PlacementView) Cells() CellRect        { return p.cells }
 func (p PlacementView) Layer() int64           { return p.layer }
+
+// ExplicitColumns reports whether the client specified the column count;
+// false means it was derived from the source aspect ratio.
+func (p PlacementView) ExplicitColumns() bool { return p.explicitCol }
+
+// ExplicitRows reports whether the client specified the row count; false
+// means it was derived from the source aspect ratio.
+func (p PlacementView) ExplicitRows() bool { return p.explicitRow }
 func (p PlacementView) Spec() PlacementSpec {
 	return PlacementSpec{
-		Asset:       p.asset,
-		Source:      p.source,
-		Destination: p.destination,
-		Cells:       p.cells,
-		HasCells:    p.cells != (CellRect{}),
-		Layer:       p.layer,
-		HasLayer:    true,
+		Asset:           p.asset,
+		Source:          p.source,
+		Destination:     p.destination,
+		Cells:           p.cells,
+		HasCells:        p.cells != (CellRect{}),
+		ExplicitColumns: p.explicitCol,
+		ExplicitRows:    p.explicitRow,
+		Layer:           p.layer,
+		HasLayer:        true,
 	}
 }
 
@@ -786,7 +802,7 @@ func (s *Snapshot) Placement(id PlacementID) (PlacementView, bool) {
 	if !ok {
 		return PlacementView{}, false
 	}
-	return PlacementView{id: record.id, asset: record.asset, source: record.source, destination: record.destination, cells: record.cells, layer: record.layer}, true
+	return PlacementView{id: record.id, asset: record.asset, source: record.source, destination: record.destination, cells: record.cells, explicitCol: record.explicitCol, explicitRow: record.explicitRow, layer: record.layer}, true
 }
 
 // GetPlacement is an alias for Placement.
@@ -809,7 +825,7 @@ func (s *Snapshot) Placements() []PlacementView {
 	})
 	views := make([]PlacementView, 0, len(placements))
 	for _, placement := range placements {
-		views = append(views, PlacementView{id: placement.id, asset: placement.asset, source: placement.source, destination: placement.destination, cells: placement.cells, layer: placement.layer})
+		views = append(views, PlacementView{id: placement.id, asset: placement.asset, source: placement.source, destination: placement.destination, cells: placement.cells, explicitCol: placement.explicitCol, explicitRow: placement.explicitRow, layer: placement.layer})
 	}
 	return views
 }

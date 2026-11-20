@@ -127,14 +127,19 @@ type AssetSpec = AssetBlob
 // asset. Destination is a pixel rectangle. Cells optionally records the
 // cell-space extent associated with the same placement. HasCells and HasLayer
 // preserve explicit zero values when updating an existing placement.
+// ExplicitColumns and ExplicitRows record which Cells axes the client
+// specified; an unset axis was derived from the source aspect ratio. They are
+// kept from the existing placement when an update leaves Cells unchanged.
 type PlacementSpec struct {
-	Asset       AssetID
-	Source      PixelRect
-	Destination PixelRect
-	Cells       CellRect
-	HasCells    bool
-	Layer       int64
-	HasLayer    bool
+	Asset           AssetID
+	Source          PixelRect
+	Destination     PixelRect
+	Cells           CellRect
+	HasCells        bool
+	ExplicitColumns bool
+	ExplicitRows    bool
+	Layer           int64
+	HasLayer        bool
 }
 
 // Viewport can constrain visible fragments in pixel space, cell space, or
