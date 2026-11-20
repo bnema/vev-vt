@@ -656,7 +656,10 @@ func TestPlacementCellsScaleDestination(t *testing.T) {
 		{"rows only rounds", 10, 20, 3, 7, "a=T,f=100,C=1,r=1", graphics.PixelRect{Width: 9, Height: 20}, false, true},
 		{"both stretch", 10, 20, 1600, 1200, "a=T,f=100,C=1,c=24,r=6", graphics.PixelRect{Width: 240, Height: 120}, true, true},
 		{"neither keeps native size", 10, 20, 64, 32, "a=T,f=100,C=1", graphics.PixelRect{Width: 64, Height: 32}, false, false},
-		{"sub-cell offsets kept", 10, 20, 40, 40, "a=T,f=100,C=1,c=2,r=1,X=3,Y=4", graphics.PixelRect{X: 3, Y: 4, Width: 20, Height: 20}, true, true},
+		{"sub-cell offsets kept", 10, 20, 40, 40, "a=T,f=100,C=1,c=2,r=1,X=3,Y=4", graphics.PixelRect{X: 3, Y: 4, Width: 17, Height: 16}, true, true},
+		{"offset clamped to cell", 10, 20, 40, 40, "a=T,f=100,C=1,c=2,r=1,X=15,Y=25", graphics.PixelRect{X: 15, Y: 25, Width: 11, Height: 1}, true, true},
+		{"columns only with offset", 10, 20, 1600, 400, "a=T,f=100,C=1,c=40,X=5", graphics.PixelRect{X: 5, Width: 395, Height: 99}, true, false},
+		{"unknown cell size both axes keeps native size", 0, 0, 64, 32, "a=T,f=100,C=1,c=4,r=2", graphics.PixelRect{Width: 64, Height: 32}, true, true},
 		{"unknown cell size keeps native size", 0, 0, 64, 32, "a=T,f=100,C=1,c=40", graphics.PixelRect{Width: 64, Height: 32}, true, false},
 	}
 	for _, tt := range tests {
@@ -669,6 +672,20 @@ func TestPlacementCellsScaleDestination(t *testing.T) {
 				t.Fatalf("explicit = (%v,%v), want (%v,%v)", p.ExplicitColumns(), p.ExplicitRows(), tt.explicitC, tt.explicitR)
 			}
 		})
+	}
+}
+
+func TestPlacementCellsScaleOverflow(t *testing.T) {
+	scene := graphics.NewScene(graphics.Limits{})
+	session := NewSession(scene)
+	session.SetCellPixels(10, 20)
+	payload := base64.StdEncoding.EncodeToString(pngBytes(t, 4, 4))
+	_, err := session.Feed(apc("a=T,f=100,C=1,c=4611686018427387904", payload))
+	if !errors.Is(err, ErrIntegerOverflow) {
+		t.Fatalf("err = %v, want %v", err, ErrIntegerOverflow)
+	}
+	if n := len(scene.Snapshot().Placements()); n != 0 {
+		t.Fatalf("placements = %d, want 0", n)
 	}
 }
 

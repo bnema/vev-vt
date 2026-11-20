@@ -656,7 +656,7 @@ func placementSpec(c Controls, assetID graphics.AssetID, width, height int64, or
 		// only when both c and r are given. With a single axis it scales that
 		// axis to the cell span and keeps the source aspect ratio.
 		if origin.cellW > 0 && origin.cellH > 0 {
-			w, h, ok := scaledDestination(explicitCols, explicitRows, columns, rows, origin.cellW, origin.cellH, source.Width, source.Height)
+			w, h, ok := scaledDestination(explicitCols, explicitRows, columns, rows, origin.cellW, origin.cellH, offsetX, offsetY, source.Width, source.Height)
 			if !ok {
 				return graphics.PlacementSpec{}, ErrIntegerOverflow
 			}
@@ -677,17 +677,23 @@ func placementSpec(c Controls, assetID graphics.AssetID, width, height int64, or
 // scaledDestination returns the destination pixel size for a cell-sized
 // placement. Both axes explicit stretch to the cell box; one explicit axis
 // spans its cells and the other follows the source aspect ratio (rounded,
-// minimum 1). The boolean is false on overflow.
-func scaledDestination(explicitCols, explicitRows bool, columns, rows, cellW, cellH, srcW, srcH int64) (int64, int64, bool) {
-	span := func(n, cell int64) (int64, bool) {
+// minimum 1). As in Kitty, the pixel offsets (X=, Y=) are clamped to cell-1
+// and shift only the top/left edge: the right/bottom edge stays on the cell
+// box, so an explicit span shrinks by its offset and a follow axis derives
+// from that reduced span. The boolean is false on overflow.
+func scaledDestination(explicitCols, explicitRows bool, columns, rows, cellW, cellH, offsetX, offsetY, srcW, srcH int64) (int64, int64, bool) {
+	span := func(n, cell, offset int64) (int64, bool) {
 		v, ok := checkedProduct(uint64(n), uint64(cell))
-		return int64(v), ok && v <= math.MaxInt64
+		if !ok || v > math.MaxInt64 {
+			return 0, false
+		}
+		return int64(v) - min(max(offset, 0), cell-1), true
 	}
 	follow := func(given, givenSrc, otherSrc int64) (int64, bool) {
 		num := new(big.Int).Mul(big.NewInt(given), big.NewInt(otherSrc))
 		num.Mul(num, big.NewInt(2))
 		num.Add(num, big.NewInt(givenSrc))
-		q := num.Quo(num, big.NewInt(2*givenSrc))
+		q := num.Quo(num, new(big.Int).Lsh(big.NewInt(givenSrc), 1))
 		if !q.IsInt64() {
 			return 0, false
 		}
@@ -695,22 +701,22 @@ func scaledDestination(explicitCols, explicitRows bool, columns, rows, cellW, ce
 	}
 	switch {
 	case explicitCols && !explicitRows:
-		w, ok := span(columns, cellW)
+		w, ok := span(columns, cellW, offsetX)
 		if !ok {
 			return 0, 0, false
 		}
 		h, ok := follow(w, srcW, srcH)
 		return w, h, ok
 	case explicitRows && !explicitCols:
-		h, ok := span(rows, cellH)
+		h, ok := span(rows, cellH, offsetY)
 		if !ok {
 			return 0, 0, false
 		}
 		w, ok := follow(h, srcH, srcW)
 		return w, h, ok
 	default:
-		w, okW := span(columns, cellW)
-		h, okH := span(rows, cellH)
+		w, okW := span(columns, cellW, offsetX)
+		h, okH := span(rows, cellH, offsetY)
 		return w, h, okW && okH
 	}
 }
