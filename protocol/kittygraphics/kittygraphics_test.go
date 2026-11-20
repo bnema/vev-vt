@@ -641,6 +641,31 @@ func TestPlacementSingleColumnOrRowDerivesOther(t *testing.T) {
 	}
 }
 
+func TestPlacementCellsScaleDestination(t *testing.T) {
+	tests := []struct {
+		name         string
+		cellW, cellH int
+		imgW, imgH   int
+		header       string
+		want         graphics.PixelRect
+	}{
+		{"columns only", 10, 20, 1600, 400, "a=T,f=100,C=1,c=40", graphics.PixelRect{Width: 400, Height: 100}},
+		{"rows only", 10, 20, 300, 1200, "a=T,f=100,C=1,r=8", graphics.PixelRect{Width: 40, Height: 160}},
+		{"both", 10, 20, 1600, 1200, "a=T,f=100,C=1,c=24,r=6", graphics.PixelRect{Width: 240, Height: 120}},
+		{"neither keeps native size", 10, 20, 64, 32, "a=T,f=100,C=1", graphics.PixelRect{Width: 64, Height: 32}},
+		{"sub-cell offsets kept", 10, 20, 40, 40, "a=T,f=100,C=1,c=2,r=1,X=3,Y=4", graphics.PixelRect{X: 3, Y: 4, Width: 20, Height: 20}},
+		{"unknown cell size keeps native size", 0, 0, 64, 32, "a=T,f=100,C=1,c=40", graphics.PixelRect{Width: 64, Height: 32}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := placeWithControls(t, tt.cellW, tt.cellH, tt.imgW, tt.imgH, tt.header, false)
+			if got := p.Destination(); got != tt.want {
+				t.Fatalf("destination = %#v, want %#v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestPlacementZeroColumnsAndRowsMeansAuto(t *testing.T) {
 	p := placeWithControls(t, 10, 20, 4, 4, "a=T,f=100,C=1,c=0,r=0", false)
 	if !p.Cells().Empty() {

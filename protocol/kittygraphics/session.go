@@ -650,6 +650,18 @@ func placementSpec(c Controls, assetID graphics.AssetID, width, height int64, or
 		if !cells.Valid() {
 			return graphics.PlacementSpec{}, graphics.ErrInvalidRect
 		}
+		// With a known cell size, Kitty scales the image to fill the cell box.
+		if origin.cellW > 0 && origin.cellH > 0 {
+			w, okW := checkedProduct(uint64(columns), uint64(origin.cellW))
+			h, okH := checkedProduct(uint64(rows), uint64(origin.cellH))
+			if !okW || !okH || w > math.MaxInt64 || h > math.MaxInt64 {
+				return graphics.PlacementSpec{}, ErrIntegerOverflow
+			}
+			destination.Width, destination.Height = int64(w), int64(h)
+			if !destination.Valid() {
+				return graphics.PlacementSpec{}, graphics.ErrInvalidRect
+			}
+		}
 	}
 	spec := graphics.PlacementSpec{Asset: assetID, Source: source, Destination: destination, Cells: cells, HasCells: hasCells}
 	if c.HasLayer {
