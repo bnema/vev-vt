@@ -271,3 +271,52 @@ func TestUpdatePlacementCanResetLayerAndClearCells(t *testing.T) {
 		t.Fatalf("cells = %#v, want cleared", placement.Cells())
 	}
 }
+
+func TestPlacementAxisFlags(t *testing.T) {
+	cells := CellRect{X: 1, Y: 2, Width: 3, Height: 2}
+	tests := []struct {
+		name                 string
+		place                PlacementSpec
+		update               *PlacementSpec
+		wantCells            CellRect
+		explicitC, explicitR bool
+	}{
+		{"flags without cells are cleared", PlacementSpec{ExplicitColumns: true, ExplicitRows: true}, nil, CellRect{}, false, false},
+		{"flags with cells are stored", PlacementSpec{Cells: cells, ExplicitColumns: true}, nil, cells, true, false},
+		{"update without cells keeps flags", PlacementSpec{Cells: cells, ExplicitRows: true}, &PlacementSpec{Destination: PixelRect{X: 5, Width: 4, Height: 4}}, cells, false, true},
+		{"update with HasCells and empty cells clears flags", PlacementSpec{Cells: cells, ExplicitColumns: true, ExplicitRows: true}, &PlacementSpec{HasCells: true, ExplicitColumns: true}, CellRect{}, false, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			scene := NewScene(Limits{MaxEncodedBytes: 64, MaxDecodedPixels: 64})
+			assetID, err := scene.AddAsset(testAsset(t, []byte{1}, 4, 4))
+			if err != nil {
+				t.Fatal(err)
+			}
+			place := tt.place
+			place.Asset = assetID
+			place.Destination = PixelRect{Width: 4, Height: 4}
+			id, err := scene.Place(place)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tt.update != nil {
+				if err := scene.UpdatePlacement(id, *tt.update); err != nil {
+					t.Fatal(err)
+				}
+			}
+			snapshot := scene.Snapshot()
+			placement, ok := snapshot.Placement(id)
+			if !ok {
+				t.Fatal("placement missing")
+			}
+			all := snapshot.Placements()
+			if len(all) != 1 || all[0] != placement {
+				t.Fatalf("placements = %#v, want [%#v]", all, placement)
+			}
+			if placement.Cells() != tt.wantCells || placement.ExplicitColumns() != tt.explicitC || placement.ExplicitRows() != tt.explicitR {
+				t.Fatalf("cells=%#v explicit=(%v,%v), want %#v (%v,%v)", placement.Cells(), placement.ExplicitColumns(), placement.ExplicitRows(), tt.wantCells, tt.explicitC, tt.explicitR)
+			}
+		})
+	}
+}

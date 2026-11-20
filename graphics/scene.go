@@ -17,13 +17,15 @@ type assetRecord struct {
 }
 
 type placementRecord struct {
-	id          PlacementID
-	asset       AssetID
-	source      PixelRect
-	destination PixelRect
-	cells       CellRect
-	layer       int64
-	order       uint64
+	id           PlacementID
+	asset        AssetID
+	source       PixelRect
+	destination  PixelRect
+	cells        CellRect
+	explicitCols bool
+	explicitRows bool
+	layer        int64
+	order        uint64
 }
 
 type sceneState struct {
@@ -479,17 +481,22 @@ func (s *Scene) preparePlacement(state *sceneState, spec PlacementSpec, existing
 		return placementRecord{}, fmt.Errorf("place: %w", ErrInvalidPlacement)
 	}
 	cells := spec.Cells
+	explicitCols, explicitRows := spec.ExplicitColumns, spec.ExplicitRows
 	if existing != nil && !spec.HasCells && cells == (CellRect{}) {
 		cells = existing.cells
+		explicitCols, explicitRows = existing.explicitCols, existing.explicitRows
 	}
 	if cells != (CellRect{}) && (!cells.Valid() || cells.Empty()) {
 		return placementRecord{}, fmt.Errorf("place: %w", ErrInvalidPlacement)
+	}
+	if cells == (CellRect{}) {
+		explicitCols, explicitRows = false, false
 	}
 	layer := spec.Layer
 	if existing != nil && !spec.HasLayer {
 		layer = existing.layer
 	}
-	return placementRecord{asset: asset, source: source, destination: destination, cells: cells, layer: layer}, nil
+	return placementRecord{asset: asset, source: source, destination: destination, cells: cells, explicitCols: explicitCols, explicitRows: explicitRows, layer: layer}, nil
 }
 
 func containsRect(outer, inner PixelRect) bool {
@@ -696,12 +703,14 @@ func (a AssetView) Blob() AssetBlob {
 
 // PlacementView is an immutable view of a sparse placement.
 type PlacementView struct {
-	id          PlacementID
-	asset       AssetID
-	source      PixelRect
-	destination PixelRect
-	cells       CellRect
-	layer       int64
+	id           PlacementID
+	asset        AssetID
+	source       PixelRect
+	destination  PixelRect
+	cells        CellRect
+	explicitCols bool
+	explicitRows bool
+	layer        int64
 }
 
 // Placement is an alias for the immutable snapshot view.
@@ -713,15 +722,27 @@ func (p PlacementView) Source() PixelRect      { return p.source }
 func (p PlacementView) Destination() PixelRect { return p.destination }
 func (p PlacementView) Cells() CellRect        { return p.cells }
 func (p PlacementView) Layer() int64           { return p.layer }
+
+// ExplicitColumns reports whether the client specified the column count;
+// false means it was derived from the source aspect ratio or Cells is empty.
+func (p PlacementView) ExplicitColumns() bool { return p.explicitCols }
+
+// ExplicitRows reports whether the client specified the row count; false
+// means it was derived from the source aspect ratio. Both flags are false
+// when Cells is empty.
+func (p PlacementView) ExplicitRows() bool { return p.explicitRows }
+
 func (p PlacementView) Spec() PlacementSpec {
 	return PlacementSpec{
-		Asset:       p.asset,
-		Source:      p.source,
-		Destination: p.destination,
-		Cells:       p.cells,
-		HasCells:    p.cells != (CellRect{}),
-		Layer:       p.layer,
-		HasLayer:    true,
+		Asset:           p.asset,
+		Source:          p.source,
+		Destination:     p.destination,
+		Cells:           p.cells,
+		HasCells:        p.cells != (CellRect{}),
+		ExplicitColumns: p.explicitCols,
+		ExplicitRows:    p.explicitRows,
+		Layer:           p.layer,
+		HasLayer:        true,
 	}
 }
 
@@ -786,7 +807,7 @@ func (s *Snapshot) Placement(id PlacementID) (PlacementView, bool) {
 	if !ok {
 		return PlacementView{}, false
 	}
-	return PlacementView{id: record.id, asset: record.asset, source: record.source, destination: record.destination, cells: record.cells, layer: record.layer}, true
+	return PlacementView{id: record.id, asset: record.asset, source: record.source, destination: record.destination, cells: record.cells, explicitCols: record.explicitCols, explicitRows: record.explicitRows, layer: record.layer}, true
 }
 
 // GetPlacement is an alias for Placement.
@@ -809,7 +830,7 @@ func (s *Snapshot) Placements() []PlacementView {
 	})
 	views := make([]PlacementView, 0, len(placements))
 	for _, placement := range placements {
-		views = append(views, PlacementView{id: placement.id, asset: placement.asset, source: placement.source, destination: placement.destination, cells: placement.cells, layer: placement.layer})
+		views = append(views, PlacementView{id: placement.id, asset: placement.asset, source: placement.source, destination: placement.destination, cells: placement.cells, explicitCols: placement.explicitCols, explicitRows: placement.explicitRows, layer: placement.layer})
 	}
 	return views
 }

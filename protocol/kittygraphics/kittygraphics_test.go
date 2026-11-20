@@ -641,6 +641,85 @@ func TestPlacementSingleColumnOrRowDerivesOther(t *testing.T) {
 	}
 }
 
+func TestPlacementCellsScaleDestination(t *testing.T) {
+	tests := []struct {
+		name                 string
+		cellW, cellH         int
+		imgW, imgH           int
+		header               string
+		want                 graphics.PixelRect
+		explicitC, explicitR bool
+	}{
+		{"columns only", 10, 20, 1600, 400, "a=T,f=100,C=1,c=40", graphics.PixelRect{Width: 400, Height: 100}, true, false},
+		{"columns only keeps aspect", 10, 20, 1600, 1200, "a=T,f=100,C=1,c=24", graphics.PixelRect{Width: 240, Height: 180}, true, false},
+		{"rows only", 10, 20, 300, 1200, "a=T,f=100,C=1,r=8", graphics.PixelRect{Width: 40, Height: 160}, false, true},
+		{"rows only rounds", 10, 20, 3, 7, "a=T,f=100,C=1,r=1", graphics.PixelRect{Width: 9, Height: 20}, false, true},
+		{"both stretch", 10, 20, 1600, 1200, "a=T,f=100,C=1,c=24,r=6", graphics.PixelRect{Width: 240, Height: 120}, true, true},
+		{"neither keeps native size", 10, 20, 64, 32, "a=T,f=100,C=1", graphics.PixelRect{Width: 64, Height: 32}, false, false},
+		{"sub-cell offsets kept", 10, 20, 40, 40, "a=T,f=100,C=1,c=2,r=1,X=3,Y=4", graphics.PixelRect{X: 3, Y: 4, Width: 17, Height: 16}, true, true},
+		{"offset clamped to cell", 10, 20, 40, 40, "a=T,f=100,C=1,c=2,r=1,X=15,Y=25", graphics.PixelRect{X: 15, Y: 25, Width: 11, Height: 1}, true, true},
+		{"columns only with offset", 10, 20, 1600, 400, "a=T,f=100,C=1,c=40,X=5", graphics.PixelRect{X: 5, Width: 395, Height: 99}, true, false},
+		{"unknown cell size both axes keeps native size", 0, 0, 64, 32, "a=T,f=100,C=1,c=4,r=2", graphics.PixelRect{Width: 64, Height: 32}, true, true},
+		{"unknown cell size keeps native size", 0, 0, 64, 32, "a=T,f=100,C=1,c=40", graphics.PixelRect{Width: 64, Height: 32}, true, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := placeWithControls(t, tt.cellW, tt.cellH, tt.imgW, tt.imgH, tt.header, false)
+			if got := p.Destination(); got != tt.want {
+				t.Fatalf("destination = %#v, want %#v", got, tt.want)
+			}
+			if p.ExplicitColumns() != tt.explicitC || p.ExplicitRows() != tt.explicitR {
+				t.Fatalf("explicit = (%v,%v), want (%v,%v)", p.ExplicitColumns(), p.ExplicitRows(), tt.explicitC, tt.explicitR)
+			}
+		})
+	}
+}
+
+func TestPlacementRePutWithoutCellsResetsGeometry(t *testing.T) {
+	scene := graphics.NewScene(graphics.Limits{})
+	session := NewSession(scene)
+	session.SetCellPixels(10, 20)
+	payload := base64.StdEncoding.EncodeToString(pngBytes(t, 1600, 400))
+	if _, err := session.Feed(apc("a=t,f=100,i=7,q=2", payload)); err != nil {
+		t.Fatal(err)
+	}
+	for _, step := range []struct {
+		header               string
+		cells                graphics.CellRect
+		dest                 graphics.PixelRect
+		explicitC, explicitR bool
+	}{
+		{"a=p,i=7,p=1,C=1,c=40,q=2", graphics.CellRect{Width: 40, Height: 5}, graphics.PixelRect{Width: 400, Height: 100}, true, false},
+		{"a=p,i=7,p=1,C=1,q=2", graphics.CellRect{}, graphics.PixelRect{Width: 1600, Height: 400}, false, false},
+	} {
+		if _, err := session.Feed(apc(step.header, "")); err != nil {
+			t.Fatalf("%s: %v", step.header, err)
+		}
+		placements := scene.Snapshot().Placements()
+		if len(placements) != 1 {
+			t.Fatalf("%s: placements = %d, want 1", step.header, len(placements))
+		}
+		p := placements[0]
+		if p.Cells() != step.cells || p.Destination() != step.dest || p.ExplicitColumns() != step.explicitC || p.ExplicitRows() != step.explicitR {
+			t.Fatalf("%s: cells=%#v dest=%#v explicit=(%v,%v)", step.header, p.Cells(), p.Destination(), p.ExplicitColumns(), p.ExplicitRows())
+		}
+	}
+}
+
+func TestPlacementCellsScaleOverflow(t *testing.T) {
+	scene := graphics.NewScene(graphics.Limits{})
+	session := NewSession(scene)
+	session.SetCellPixels(10, 20)
+	payload := base64.StdEncoding.EncodeToString(pngBytes(t, 4, 4))
+	_, err := session.Feed(apc("a=T,f=100,C=1,c=4611686018427387904", payload))
+	if !errors.Is(err, ErrIntegerOverflow) {
+		t.Fatalf("err = %v, want %v", err, ErrIntegerOverflow)
+	}
+	if n := len(scene.Snapshot().Placements()); n != 0 {
+		t.Fatalf("placements = %d, want 0", n)
+	}
+}
+
 func TestPlacementZeroColumnsAndRowsMeansAuto(t *testing.T) {
 	p := placeWithControls(t, 10, 20, 4, 4, "a=T,f=100,C=1,c=0,r=0", false)
 	if !p.Cells().Empty() {

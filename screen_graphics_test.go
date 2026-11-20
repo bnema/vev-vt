@@ -248,7 +248,7 @@ func TestScreenKittyPlacementUsesCursorAndCControlsMovement(t *testing.T) {
 	require.NotNil(t, snapshot)
 	placements := snapshot.Placements()
 	require.Len(t, placements, 1)
-	require.Equal(t, graphics.PixelRect{X: 20, Y: 10, Width: 2, Height: 2}, placements[0].Destination())
+	require.Equal(t, graphics.PixelRect{X: 20, Y: 10, Width: 20, Height: 10}, placements[0].Destination())
 	require.Equal(t, 1, screen.CursorRow())
 	require.Equal(t, 2, screen.CursorCol())
 
@@ -502,6 +502,42 @@ func TestScreenKittySingleColumnOrRowPlacement(t *testing.T) {
 			require.Equal(t, tt.rows, cells.Height)
 			require.Equal(t, tt.wantCol, screen.Col)
 			require.Equal(t, tt.wantRow, screen.Row)
+		})
+	}
+}
+
+func TestScreenKittyCellScaledPlacementScrollsWithRegion(t *testing.T) {
+	tests := []struct {
+		name                 string
+		control              string
+		wantY                int64
+		wantH                int64
+		explicitC, explicitR bool
+	}{
+		// A 2x40 source natively spans rows 2-5 and would leave the 1-4
+		// region; scaled to one 10px row it stays inside and scrolls.
+		{"rows only scrolls inside region", "r=1", 10, 10, false, true},
+		{"both scrolls inside region", "c=1,r=1", 10, 10, true, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			screen := NewScreen(10, 6)
+			screen.SetGeometry(Geometry{Cols: 10, Rows: 6, PixelWidth: 100, PixelHeight: 60})
+			payload := base64.RawStdEncoding.EncodeToString(make([]byte, 2*40*4))
+			screen.Write([]byte("\x1b[2;5r\x1b[3;1H\x1b_Ga=T,i=1,f=32,s=2,v=40,C=1," + tt.control + ";" + payload + "\x1b\\"))
+			before := screen.GraphicsSnapshot().Placements()
+			require.Len(t, before, 1)
+			require.Equal(t, int64(20), before[0].Destination().Y)
+			require.Equal(t, tt.wantH, before[0].Destination().Height)
+
+			// Scroll the region up by one line (SU).
+			screen.Write([]byte("\x1b[1S"))
+			after := screen.GraphicsSnapshot().Placements()
+			require.Len(t, after, 1)
+			require.Equal(t, tt.wantY, after[0].Destination().Y)
+			require.Equal(t, tt.wantH, after[0].Destination().Height)
+			require.Equal(t, tt.explicitC, after[0].ExplicitColumns())
+			require.Equal(t, tt.explicitR, after[0].ExplicitRows())
 		})
 	}
 }

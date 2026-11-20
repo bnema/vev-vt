@@ -617,6 +617,7 @@ func placementSpec(c Controls, assetID graphics.AssetID, width, height int64, or
 	// As in Kitty, c=0 and r=0 mean "unset". When only one is set, the other
 	// is derived to keep the aspect ratio of the displayed source rectangle.
 	var cells graphics.CellRect
+	var explicitCols, explicitRows bool
 	hasCells := (c.HasColumns && c.Columns != 0) || (c.HasRows && c.Rows != 0)
 	if hasCells {
 		if c.Columns > math.MaxInt64 || c.Rows > math.MaxInt64 {
@@ -629,6 +630,7 @@ func placementSpec(c Controls, assetID graphics.AssetID, width, height int64, or
 		if !c.HasRows {
 			rows = 0
 		}
+		explicitCols, explicitRows = columns != 0, rows != 0
 		// Unknown cell size: assume a 1:2 (width:height) cell, which is only
 		// used for its ratio.
 		cellW, cellH := origin.cellW, origin.cellH
@@ -650,13 +652,75 @@ func placementSpec(c Controls, assetID graphics.AssetID, width, height int64, or
 		if !cells.Valid() {
 			return graphics.PlacementSpec{}, graphics.ErrInvalidRect
 		}
+		// With a known cell size, Kitty stretches the image to the cell box
+		// only when both c and r are given. With a single axis it scales that
+		// axis to the cell span and keeps the source aspect ratio.
+		if origin.cellW > 0 && origin.cellH > 0 {
+			w, h, ok := scaledDestination(explicitCols, explicitRows, columns, rows, origin.cellW, origin.cellH, offsetX, offsetY, source.Width, source.Height)
+			if !ok {
+				return graphics.PlacementSpec{}, ErrIntegerOverflow
+			}
+			destination.Width, destination.Height = w, h
+			if !destination.Valid() {
+				return graphics.PlacementSpec{}, graphics.ErrInvalidRect
+			}
+		}
 	}
-	spec := graphics.PlacementSpec{Asset: assetID, Source: source, Destination: destination, Cells: cells, HasCells: hasCells}
+	// A Kitty put fully replaces the placement geometry, so HasCells is always
+	// set: a re-put without c/r clears the previous cells and axis flags.
+	spec := graphics.PlacementSpec{Asset: assetID, Source: source, Destination: destination, Cells: cells, HasCells: true, ExplicitColumns: explicitCols, ExplicitRows: explicitRows}
 	if c.HasLayer {
 		spec.Layer = c.Layer
 		spec.HasLayer = true
 	}
 	return spec, nil
+}
+
+// scaledDestination returns the destination pixel size for a cell-sized
+// placement. Both axes explicit stretch to the cell box; one explicit axis
+// spans its cells and the other follows the source aspect ratio (rounded,
+// minimum 1). As in Kitty, the pixel offsets (X=, Y=) are clamped to cell-1
+// and shift only the top/left edge: the right/bottom edge stays on the cell
+// box, so an explicit span shrinks by its offset and a follow axis derives
+// from that reduced span. The boolean is false on overflow.
+func scaledDestination(explicitCols, explicitRows bool, columns, rows, cellW, cellH, offsetX, offsetY, srcW, srcH int64) (int64, int64, bool) {
+	span := func(n, cell, offset int64) (int64, bool) {
+		v, ok := checkedProduct(uint64(n), uint64(cell))
+		if !ok || v > math.MaxInt64 {
+			return 0, false
+		}
+		return int64(v) - min(max(offset, 0), cell-1), true
+	}
+	follow := func(given, givenSrc, otherSrc int64) (int64, bool) {
+		num := new(big.Int).Mul(big.NewInt(given), big.NewInt(otherSrc))
+		num.Mul(num, big.NewInt(2))
+		num.Add(num, big.NewInt(givenSrc))
+		q := num.Quo(num, new(big.Int).Lsh(big.NewInt(givenSrc), 1))
+		if !q.IsInt64() {
+			return 0, false
+		}
+		return max(q.Int64(), 1), true
+	}
+	switch {
+	case explicitCols && !explicitRows:
+		w, ok := span(columns, cellW, offsetX)
+		if !ok {
+			return 0, 0, false
+		}
+		h, ok := follow(w, srcW, srcH)
+		return w, h, ok
+	case explicitRows && !explicitCols:
+		h, ok := span(rows, cellH, offsetY)
+		if !ok {
+			return 0, 0, false
+		}
+		w, ok := follow(h, srcH, srcW)
+		return w, h, ok
+	default:
+		w, okW := span(columns, cellW, offsetX)
+		h, okH := span(rows, cellH, offsetY)
+		return w, h, okW && okH
+	}
 }
 
 // deriveCells returns the cell count along the unspecified axis that preserves
