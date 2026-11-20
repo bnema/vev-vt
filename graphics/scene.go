@@ -489,6 +489,9 @@ func (s *Scene) preparePlacement(state *sceneState, spec PlacementSpec, existing
 	if cells != (CellRect{}) && (!cells.Valid() || cells.Empty()) {
 		return placementRecord{}, fmt.Errorf("place: %w", ErrInvalidPlacement)
 	}
+	if cells == (CellRect{}) {
+		explicitCol, explicitRow = false, false
+	}
 	layer := spec.Layer
 	if existing != nil && !spec.HasLayer {
 		layer = existing.layer
@@ -721,11 +724,12 @@ func (p PlacementView) Cells() CellRect        { return p.cells }
 func (p PlacementView) Layer() int64           { return p.layer }
 
 // ExplicitColumns reports whether the client specified the column count;
-// false means it was derived from the source aspect ratio.
+// false means it was derived from the source aspect ratio or Cells is empty.
 func (p PlacementView) ExplicitColumns() bool { return p.explicitCol }
 
 // ExplicitRows reports whether the client specified the row count; false
-// means it was derived from the source aspect ratio.
+// means it was derived from the source aspect ratio. Both flags are false
+// when Cells is empty.
 func (p PlacementView) ExplicitRows() bool { return p.explicitRow }
 func (p PlacementView) Spec() PlacementSpec {
 	return PlacementSpec{

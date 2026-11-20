@@ -130,6 +130,8 @@ type AssetSpec = AssetBlob
 // ExplicitColumns and ExplicitRows record which Cells axes the client
 // specified; an unset axis was derived from the source aspect ratio. They are
 // kept from the existing placement when an update leaves Cells unchanged.
+// The flags imply non-empty Cells: they are stored as false when the
+// resolved Cells is empty.
 type PlacementSpec struct {
 	Asset           AssetID
 	Source          PixelRect

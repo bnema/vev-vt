@@ -666,7 +666,9 @@ func placementSpec(c Controls, assetID graphics.AssetID, width, height int64, or
 			}
 		}
 	}
-	spec := graphics.PlacementSpec{Asset: assetID, Source: source, Destination: destination, Cells: cells, HasCells: hasCells, ExplicitColumns: explicitCols, ExplicitRows: explicitRows}
+	// A Kitty put fully replaces the placement geometry, so HasCells is always
+	// set: a re-put without c/r clears the previous cells and axis flags.
+	spec := graphics.PlacementSpec{Asset: assetID, Source: source, Destination: destination, Cells: cells, HasCells: true, ExplicitColumns: explicitCols, ExplicitRows: explicitRows}
 	if c.HasLayer {
 		spec.Layer = c.Layer
 		spec.HasLayer = true

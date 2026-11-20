@@ -675,6 +675,37 @@ func TestPlacementCellsScaleDestination(t *testing.T) {
 	}
 }
 
+func TestPlacementRePutWithoutCellsResetsGeometry(t *testing.T) {
+	scene := graphics.NewScene(graphics.Limits{})
+	session := NewSession(scene)
+	session.SetCellPixels(10, 20)
+	payload := base64.StdEncoding.EncodeToString(pngBytes(t, 1600, 400))
+	if _, err := session.Feed(apc("a=t,f=100,i=7,q=2", payload)); err != nil {
+		t.Fatal(err)
+	}
+	for _, step := range []struct {
+		header               string
+		cells                graphics.CellRect
+		dest                 graphics.PixelRect
+		explicitC, explicitR bool
+	}{
+		{"a=p,i=7,p=1,C=1,c=40,q=2", graphics.CellRect{Width: 40, Height: 5}, graphics.PixelRect{Width: 400, Height: 100}, true, false},
+		{"a=p,i=7,p=1,C=1,q=2", graphics.CellRect{}, graphics.PixelRect{Width: 1600, Height: 400}, false, false},
+	} {
+		if _, err := session.Feed(apc(step.header, "")); err != nil {
+			t.Fatalf("%s: %v", step.header, err)
+		}
+		placements := scene.Snapshot().Placements()
+		if len(placements) != 1 {
+			t.Fatalf("%s: placements = %d, want 1", step.header, len(placements))
+		}
+		p := placements[0]
+		if p.Cells() != step.cells || p.Destination() != step.dest || p.ExplicitColumns() != step.explicitC || p.ExplicitRows() != step.explicitR {
+			t.Fatalf("%s: cells=%#v dest=%#v explicit=(%v,%v)", step.header, p.Cells(), p.Destination(), p.ExplicitColumns(), p.ExplicitRows())
+		}
+	}
+}
+
 func TestPlacementCellsScaleOverflow(t *testing.T) {
 	scene := graphics.NewScene(graphics.Limits{})
 	session := NewSession(scene)
